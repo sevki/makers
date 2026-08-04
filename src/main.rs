@@ -1975,82 +1975,27 @@ unsafe fn main_0(
             &raw mut current_directory as *mut ::core::ffi::c_char,
         ));
     }
-    let fresh34 = &mut (*define_variable_in_set(
-        &ctx,
-        b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
-        b"\0" as *const u8 as *const ::core::ffi::c_char,
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    ));
-    (*fresh34).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let fresh35 = &mut (*define_variable_in_set(
-        &ctx,
-        b".VARIABLES\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 11]>() as size_t).wrapping_sub(1),
-        b"\0" as *const u8 as *const ::core::ffi::c_char,
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    ));
-    (*fresh35).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let fresh36 = &mut (*define_variable_in_set(
-        &ctx,
-        b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
-        b"\0" as *const u8 as *const ::core::ffi::c_char,
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    ));
-    (*fresh36).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    let fresh37 = &mut (*define_variable_in_set(
-        &ctx,
-        b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
-        b"\0" as *const u8 as *const ::core::ffi::c_char,
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    ));
-    (*fresh37).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    define_variable_in_set(
-        &ctx,
-        b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t).wrapping_sub(1),
-        b"-c\0" as *const u8 as *const ::core::ffi::c_char,
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        &ctx,
-        b".LOADED\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as size_t).wrapping_sub(1),
-        b"\0" as *const u8 as *const ::core::ffi::c_char,
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+    define_special(&ctx, b"MAKEFLAGS\0")?;
+    define_special(&ctx, b".VARIABLES\0")?;
+    define_special(&ctx, b".RECIPEPREFIX\0")?;
+    define_special(&ctx, b".WARNINGS\0")?;
+    crate::variable::define_named(
+            &ctx,
+            b".SHELLFLAGS\0",
+            b"-c\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            0,
+        )?;
+    crate::variable::define_named(
+            &ctx,
+            b".LOADED\0",
+            b"\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            0,
+        )?;
     let features: *const ::core::ffi::c_char = b"target-specific order-only second-expansion else-if shortest-stem undefine oneshell nocomment grouped-target extra-prereqs notintermediate shell-export archives jobserver jobserver-fifo output-sync check-symlink maintainer\0"
         as *const u8 as *const ::core::ffi::c_char;
-    define_variable_in_set(
-        &ctx,
-        b".FEATURES\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
-        features,
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+    crate::variable::define_named(&ctx, b".FEATURES\0", features, o_default, 0)?;
     guile_gmake_setup(NILF);
     let mut i: ::core::ffi::c_uint;
     i = 0;
@@ -2092,7 +2037,7 @@ unsafe fn main_0(
                 1,
                 (*ctx.variable_globals.current_variable_set_list.get()).set,
                 NILF,
-            );
+            )?;
             if *(*v).name as i32 == *(b"SHELL\0" as *const u8 as *const ::core::ffi::c_char) as i32
                 && (*(*v).name as i32 == 0
                     || strcmp(
@@ -2121,16 +2066,13 @@ unsafe fn main_0(
             (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
             o_command,
         )?;
-        define_variable_in_set(
+        crate::variable::define_named(
             &ctx,
-            b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
+            b"GNUMAKEFLAGS\0",
             b"\0" as *const u8 as *const ::core::ffi::c_char,
             o_env,
             0,
-            (*ctx.variable_globals.current_variable_set_list.get()).set,
-            NILF,
-        );
+        )?;
     }
     decode_env_switches(
         &ctx,
@@ -2188,42 +2130,12 @@ unsafe fn main_0(
     if isatty(libc::STDOUT_FILENO) != 0
         && lookup_named(&ctx, b"MAKE_TERMOUT\0")?.is_null()
     {
-        let tty: *const ::core::ffi::c_char = ttyname(libc::STDOUT_FILENO);
-        let fresh39 = &mut (*define_variable_in_set(
-            &ctx,
-            b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-            if !tty.is_null() {
-                tty
-            } else {
-                b"true\0" as *const u8 as *const ::core::ffi::c_char
-            },
-            o_default,
-            0,
-            (*ctx.variable_globals.current_variable_set_list.get()).set,
-            NILF,
-        ));
-        (*fresh39).set_export(v_export as variable_export);
+        define_tty_var(&ctx, b"MAKE_TERMOUT\0", libc::STDOUT_FILENO)?;
     }
     if isatty(libc::STDERR_FILENO) != 0
         && lookup_named(&ctx, b"MAKE_TERMERR\0")?.is_null()
     {
-        let tty_0: *const ::core::ffi::c_char = ttyname(libc::STDERR_FILENO);
-        let fresh40 = &mut (*define_variable_in_set(
-            &ctx,
-            b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-            if !tty_0.is_null() {
-                tty_0
-            } else {
-                b"true\0" as *const u8 as *const ::core::ffi::c_char
-            },
-            o_default,
-            0,
-            (*ctx.variable_globals.current_variable_set_list.get()).set,
-            NILF,
-        ));
-        (*fresh40).set_export(v_export as variable_export);
+        define_tty_var(&ctx, b"MAKE_TERMERR\0", libc::STDERR_FILENO)?;
     }
     syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET)
         as i32 as ::core::ffi::c_uint;
@@ -2433,16 +2345,13 @@ unsafe fn main_0(
                 .set(&raw mut current_directory as *mut ::core::ffi::c_char);
         }
     }
-    define_variable_in_set(
-        &ctx,
-        b"CURDIR\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
-        &raw mut current_directory as *mut ::core::ffi::c_char,
-        o_file,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+    crate::variable::define_named(
+            &ctx,
+            b"CURDIR\0",
+            &raw mut current_directory as *mut ::core::ffi::c_char,
+            o_file,
+            0,
+        )?;
     {
         let include_dirs = options.include_dirs.borrow();
         let inc_paths: Vec<std::path::PathBuf> = include_dirs
@@ -2487,26 +2396,20 @@ unsafe fn main_0(
             reset_jobserver(options);
         }
     }
-    define_variable_in_set(
-        &ctx,
-        b"MAKE_COMMAND\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        *argv.offset(0_i32 as isize),
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        &ctx,
-        b"MAKE\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 5]>() as size_t).wrapping_sub(1),
-        b"$(MAKE_COMMAND)\0" as *const u8 as *const ::core::ffi::c_char,
-        o_default,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+    crate::variable::define_named(
+            &ctx,
+            b"MAKE_COMMAND\0",
+            *argv.offset(0_i32 as isize),
+            o_default,
+            0,
+        )?;
+    crate::variable::define_named(
+            &ctx,
+            b"MAKE\0",
+            b"$(MAKE_COMMAND)\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            1,
+        )?;
     if !ctx.command_variables.0.get().is_null() {
         let mut cv: *mut CommandVariable;
         let mut v_1: *mut variable;
@@ -2548,27 +2451,15 @@ unsafe fn main_0(
             cv = (*cv).next;
         }
         *p.offset(-1_i32 as isize) = 0;
-        define_variable_in_set(
-            &ctx,
-            b"-*-command-variables-*-\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 24]>() as size_t).wrapping_sub(1),
-            value,
-            o_automatic,
-            0,
-            (*ctx.variable_globals.current_variable_set_list.get()).set,
-            NILF,
-        );
+        crate::variable::define_named(&ctx, b"-*-command-variables-*-\0", value, o_automatic, 0)?;
         drop(value_buf);
-        define_variable_in_set(
+        crate::variable::define_named(
             &ctx,
-            b"MAKEOVERRIDES\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
+            b"MAKEOVERRIDES\0",
             b"${-*-command-variables-*-}\0" as *const u8 as *const ::core::ffi::c_char,
             o_default,
             1,
-            (*ctx.variable_globals.current_variable_set_list.get()).set,
-            NILF,
-        );
+        )?;
     }
     if !options.makefiles.borrow().is_empty() {
         let mut i_1: usize;
@@ -2680,7 +2571,7 @@ unsafe fn main_0(
         Some(debug_signal_handler as unsafe extern "C" fn(i32) -> ()),
     );
     set_default_suffixes(&ctx, options)?;
-    define_automatic_variables(&ctx);
+    define_automatic_variables(&ctx)?;
     // Bound before the dereference rather than `?`-ed inside it, and reached
     // through `as_mut` rather than a bare `*`: the pointer only exists once
     // the `Result` has been unwrapped, and `define_makeflags` returns whatever
@@ -2690,18 +2581,15 @@ unsafe fn main_0(
         .as_mut()
         .expect("define_makeflags always defines MAKEFLAGS")
         .set_export(v_export as variable_export);
-    define_default_variables(&ctx, options);
+    define_default_variables(&ctx, options)?;
     enter_file(&ctx, b".DEFAULT");
-    ctx.default_goal_var.0.set(define_variable_in_set(
-        &ctx,
-        b".DEFAULT_GOAL\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
-        b"\0" as *const u8 as *const ::core::ffi::c_char,
-        o_file,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    ));
+    ctx.default_goal_var.0.set(crate::variable::define_named(
+            &ctx,
+            b".DEFAULT_GOAL\0",
+            b"\0" as *const u8 as *const ::core::ffi::c_char,
+            o_file,
+            0,
+        )?);
     if !options.eval_strings.borrow().is_empty() {
         let eval_strings = options.eval_strings.borrow();
         let mut p_0: *mut ::core::ffi::c_char;
@@ -2736,16 +2624,7 @@ unsafe fn main_0(
             *endp = ' ' as i32 as ::core::ffi::c_char;
         }
         *endp = 0;
-        define_variable_in_set(
-            &ctx,
-            b"-*-eval-flags-*-\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 17]>() as size_t).wrapping_sub(1),
-            value_0,
-            o_automatic,
-            0,
-            (*ctx.variable_globals.current_variable_set_list.get()).set,
-            NILF,
-        );
+        crate::variable::define_named(&ctx, b"-*-eval-flags-*-\0", value_0, o_automatic, 0)?;
         drop(value_0_buf);
     }
     let old_arg_job_slots: Option<u32> = options.arg_job_slots.get();
@@ -2796,16 +2675,13 @@ unsafe fn main_0(
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
         o_env,
     )?;
-    define_variable_in_set(
-        &ctx,
-        b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        b"\0" as *const u8 as *const ::core::ffi::c_char,
-        o_override,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+    crate::variable::define_named(
+            &ctx,
+            b"GNUMAKEFLAGS\0",
+            b"\0" as *const u8 as *const ::core::ffi::c_char,
+            o_override,
+            0,
+        )?;
     decode_env_switches(
         &ctx,
         options,
@@ -2843,7 +2719,7 @@ unsafe fn main_0(
     } else {
         ::core::ptr::null_mut::<output>()
     });
-    disable_builtins(&ctx, options);
+    disable_builtins(&ctx, options)?;
     options
         .job_slots
         .set(if options.jobserver_auth.borrow().is_some() {
@@ -3699,16 +3575,7 @@ unsafe fn handle_non_switch_argument(
             );
             value = vp;
         }
-        define_variable_in_set(
-            ctx,
-            b"MAKECMDGOALS\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-            value,
-            o_default,
-            0,
-            (*ctx.variable_globals.current_variable_set_list.get()).set,
-            NILF,
-        );
+        crate::variable::define_named(ctx, b"MAKECMDGOALS\0", value, o_default, 0)?;
     }
     Ok(0)
 }
@@ -3740,7 +3607,7 @@ pub unsafe fn reset_makeflags(
             .collect();
         construct_include_path(ctx, &inc_paths)?;
     }
-    disable_builtins(ctx, options);
+    disable_builtins(ctx, options)?;
     define_makeflags(ctx, options, opt_rebuilding_makefiles(ctx) as i32)?;
     Ok(())
 }
@@ -4487,7 +4354,7 @@ unsafe extern "C" fn quote_for_env(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; the global rule/variable tables must be initialized.
-unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) {
+unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) -> Result<(), crate::build_result::BuildError> {
     if let Some(suffix_file) = crate::file::lookup_file(ctx, b".SUFFIXES") {
         if let Some(node) = ctx.filenodes.get(suffix_file) {
             let mut guard = node.lock().expect("file node poisoned");
@@ -4496,34 +4363,96 @@ unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) {
             }
         }
     }
-    define_variable_in_set(
-        ctx,
-        b"SUFFIXES\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 9]>() as size_t).wrapping_sub(1),
-        b"\0" as *const u8 as *const ::core::ffi::c_char,
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+    crate::variable::define_named(
+            ctx,
+            b"SUFFIXES\0",
+            b"\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            0,
+        )?;
+    Ok(())
 }
 
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn disable_builtins(ctx: &crate::execctx::ExecContext, options: &Options) {
+pub unsafe fn disable_builtins(
+    ctx: &crate::execctx::ExecContext,
+    options: &Options,
+) -> Result<(), crate::build_result::BuildError> {
     if options.no_builtin_variables.get() {
         options.no_builtin_rules.set(true);
     }
     if options.no_builtin_rules.get() && !options.prev_no_builtin_rules.get() {
         options.prev_no_builtin_rules.set(true);
-        clear_builtin_rules(ctx);
+        clear_builtin_rules(ctx)?;
     }
     if options.no_builtin_variables.get() && !options.prev_no_builtin_variables.get() {
         options.prev_no_builtin_variables.set(true);
-        undefine_default_variables(ctx);
+        undefine_default_variables(ctx)?;
     }
+    Ok(())
+}
+/// Define `name` as the terminal path for `fd` — or the literal `true` when the
+/// name is unavailable — and mark it exported. `MAKE_TERMOUT` and
+/// `MAKE_TERMERR` are seeded with exactly this shape.
+///
+/// # Safety
+///
+/// Inherits `define_variable_in_set`'s contract; `name` must end in a NUL byte
+/// and `fd` must be a valid descriptor.
+unsafe fn define_tty_var(
+    ctx: &crate::execctx::ExecContext,
+    name: &'static [u8],
+    fd: i32,
+) -> Result<(), crate::build_result::BuildError> {
+    let tty: *const ::core::ffi::c_char = ttyname(fd);
+    define_variable_in_set(
+        ctx,
+        name.as_ptr() as *const ::core::ffi::c_char,
+        (name.len() - 1) as size_t,
+        if tty.is_null() {
+            b"true\0" as *const u8 as *const ::core::ffi::c_char
+        } else {
+            tty
+        },
+        o_default,
+        0,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
+        NILF,
+    )?
+    .as_mut()
+    .expect("define_variable_in_set always returns a variable")
+    .set_export(v_export as variable_export);
+    Ok(())
+}
+/// Define `name` as an empty, default-origin variable in the current scope and
+/// mark it special — the shape every built-in special variable is seeded with.
+/// The trailing NUL is not part of the name, so the length passed down is one
+/// less than the literal's.
+///
+/// # Safety
+///
+/// Inherits `define_variable_in_set`'s contract; `name` must end in a NUL byte.
+unsafe fn define_special(
+    ctx: &crate::execctx::ExecContext,
+    name: &'static [u8],
+) -> Result<(), crate::build_result::BuildError> {
+    define_variable_in_set(
+        ctx,
+        name.as_ptr() as *const ::core::ffi::c_char,
+        (name.len() - 1) as size_t,
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_default,
+        0,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
+        NILF,
+    )?
+    .as_mut()
+    .expect("define_variable_in_set always returns a variable")
+    .set_special(1 as ::core::ffi::c_uint);
+    Ok(())
 }
 /// Look up a variable whose name is a NUL-terminated byte literal, the shape
 /// every lookup in this module uses. The trailing NUL is not part of the name,
@@ -4887,7 +4816,7 @@ pub unsafe fn define_makeflags(
         1,
         (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
-    );
+    )?;
     if !options.eval_strings.borrow().is_empty() {
         fp = variable_buffer_output(
             ctx,
@@ -4929,6 +4858,8 @@ pub unsafe fn define_makeflags(
     if *fp.offset(0_i32 as isize) as i32 == '-' as i32 {
         fp = fp.offset(1_i32 as isize);
     }
+    // Same hold as the lookup above: the tail restores the variable buffer this
+    // frame swapped out, so the restore runs before a rejection escapes (#561).
     v = define_variable_in_set(
         ctx,
         b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
@@ -4942,7 +4873,8 @@ pub unsafe fn define_makeflags(
         1,
         (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
-    );
+    )
+    .inspect_err(|_| restore_variable_buffer(ctx, bufsave, lensave))?;
     (*v).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     restore_variable_buffer(ctx, bufsave, lensave);
     Ok(v)

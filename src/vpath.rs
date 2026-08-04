@@ -778,7 +778,8 @@ mod vpath_variable_rejection_tests {
             1,
             ctx.variable_globals.global_variable_set.as_ptr(),
             ::core::ptr::null::<crate::floc::Floc>(),
-        );
+        )
+        .expect("test fixture defines a well-formed name");
     }
 
     fn fresh_ctx() -> crate::execctx::ExecContext {

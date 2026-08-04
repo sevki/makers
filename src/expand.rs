@@ -757,7 +757,7 @@ pub fn expand_string_for_file(
     unsafe {
         let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
         let mut savef: *const Floc = ::core::ptr::null::<Floc>();
-        crate::variable::install_file_context_id(ctx, file, &raw mut savev, &raw mut savef);
+        crate::variable::install_file_context_id(ctx, file, &raw mut savev, &raw mut savef)?;
         let cur = ctx.variable_globals.current_variable_set_list.get();
         let mut obuf: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
         let mut olen: size_t = 0;
@@ -1162,7 +1162,8 @@ mod recursive_expansion_tests {
             1,
             ctx.variable_globals.global_variable_set.as_ptr(),
             ::core::ptr::null::<crate::floc::Floc>(),
-        );
+        )
+        .expect("test fixture defines a well-formed name");
         if appending {
             (*v).set_append(1);
         }

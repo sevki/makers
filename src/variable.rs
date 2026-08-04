@@ -508,9 +508,9 @@ unsafe fn check_valid_name(
     flocp: *const Floc,
     name: *const ::core::ffi::c_char,
     length: size_t,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     if !(warning::is_active(ctx, Type::InvalidVar)) {
-        return;
+        return Ok(());
     }
     // The name is valid unless it contains an unquoted blank or newline.
     let name_bytes = ::core::slice::from_raw_parts(name as *const u8, length);
@@ -518,22 +518,18 @@ unsafe fn check_valid_name(
         .iter()
         .any(|&c| stop_set(c, MAP_BLANK | MAP_NEWLINE))
     {
-        return;
+        return Ok(());
     }
     if warning::is_active(ctx, Type::InvalidVar) {
-        // The one bridge this slice leaves standing: `define_variable_in_set`
-        // and its `undefine` twin, the only callers of this check, have
-        // non-`Result` fan-out across 75 call sites and flip in the next slice
-        // of the stack, which retires this line (#432 Phase B, #442).
-        emit_var_name_warning(
+        return emit_var_name_warning(
             ctx,
             flocp.as_ref(),
             warning::action(ctx, Type::InvalidVar) == Action::Error,
             "invalid variable name",
             name_bytes,
-        )
-        .unwrap_or_else(|e| crate::output::exit_on_err(e));
+        );
     }
+    Ok(())
 }
 /// # Safety
 ///
@@ -547,6 +543,63 @@ pub unsafe fn init_hash_global_variable_set(ctx: &crate::execctx::ExecContext) {
         Some(variable_hash_2),
         Some(variable_hash_cmp),
     );
+}
+/// Apply a redefinition to a variable that already exists in the set: the new
+/// value wins only if its origin is at least as strong as the one on record.
+///
+/// # Safety
+///
+/// `value` must be a valid NUL-terminated string and `flocp` null or a valid
+/// location; the existing value is freed here.
+unsafe fn redefine_existing(
+    ctx: &crate::execctx::ExecContext,
+    vr: &mut variable,
+    value: *const ::core::ffi::c_char,
+    origin: variable_origin,
+    recursive: i32,
+    flocp: *const Floc,
+) {
+    if crate::make_main::env_overrides(ctx) && vr.origin() as i32 == o_env as i32 {
+        vr.set_origin(o_env_override as variable_origin);
+    }
+    if origin as i32 >= vr.origin() as i32 {
+        free(vr.value as *mut ::core::ffi::c_void);
+        vr.value = xstrdup(value);
+        if let Some(floc) = flocp.as_ref() {
+            vr.fileinfo = *floc;
+        } else {
+            vr.fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
+        }
+        vr.set_origin(origin as variable_origin);
+        vr.set_recursive(recursive as ::core::ffi::c_uint as ::core::ffi::c_uint);
+    }
+}
+/// Define a variable whose name is a NUL-terminated byte literal in the current
+/// scope, at `origin`. The trailing NUL is not part of the name, so the length
+/// passed down is one less than the literal's. This is the shape every built-in
+/// seeding site in the tree uses.
+///
+/// # Safety
+///
+/// Inherits [`define_variable_in_set`]'s contract; `name` must end in a NUL
+/// byte and `value` must be a valid NUL-terminated string.
+pub unsafe fn define_named(
+    ctx: &crate::execctx::ExecContext,
+    name: &'static [u8],
+    value: *const ::core::ffi::c_char,
+    origin: variable_origin,
+    recursive: i32,
+) -> Result<*mut variable, crate::build_result::BuildError> {
+    define_variable_in_set(
+        ctx,
+        name.as_ptr() as *const ::core::ffi::c_char,
+        (name.len() - 1) as size_t,
+        value,
+        origin,
+        recursive,
+        (*ctx.variable_globals.current_variable_set_list.get()).set,
+        NILF,
+    )
 }
 /// # Safety
 ///
@@ -562,7 +615,7 @@ pub unsafe fn define_variable_in_set(
     recursive: i32,
     set: *mut variable_set,
     flocp: *const Floc,
-) -> *mut variable {
+) -> Result<*mut variable, crate::build_result::BuildError> {
     let mut v: *mut variable;
     let var_slot: *mut *mut variable;
     let mut var_key: variable = variable {
@@ -576,7 +629,7 @@ pub unsafe fn define_variable_in_set(
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    check_valid_name(ctx, flocp, name, length);
+    check_valid_name(ctx, flocp, name, length)?;
     // Route SET through a checked reference; null means the global set.
     let set = if set.is_null() {
         ctx.variable_globals.global_variable_set.as_ptr()
@@ -608,21 +661,8 @@ pub unsafe fn define_variable_in_set(
         let vr = v
             .as_mut()
             .expect("existing variable slot pointer is non-null");
-        if crate::make_main::env_overrides(ctx) && vr.origin() as i32 == o_env as i32 {
-            vr.set_origin(o_env_override as variable_origin);
-        }
-        if origin as i32 >= vr.origin() as i32 {
-            free(vr.value as *mut ::core::ffi::c_void);
-            vr.value = xstrdup(value);
-            if let Some(floc) = flocp.as_ref() {
-                vr.fileinfo = *floc;
-            } else {
-                vr.fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
-            }
-            vr.set_origin(origin as variable_origin);
-            vr.set_recursive(recursive as ::core::ffi::c_uint as ::core::ffi::c_uint);
-        }
-        return v;
+        redefine_existing(ctx, vr, value, origin, recursive, flocp);
+        return Ok(v);
     }
     v = xcalloc(::core::mem::size_of::<variable>() as size_t) as *mut variable;
     // SAFETY: `xcalloc` aborts on allocation failure, so `v` is non-null and
@@ -677,7 +717,7 @@ pub unsafe fn define_variable_in_set(
             vr.set_exportable(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
         }
     }
-    v
+    Ok(v)
 }
 /// # Safety
 ///
@@ -714,7 +754,7 @@ pub unsafe fn undefine_variable_in_set(
     length: size_t,
     mut origin: variable_origin,
     set: *mut variable_set,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let v: *mut variable;
     let var_slot: *mut *mut variable;
     let mut var_key: variable = variable {
@@ -728,7 +768,7 @@ pub unsafe fn undefine_variable_in_set(
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    check_valid_name(ctx, flocp, name, length);
+    check_valid_name(ctx, flocp, name, length)?;
     // Route SET through a checked reference; null means the global set.
     let set = if set.is_null() {
         ctx.variable_globals.global_variable_set.as_ptr()
@@ -770,6 +810,7 @@ pub unsafe fn undefine_variable_in_set(
             }
         }
     }
+    Ok(())
 }
 /// # Safety
 ///
@@ -1026,7 +1067,7 @@ pub fn initialize_file_variables(
                         0,
                         (*ctx.variable_globals.current_variable_set_list.get()).set,
                         &raw mut (*p).variable.fileinfo,
-                    )
+                    )?
                     .as_mut()
                     .expect("define_variable_in_set returned null");
                     v.set_flavor(f_simple as variable_flavor);
@@ -1212,7 +1253,7 @@ unsafe fn populate_set_from_targets(
     ctx: &crate::execctx::ExecContext,
     set: *mut variable_set,
     targets: &[TargetVariable],
-) {
+) -> Result<(), crate::build_result::BuildError> {
     for tv in targets {
         let mut name_buf = tv.name.clone();
         name_buf.push(0);
@@ -1249,7 +1290,7 @@ unsafe fn populate_set_from_targets(
             tv.recursive as i32,
             set,
             flocp,
-        );
+        )?;
         let _ = file_buf;
         if !v.is_null() {
             (*v).set_flavor(tv.flavor as i32 as variable_flavor);
@@ -1262,6 +1303,7 @@ unsafe fn populate_set_from_targets(
             (*v).set_private_var(tv.private_var as ::core::ffi::c_uint);
         }
     }
+    Ok(())
 }
 
 /// Build a transient C-ABI `variable_set_list` chain for a [`FileId`],
@@ -1276,11 +1318,11 @@ unsafe fn populate_set_from_targets(
 pub unsafe fn build_file_setlist(
     ctx: &crate::execctx::ExecContext,
     file: FileId,
-) -> *mut variable_set_list {
+) -> Result<*mut variable_set_list, crate::build_result::BuildError> {
     let next: *mut variable_set_list;
     let (variables, pat_variables, parent) = {
         let Some(node) = ctx.filenodes.get(file) else {
-            return ctx.variable_globals.global_setlist.as_ptr();
+            return Ok(ctx.variable_globals.global_setlist.as_ptr());
         };
         let guard = node.lock().expect("file node poisoned");
         (
@@ -1290,7 +1332,7 @@ pub unsafe fn build_file_setlist(
         )
     };
     if let Some(parent_id) = parent {
-        next = build_file_setlist(ctx, parent_id);
+        next = build_file_setlist(ctx, parent_id)?;
     } else {
         next = ctx.variable_globals.global_setlist.as_ptr();
     }
@@ -1305,15 +1347,15 @@ pub unsafe fn build_file_setlist(
     );
     // Pattern-specific variables first, then the explicit per-target ones (so
     // an explicit definition overrides a pattern one of the same name).
-    populate_set_from_targets(ctx, set, &pat_variables);
-    populate_set_from_targets(ctx, set, &variables);
+    populate_set_from_targets(ctx, set, &pat_variables)?;
+    populate_set_from_targets(ctx, set, &variables)?;
 
     let setlist =
         xmalloc(::core::mem::size_of::<variable_set_list>() as size_t) as *mut variable_set_list;
     (*setlist).set = set;
     (*setlist).next = next;
     (*setlist).next_is_parent = 1;
-    setlist
+    Ok(setlist)
 }
 
 /// Snapshot every live variable in `set` into owned [`TargetVariable`] records
@@ -1368,11 +1410,11 @@ pub unsafe fn install_file_context_id(
     file: FileId,
     oldlist: *mut *mut variable_set_list,
     oldfloc: *mut *const Floc,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     *oldlist = ctx.variable_globals.current_variable_set_list.get();
     ctx.variable_globals
         .current_variable_set_list
-        .set(build_file_setlist(ctx, file));
+        .set(build_file_setlist(ctx, file)?);
     if !oldfloc.is_null() {
         *oldfloc = ctx.reading_file.0.get();
         let recipe_floc: Option<(Vec<u8>, u64)> = ctx.filenodes.get(file).and_then(|node| {
@@ -1395,6 +1437,7 @@ pub unsafe fn install_file_context_id(
             ctx.reading_file.0.set(::core::ptr::null::<Floc>());
         }
     }
+    Ok(())
 }
 
 /// FileId-based form of [`restore_file_context`] that also frees the transient
@@ -1506,26 +1549,18 @@ pub unsafe fn merge_variable_set_lists(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
-    let mut v: *mut variable;
-    let mut buf: [::core::ffi::c_char; 200] = [0; 200];
+/// The `$(dir ...)`/`$(notdir ...)` automatic variables, defined verbatim by
+/// [`define_automatic_variables`]. Each entry is `(name, body)`, both
+/// Render `MAKE_VERSION` into `buf`: the version string, plus `-<description>`
+/// when a remote job backend is configured.
+///
+/// # Safety
+///
+/// `buf` must point to a writable buffer large enough for the version string
+/// and the backend description.
+unsafe fn write_make_version(ctx: &crate::execctx::ExecContext, buf: *mut ::core::ffi::c_char) {
     sprintf(
-        &raw mut buf as *mut ::core::ffi::c_char,
-        b"%u\0" as *const u8 as *const ::core::ffi::c_char,
-        ctx.makelevel(),
-    );
-    define_variable_in_set(
-        ctx,
-        b"MAKELEVEL\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
-        &raw mut buf as *mut ::core::ffi::c_char,
-        o_env,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    sprintf(
-        &raw mut buf as *mut ::core::ffi::c_char,
+        buf,
         b"%s%s%s\0" as *const u8 as *const ::core::ffi::c_char,
         crate::version::version_string(),
         match ctx.remote_backend.0.description() {
@@ -1537,36 +1572,19 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
             Some(desc) => desc.as_ptr(),
         },
     );
-    define_variable_in_set(
-        ctx,
-        b"MAKE_VERSION\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        &raw mut buf as *mut ::core::ffi::c_char,
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"MAKE_HOST\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
-        crate::version::make_host(),
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    v = define_variable_in_set(
-        ctx,
-        b"SHELL\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 6]>() as size_t).wrapping_sub(1),
-        default_shell,
-        o_default,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+}
+/// Seed `SHELL` and `MAKEFILES`, the two automatic variables that need more
+/// than a name and a body: `SHELL` falls back to the built-in default when the
+/// environment supplied an empty or inherited value, and `MAKEFILES` is
+/// exported only once something sets it.
+///
+/// # Safety
+///
+/// `ctx` must have its global variable set initialized.
+unsafe fn seed_shell_and_makefiles(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
+    let v = define_named(ctx, b"SHELL\0", default_shell, o_default, 0)?;
     if *(*v).value as i32 == 0
         || (*v).origin() as i32 == o_env as i32
         || (*v).origin() as i32 == o_env_override as i32
@@ -1575,157 +1593,61 @@ pub unsafe fn define_automatic_variables(ctx: &crate::execctx::ExecContext) {
         (*v).set_origin(o_file as variable_origin);
         (*v).value = xstrdup(default_shell);
     }
-    v = define_variable_in_set(
+    let v = define_named(
         ctx,
-        b"MAKEFILES\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
+        b"MAKEFILES\0",
         b"\0" as *const u8 as *const ::core::ffi::c_char,
         o_default,
         0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+    )?;
     (*v).set_export(v_ifset as variable_export);
-    define_variable_in_set(
-        ctx,
-        b"@D\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(patsubst %/,%,$(dir $@))\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
+    Ok(())
+}
+/// NUL-terminated so they can be handed straight to the variable layer.
+const AUTOMATIC_PATTERN_VARS: &[(&[u8], &[u8])] = &[
+    (b"+F\0", b"$(notdir $+)\0"),
+    (b"@D\0", b"$(patsubst %/,%,$(dir $@))\0"),
+    (b"%D\0", b"$(patsubst %/,%,$(dir $%))\0"),
+    (b"*D\0", b"$(patsubst %/,%,$(dir $*))\0"),
+    (b"<D\0", b"$(patsubst %/,%,$(dir $<))\0"),
+    (b"?D\0", b"$(patsubst %/,%,$(dir $?))\0"),
+    (b"^D\0", b"$(patsubst %/,%,$(dir $^))\0"),
+    (b"+D\0", b"$(patsubst %/,%,$(dir $+))\0"),
+    (b"@F\0", b"$(notdir $@)\0"),
+    (b"%F\0", b"$(notdir $%)\0"),
+    (b"*F\0", b"$(notdir $*)\0"),
+    (b"<F\0", b"$(notdir $<)\0"),
+    (b"?F\0", b"$(notdir $?)\0"),
+    (b"^F\0", b"$(notdir $^)\0"),
+];
+/// # Safety
+///
+/// C-style API operating on raw pointers inherited from the c2rust
+/// translation; all pointer arguments must be valid for the call.
+pub unsafe fn define_automatic_variables(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
+    let mut buf: [::core::ffi::c_char; 200] = [0; 200];
+    sprintf(
+        &raw mut buf as *mut ::core::ffi::c_char,
+        b"%u\0" as *const u8 as *const ::core::ffi::c_char,
+        ctx.makelevel(),
     );
-    define_variable_in_set(
-        ctx,
-        b"%D\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(patsubst %/,%,$(dir $%))\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"*D\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(patsubst %/,%,$(dir $*))\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"<D\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(patsubst %/,%,$(dir $<))\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"?D\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(patsubst %/,%,$(dir $?))\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"^D\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(patsubst %/,%,$(dir $^))\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"+D\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(patsubst %/,%,$(dir $+))\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"@F\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(notdir $@)\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"%F\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(notdir $%)\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"*F\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(notdir $*)\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"<F\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(notdir $<)\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"?F\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(notdir $?)\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"^F\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(notdir $^)\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
-    define_variable_in_set(
-        ctx,
-        b"+F\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-        b"$(notdir $+)\0" as *const u8 as *const ::core::ffi::c_char,
-        o_automatic,
-        1,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+    define_named(ctx, b"MAKELEVEL\0", &raw mut buf as *mut ::core::ffi::c_char, o_env, 0)?;
+    write_make_version(ctx, &raw mut buf as *mut ::core::ffi::c_char);
+    define_named(ctx, b"MAKE_VERSION\0", &raw mut buf as *mut ::core::ffi::c_char, o_default, 0)?;
+    define_named(ctx, b"MAKE_HOST\0", crate::version::make_host(), o_default, 0)?;
+    seed_shell_and_makefiles(ctx)?;
+    // The dir/notdir automatic variables are pure data: same origin, same
+    // recursive flag, names and bodies fixed at compile time. Driving them from
+    // a table keeps this frame from carrying one decision point per definition
+    // now that each can be refused (#442).
+    AUTOMATIC_PATTERN_VARS.iter().try_for_each(|&(name, body)| {
+        define_named(ctx, name, body.as_ptr() as *const ::core::ffi::c_char, o_automatic, 1)
+            .map(|_| ())
+    })?;
+
+    Ok(())
 }
 /// Pure decision behind [`should_export`]: given a variable's export mode,
 /// origin, whether it is exportable, and the `export_all_variables` flag,
@@ -1787,7 +1709,9 @@ pub unsafe fn target_environment(
     let saved_current: *mut variable_set_list =
         ctx.variable_globals.current_variable_set_list.get();
     if let Some(f) = file {
-        owned_list = build_file_setlist(ctx, f);
+        // Plain `?`: the set-list swap below has not happened yet, so a
+        // rejection here leaves nothing installed to unwind.
+        owned_list = build_file_setlist(ctx, f)?;
         ctx.variable_globals.current_variable_set_list.set(owned_list);
     }
     let mut s: *mut variable_set_list;
@@ -2387,7 +2311,7 @@ pub unsafe fn do_variable_definition(
                 (*ctx.variable_globals.current_variable_set_list.get()).set
             },
             flocp,
-        );
+        )?;
         // SAFETY: `define_variable_in_set` always returns a valid, non-null
         // `variable` pointer (it either upserts into the set or `xcalloc`s a new
         // entry, aborting on OOM). Bind a checked reference so these flag writes
@@ -3617,7 +3541,8 @@ mod shell_assignment_tests {
                 1,
                 ctx.variable_globals.global_variable_set.as_ptr(),
                 ::core::ptr::null::<crate::floc::Floc>(),
-            );
+            )
+            .expect("test fixture defines a well-formed name");
             let outer = ctx.variable_buffer.ptr();
 
             let cmd = CString::new("echo hi").unwrap();
@@ -3688,6 +3613,79 @@ mod var_name_rejection_tests {
         assert!(matches!(outcome, Err(BuildError::Failure)));
     }
 
+    /// Defining a variable whose *name* carries a blank is refused rather than
+    /// exiting. This is the arm that retired the last convertible bridge: until
+    /// #442 `check_valid_name` called `exit_on_err` from inside the variable
+    /// layer, so a bad name in one tenant's makefile ended the process.
+    #[test]
+    fn blank_in_defined_name_is_rejected() {
+        let ctx = fresh_ctx();
+        crate::warning::set_action(&ctx, Type::InvalidVar, Action::Error);
+        let name = CString::new("foo bar").unwrap();
+        let value = CString::new("x").unwrap();
+        // SAFETY: both strings outlive the call and the length is exact; the
+        // global set is initialized by `fresh_ctx`.
+        let outcome = unsafe {
+            super::define_variable_in_set(
+                &ctx,
+                name.as_ptr(),
+                7,
+                value.as_ptr(),
+                super::o_file,
+                0,
+                ctx.variable_globals.global_variable_set.as_ptr(),
+                ::core::ptr::null::<crate::floc::Floc>(),
+            )
+        };
+        assert!(matches!(outcome, Err(BuildError::Failure)));
+    }
+
+    /// `undefine` runs the same check, so neither direction can still tear the
+    /// process down on a malformed name.
+    #[test]
+    fn blank_in_undefined_name_is_rejected() {
+        let ctx = fresh_ctx();
+        crate::warning::set_action(&ctx, Type::InvalidVar, Action::Error);
+        let name = CString::new("foo\nbar").unwrap();
+        // SAFETY: as above.
+        let outcome = unsafe {
+            super::undefine_variable_in_set(
+                &ctx,
+                ::core::ptr::null::<crate::floc::Floc>(),
+                name.as_ptr(),
+                7,
+                super::o_file,
+                ctx.variable_globals.global_variable_set.as_ptr(),
+            )
+        };
+        assert!(matches!(outcome, Err(BuildError::Failure)));
+    }
+
+    /// A well-formed definition still lands, so the flip did not turn ordinary
+    /// assignment into an error.
+    #[test]
+    fn well_formed_definition_still_lands() {
+        let ctx = fresh_ctx();
+        crate::warning::set_action(&ctx, Type::InvalidVar, Action::Error);
+        let name = CString::new("PLAIN").unwrap();
+        let value = CString::new("x").unwrap();
+        // SAFETY: as above.
+        let v = unsafe {
+            super::define_variable_in_set(
+                &ctx,
+                name.as_ptr(),
+                5,
+                value.as_ptr(),
+                super::o_file,
+                0,
+                ctx.variable_globals.global_variable_set.as_ptr(),
+                ::core::ptr::null::<crate::floc::Floc>(),
+            )
+        }
+        .expect("well-formed name");
+        assert!(!v.is_null());
+    }
+
     /// A well-formed name still resolves, so the flip did not turn ordinary
     /// lookups into errors: an undefined name is `Ok(null)`, not `Err`.
     #[test]
@@ -3744,7 +3742,7 @@ mod special_var_rejection_tests {
             0,
             ctx.variable_globals.global_variable_set.as_ptr(),
             ::core::ptr::null::<crate::floc::Floc>(),
-        );
+        )?;
         set_special_var(ctx, v, super::o_file)
     }
 

@@ -765,6 +765,53 @@ fn var_ref_rejection_paths_error() {
 }
 
 #[test]
+fn no_builtin_rules() {
+    // `-r` drops the built-in rules and the suffix list, exercising
+    // `clear_builtin_rules`; the default variables survive.
+    check("no-builtin-rules", "103_no_builtins.mk", "all", &["-r"]);
+}
+
+#[test]
+fn no_builtin_variables() {
+    // `-R` additionally routes through `undefine_default_variables`, the other
+    // half of `disable_builtins`.
+    check("no-builtin-variables", "103_no_builtins.mk", "all", &["-R"]);
+}
+
+#[test]
+fn query_mode() {
+    // `-q` walks the whole dependency graph and answers without running a
+    // single recipe, so it covers the remake decision path in isolation.
+    check("query-mode", "104_flag_modes.mk", "all", &["-q"]);
+}
+
+#[test]
+fn touch_mode() {
+    // `-t` marks each target up to date by touching it, driving `touch_file`
+    // and the archive-aware paths beside it.
+    check("touch-mode", "104_flag_modes.mk", "all", &["-t"]);
+}
+
+#[test]
+fn trace_mode() {
+    // `--trace` prints why each target is being remade, which is the reporting
+    // side of the same decision path.
+    check("trace-mode", "104_flag_modes.mk", "all", &["--trace"]);
+}
+
+#[test]
+fn keep_going_mode() {
+    check("keep-going", "104_flag_modes.mk", "all", &["-k"]);
+}
+
+#[test]
+fn what_if_mode() {
+    // `-W` pretends a prerequisite was just modified, forcing the rebuild
+    // decision without touching the filesystem.
+    check("what-if", "104_flag_modes.mk", "all", &["-W", "in.txt"]);
+}
+
+#[test]
 fn warn_global_action() {
     check(
         "warn-error",

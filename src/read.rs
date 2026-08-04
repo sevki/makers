@@ -246,16 +246,13 @@ pub unsafe fn read_all_makefiles(
     mut makefiles: *mut *const ::core::ffi::c_char,
 ) -> Result<Vec<crate::dep::GoalDepNode>, crate::build_result::BuildError> {
     let mut num_makefiles: ::core::ffi::c_uint = 0;
-    define_variable_in_set(
-        ctx,
-        b"MAKEFILE_LIST\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
-        b"\0" as *const u8 as *const ::core::ffi::c_char,
-        o_file,
-        0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+    crate::variable::define_named(
+            ctx,
+            b"MAKEFILE_LIST\0",
+            b"\0" as *const u8 as *const ::core::ffi::c_char,
+            o_file,
+            0,
+        )?;
     if 0x1_i32 & db_level(ctx) != 0 {
         crate::output::trace_out(b"Reading makefiles...\n");
     }
@@ -771,7 +768,7 @@ unsafe fn mark_exported_names(
                 0,
                 ::core::ptr::null_mut::<variable_set>(),
                 fstart,
-            );
+            )?;
         }
         v.as_mut().expect("export: null variable").set_export(flag);
         p = find_next_token(&raw mut cp, &raw mut l);
@@ -1931,7 +1928,7 @@ pub unsafe fn eval(
                                                 ctx,
                                                 filenames.as_deref().unwrap_or(&[]),
                                                 set_default,
-                                            );
+                                            )?;
                                         }
                                     }
                                 }
@@ -2016,7 +2013,7 @@ unsafe fn do_undefine(
         (span.end - span.start) as size_t,
         origin,
         ::core::ptr::null_mut::<variable_set>(),
-    );
+    )?;
     free(var as *mut ::core::ffi::c_void);
     Ok(())
 }
@@ -2479,7 +2476,9 @@ unsafe fn record_target_var(
                 None => enter_file(ctx, name_bytes),
             };
             initialize_file_variables(ctx, fid, 1)?;
-            let head = crate::variable::build_file_setlist(ctx, fid);
+            // Plain `?`: the head is not installed until the next line, so a
+            // rejection here leaves the globals still current.
+            let head = crate::variable::build_file_setlist(ctx, fid)?;
             ctx.variable_globals.current_variable_set_list.set(head);
             v = try_variable_definition(ctx, flocp, defn, origin, s_target)?;
             if v.is_null() {
@@ -2570,7 +2569,7 @@ pub unsafe fn check_specials(
     ctx: &crate::execctx::ExecContext,
     files: &[ParsedName],
     set_default: i32,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     for entry in files {
         // NUL-terminated name for the C variable-layer calls below.
         let mut nm_buf = entry.name.clone();
@@ -2579,76 +2578,55 @@ pub unsafe fn check_specials(
         let special = crate::parser::SpecialTarget::from_name(&entry.name);
         if !posix_pedantic(ctx) && special == Some(crate::parser::SpecialTarget::Posix) {
             crate::make_main::set_posix_pedantic(ctx);
-            define_variable_in_set(
-                ctx,
-                b".SHELLFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t).wrapping_sub(1),
-                b"-ec\0" as *const u8 as *const ::core::ffi::c_char,
-                o_default,
-                0,
-                (*ctx.variable_globals.current_variable_set_list.get()).set,
-                NILF,
-            );
-            define_variable_in_set(
-                ctx,
-                b"CC\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-                b"c99\0" as *const u8 as *const ::core::ffi::c_char,
-                o_default,
-                0,
-                (*ctx.variable_globals.current_variable_set_list.get()).set,
-                NILF,
-            );
-            define_variable_in_set(
-                ctx,
-                b"CFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
-                b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
-                o_default,
-                0,
-                (*ctx.variable_globals.current_variable_set_list.get()).set,
-                NILF,
-            );
-            define_variable_in_set(
-                ctx,
-                b"FC\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 3]>() as size_t).wrapping_sub(1),
-                b"fort77\0" as *const u8 as *const ::core::ffi::c_char,
-                o_default,
-                0,
-                (*ctx.variable_globals.current_variable_set_list.get()).set,
-                NILF,
-            );
-            define_variable_in_set(
-                ctx,
-                b"FFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 7]>() as size_t).wrapping_sub(1),
-                b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
-                o_default,
-                0,
-                (*ctx.variable_globals.current_variable_set_list.get()).set,
-                NILF,
-            );
-            define_variable_in_set(
-                ctx,
-                b"SCCSGETFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-                b"-s\0" as *const u8 as *const ::core::ffi::c_char,
-                o_default,
-                0,
-                (*ctx.variable_globals.current_variable_set_list.get()).set,
-                NILF,
-            );
-            define_variable_in_set(
-                ctx,
-                b"ARFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 8]>() as size_t).wrapping_sub(1),
-                b"-rv\0" as *const u8 as *const ::core::ffi::c_char,
-                o_default,
-                0,
-                (*ctx.variable_globals.current_variable_set_list.get()).set,
-                NILF,
-            );
+            crate::variable::define_named(
+            ctx,
+            b".SHELLFLAGS\0",
+            b"-ec\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            0,
+        )?;
+            crate::variable::define_named(
+            ctx,
+            b"CC\0",
+            b"c99\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            0,
+        )?;
+            crate::variable::define_named(
+            ctx,
+            b"CFLAGS\0",
+            b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            0,
+        )?;
+            crate::variable::define_named(
+            ctx,
+            b"FC\0",
+            b"fort77\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            0,
+        )?;
+            crate::variable::define_named(
+            ctx,
+            b"FFLAGS\0",
+            b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            0,
+        )?;
+            crate::variable::define_named(
+            ctx,
+            b"SCCSGETFLAGS\0",
+            b"-s\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            0,
+        )?;
+            crate::variable::define_named(
+            ctx,
+            b"ARFLAGS\0",
+            b"-rv\0" as *const u8 as *const ::core::ffi::c_char,
+            o_default,
+            0,
+        )?;
         } else if !second_expansion(ctx)
             && special == Some(crate::parser::SpecialTarget::SecondExpansion)
         {
@@ -2706,11 +2684,12 @@ pub unsafe fn check_specials(
                         0,
                         ::core::ptr::null_mut::<variable_set>(),
                         ::core::ptr::null_mut::<Floc>(),
-                    );
+                    )?;
                 }
             }
         }
     }
+    Ok(())
 }
 /// # Safety
 ///
@@ -3933,7 +3912,8 @@ mod file_seq_rejection_tests {
             1,
             ctx.variable_globals.global_variable_set.as_ptr(),
             ::core::ptr::null::<crate::floc::Floc>(),
-        );
+        )
+        .expect("test fixture defines a well-formed name");
     }
 
     fn fresh_ctx() -> crate::execctx::ExecContext {
