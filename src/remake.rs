@@ -37,7 +37,7 @@ pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 use crate::floc::Floc;
 
-use crate::ar::{ar_member_date, ar_name, ar_touch, ParsedArName};
+use crate::ar::{ar_member_date, ar_name_err, ar_touch, ParsedArName};
 use crate::commands::{chop_commands, execute_file_commands};
 use crate::expand::{allocated_expand_variable, variable_buffer_output};
 pub use crate::file::nameseq;
@@ -404,12 +404,12 @@ pub fn update_goal_chain(
                 } else {
                     let mtime: uintmax_t = if opt_rebuilding_makefiles(ctx) {
                         if last_mtime == UNKNOWN_MTIME as uintmax_t {
-                            f_mtime(ctx, head, false)
+                            f_mtime(ctx, head, false)?
                         } else {
                             last_mtime
                         }
                     } else if last_mtime == UNKNOWN_MTIME as uintmax_t {
-                        f_mtime(ctx, head, true)
+                        f_mtime(ctx, head, true)?
                     } else {
                         last_mtime
                     };
@@ -839,7 +839,7 @@ fn update_file_1(
     depth = depth.wrapping_add(1);
     // this_mtime: f_mtime resolves through renames and locks internally.
     let mut this_mtime: uintmax_t = if last_mtime == UNKNOWN_MTIME as uintmax_t {
-        f_mtime(ctx, file, true)
+        f_mtime(ctx, file, true)?
     } else {
         last_mtime
     };
@@ -889,7 +889,7 @@ fn update_file_1(
             .map(|node| node.lock().expect("file node lock poisoned").last_mtime)
             .unwrap_or(UNKNOWN_MTIME as uintmax_t);
         let fmtime: uintmax_t = if ad_last == UNKNOWN_MTIME as uintmax_t {
-            f_mtime(ctx, adfile, true)
+            f_mtime(ctx, adfile, true)?
         } else {
             ad_last
         };
@@ -992,7 +992,7 @@ fn update_file_1(
                 .map(|node| node.lock().expect("file node lock poisoned").last_mtime)
                 .unwrap_or(UNKNOWN_MTIME as uintmax_t);
             let mtime: uintmax_t = if d_last == UNKNOWN_MTIME as uintmax_t {
-                f_mtime(ctx, dfile, true)
+                f_mtime(ctx, dfile, true)?
             } else {
                 d_last
             };
@@ -1087,7 +1087,7 @@ fn update_file_1(
                         .map(|node| node.lock().expect("file node lock poisoned").last_mtime)
                         .unwrap_or(UNKNOWN_MTIME as uintmax_t);
                     let cur = if d_last2 == UNKNOWN_MTIME as uintmax_t {
-                        f_mtime(ctx, dfile2, true)
+                        f_mtime(ctx, dfile2, true)?
                     } else {
                         d_last2
                     };
@@ -1132,7 +1132,7 @@ fn update_file_1(
                     .map(|node| node.lock().expect("file node lock poisoned").last_mtime)
                     .unwrap_or(UNKNOWN_MTIME as uintmax_t);
                 let mtime_0: uintmax_t = if d_last == UNKNOWN_MTIME as uintmax_t {
-                    f_mtime(ctx, dfile, true)
+                    f_mtime(ctx, dfile, true)?
                 } else {
                     d_last
                 };
@@ -1176,7 +1176,7 @@ fn update_file_1(
                         .map(|node| node.lock().expect("file node lock poisoned").last_mtime)
                         .unwrap_or(UNKNOWN_MTIME as uintmax_t);
                     let cur = if d_last2 == UNKNOWN_MTIME as uintmax_t {
-                        f_mtime(ctx, dfile2, true)
+                        f_mtime(ctx, dfile2, true)?
                     } else {
                         d_last2
                     };
@@ -1215,7 +1215,7 @@ fn update_file_1(
                 },
             );
         });
-        notice_finished_file(ctx, file, entry);
+        notice_finished_file(ctx, file, entry)?;
         if 0x2_i32 & dbg(ctx) != 0 {
             print_spaces(depth);
             trace_name(b"Giving up on target file '", &cn, b"'.\n");
@@ -1256,7 +1256,7 @@ fn update_file_1(
             .map(|node| node.lock().expect("file node lock poisoned").last_mtime)
             .unwrap_or(UNKNOWN_MTIME as uintmax_t);
         let d_mtime: uintmax_t = if d_last == UNKNOWN_MTIME as uintmax_t {
-            f_mtime(ctx, dfile, true)
+            f_mtime(ctx, dfile, true)?
         } else {
             d_last
         };
@@ -1323,7 +1323,7 @@ fn update_file_1(
                 n.secondary = true;
             });
         }
-        notice_finished_file(ctx, file, entry);
+        notice_finished_file(ctx, file, entry)?;
         // c2rust: reset name=hname over the chain; with one node per name this is
         // a single sync of the head's name to its hash-name.
         with_entry!(n, {
@@ -1400,11 +1400,15 @@ fn entry_node_mut(guard: &mut FileNode, entry: usize) -> &mut FileNode {
 /// Lock discipline: the head node is locked only for short field-copy/writeback
 /// bursts; `touch_file`, `f_mtime`, and `check_also_make` run with no guard held
 /// (each re-enters the arena). Peer ids are snapshotted before being locked.
-pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId, entry: usize) {
+pub fn notice_finished_file(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    entry: usize,
+) -> Result<(), crate::build_result::BuildError> {
     // Snapshot the bits we need, set command_state/updated on the entry.
     let (ran, has_recipe, recipe_any_recurse, recipe_line_flags, file_phony) = {
         let Some(node) = ctx.filenodes.get(file) else {
-            return;
+            return Ok(());
         };
         let mut guard = node.lock().expect("file node lock poisoned");
         let n = entry_node_mut(&mut guard, entry);
@@ -1449,7 +1453,7 @@ pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId, ent
                 }
             } else if has_recipe {
                 // lock: no guard held across touch_file.
-                let ts = touch_file(ctx, file);
+                let ts = touch_file(ctx, file)?;
                 if let Some(node) = ctx.filenodes.get(file) {
                     let mut g = node.lock().expect("file node lock poisoned");
                     entry_node_mut(&mut g, entry).update_status = ts;
@@ -1563,7 +1567,7 @@ pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId, ent
             };
             if ran != 0 && !ad_phony {
                 // lock: no guard held across f_mtime.
-                f_mtime(ctx, *adfile, false);
+                f_mtime(ctx, *adfile, false)?;
                 if crate::make_main::opt_just_print(ctx) {
                     if let Some(node) = ctx.filenodes.get(*adfile) {
                         node.lock().expect("file node lock poisoned").last_mtime = new_mtime();
@@ -1580,6 +1584,7 @@ pub fn notice_finished_file(ctx: &crate::execctx::ExecContext, file: FileId, ent
             entry_node_mut(&mut g, entry).update_status = us_success;
         }
     }
+    Ok(())
 }
 
 /// FileId port of `check_dep`: decide whether prerequisite `file` forces its
@@ -1620,7 +1625,7 @@ pub fn check_dep(
             .map(|node| node.lock().expect("file node lock poisoned").last_mtime)
             .unwrap_or(UNKNOWN_MTIME as uintmax_t);
         let mtime: uintmax_t = if last_mtime == UNKNOWN_MTIME as uintmax_t {
-            f_mtime(ctx, live, true)
+            f_mtime(ctx, live, true)?
         } else {
             last_mtime
         };
@@ -1655,7 +1660,7 @@ pub fn check_dep(
             .map(|node| node.lock().expect("file node lock poisoned").last_mtime)
             .unwrap_or(UNKNOWN_MTIME as uintmax_t);
         let mtime_0: uintmax_t = if last_mtime == UNKNOWN_MTIME as uintmax_t {
-            f_mtime(ctx, live, true)
+            f_mtime(ctx, live, true)?
         } else {
             last_mtime
         };
@@ -1783,7 +1788,10 @@ pub fn check_dep(
 ///
 /// Lock discipline: the node is locked only to copy out its name; all I/O runs
 /// with no guard held.
-pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStatus {
+pub fn touch_file(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+) -> Result<UpdateStatus, crate::build_result::BuildError> {
     let name = node_name(ctx, file);
     let cn = cname(&name);
     let name_ptr = cn.as_ptr() as *const ::core::ffi::c_char;
@@ -1798,14 +1806,14 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
             );
         }
         if crate::make_main::opt_just_print(ctx) {
-            return us_success;
+            return Ok(us_success);
         }
-        if ar_name(ctx, ::core::ffi::CStr::from_ptr(name_ptr)) {
-            return if ar_touch(ctx, name_ptr) != 0 {
+        if ar_name_err(ctx, ::core::ffi::CStr::from_ptr(name_ptr))? {
+            return Ok(if ar_touch(ctx, name_ptr)? != 0 {
                 us_failed
             } else {
                 us_success
-            };
+            });
         }
         let mut fd: i32;
         loop {
@@ -1820,7 +1828,7 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
                 b"touch: open: \0" as *const u8 as *const ::core::ffi::c_char,
                 name_ptr,
             );
-            return UpdateStatus::Failed;
+            return Ok(UpdateStatus::Failed);
         }
         let mut statbuf: stat = stat {
             st_dev: 0,
@@ -1853,7 +1861,7 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
                 b"touch: fstat: \0" as *const u8 as *const ::core::ffi::c_char,
                 name_ptr,
             );
-            return UpdateStatus::Failed;
+            return Ok(UpdateStatus::Failed);
         }
         loop {
             e = read(fd, &raw mut buf as *mut ::core::ffi::c_void, 1) as i32;
@@ -1867,7 +1875,7 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
                 b"touch: read: \0" as *const u8 as *const ::core::ffi::c_char,
                 name_ptr,
             );
-            return UpdateStatus::Failed;
+            return Ok(UpdateStatus::Failed);
         }
         let mut o: off_t;
         loop {
@@ -1882,7 +1890,7 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
                 b"touch: lseek: \0" as *const u8 as *const ::core::ffi::c_char,
                 name_ptr,
             );
-            return UpdateStatus::Failed;
+            return Ok(UpdateStatus::Failed);
         }
         loop {
             e = write(fd, &raw mut buf as *const ::core::ffi::c_void, 1) as i32;
@@ -1896,7 +1904,7 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
                 b"touch: write: \0" as *const u8 as *const ::core::ffi::c_char,
                 name_ptr,
             );
-            return UpdateStatus::Failed;
+            return Ok(UpdateStatus::Failed);
         }
         if statbuf.st_size == 0 as __off_t {
             close(fd);
@@ -1912,12 +1920,12 @@ pub fn touch_file(ctx: &crate::execctx::ExecContext, file: FileId) -> UpdateStat
                     b"touch: open: \0" as *const u8 as *const ::core::ffi::c_char,
                     name_ptr,
                 );
-                return UpdateStatus::Failed;
+                return Ok(UpdateStatus::Failed);
             }
         }
         close(fd);
     }
-    us_success
+    Ok(us_success)
 }
 
 /// FileId port of `remake_file`: run the target's recipe (or, if it has none,
@@ -1965,7 +1973,7 @@ pub fn remake_file(
             entry_node_mut(&mut g, entry).update_status = UpdateStatus::Success;
         }
     }
-    notice_finished_file(ctx, file, entry);
+    notice_finished_file(ctx, file, entry)?;
     Ok(())
 }
 
@@ -2017,12 +2025,16 @@ fn adjusted_now_from_clock(now: uintmax_t, resolution: i32) -> uintmax_t {
 /// across `name_mtime`, `vpath_search`, `library_search`, `ar_*`,
 /// `rename_file`/`rehash_file`, or the recursive `f_mtime` calls. The
 /// renamed/double-colon/prev chains are walked by re-locking each node.
-pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) -> uintmax_t {
+pub fn f_mtime(
+    ctx: &crate::execctx::ExecContext,
+    file: FileId,
+    search: bool,
+) -> Result<uintmax_t, crate::build_result::BuildError> {
     let mut mtime: uintmax_t;
     // Snapshot the head's name/flags.
     let (name, ignore_vpath) = {
         let Some(node) = ctx.filenodes.get(file) else {
-            return NONEXISTENT_MTIME as uintmax_t;
+            return Ok(NONEXISTENT_MTIME as uintmax_t);
         };
         let n = node.lock().expect("file node lock poisoned");
         (n.name.clone(), n.ignore_vpath)
@@ -2030,7 +2042,7 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
     let cn = cname(&name);
     let name_ptr = cn.as_ptr() as *const ::core::ffi::c_char;
     let mut file = file;
-    if unsafe { ar_name(ctx, ::core::ffi::CStr::from_ptr(name_ptr)) } {
+    if unsafe { ar_name_err(ctx, ::core::ffi::CStr::from_ptr(name_ptr))? } {
         let memmtime: uintmax_t;
         // Own the split `archive`/`member` buffer for the rest of this branch
         // (replacing the old `ar_parse_name` xstrdup + `free`).
@@ -2047,7 +2059,7 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
             Some(id) => id,
             None => enter_file(ctx, &arname_bytes),
         };
-        mtime = f_mtime(ctx, arfile, search);
+        mtime = f_mtime(ctx, arfile, search)?;
         arfile = follow_renamed(ctx, arfile);
         let ar_hname = node_name(ctx, arfile);
         let ar_hname_c = cname(&ar_hname);
@@ -2063,7 +2075,7 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
             newname.push(b')');
             let (n_name, n_hname) = {
                 let Some(node) = ctx.filenodes.get(file) else {
-                    return NONEXISTENT_MTIME as uintmax_t;
+                    return Ok(NONEXISTENT_MTIME as uintmax_t);
                 };
                 let n = node.lock().expect("file node lock poisoned");
                 (n.name.clone(), n.hname.clone())
@@ -2079,17 +2091,18 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
         // file.low_resolution_time = true; capture hname for member-date below.
         let file_hname = {
             let Some(node) = ctx.filenodes.get(file) else {
-                return NONEXISTENT_MTIME as uintmax_t;
+                return Ok(NONEXISTENT_MTIME as uintmax_t);
             };
             let mut n = node.lock().expect("file node lock poisoned");
             n.low_resolution_time = true;
             n.hname.clone()
         };
         if mtime == NONEXISTENT_MTIME as uintmax_t {
-            return NONEXISTENT_MTIME as uintmax_t;
+            return Ok(NONEXISTENT_MTIME as uintmax_t);
         }
         let fh = cname(&file_hname);
-        member_date = unsafe { ar_member_date(ctx, fh.as_ptr() as *const ::core::ffi::c_char) };
+        member_date =
+            unsafe { ar_member_date(ctx, fh.as_ptr() as *const ::core::ffi::c_char)? };
         if member_date == -1_i32 as time_t
             || memmtime != NONEXISTENT_MTIME as uintmax_t
                 && (memmtime.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
@@ -2117,11 +2130,11 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
                     ::core::ptr::null_mut::<::core::ffi::c_uint>(),
                     ::core::ptr::null_mut::<::core::ffi::c_uint>(),
                 )
-            };
+            }?;
             let is_lib = name.len() >= 2 && name[0] == b'-' && name[1] == b'l';
             if !name_0.is_null()
                 || is_lib && {
-                    name_0 = unsafe { library_search(ctx, name_ptr, &raw mut mtime) };
+                    name_0 = unsafe { library_search(ctx, name_ptr, &raw mut mtime) }?;
                     !name_0.is_null()
                 }
             {
@@ -2144,7 +2157,7 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
                     return if last_mtime == UNKNOWN_MTIME as uintmax_t {
                         f_mtime(ctx, live, true)
                     } else {
-                        last_mtime
+                        Ok(last_mtime)
                     };
                 }
                 rehash_file(ctx, file, &name_0_bytes);
@@ -2250,7 +2263,7 @@ pub fn f_mtime(ctx: &crate::execctx::ExecContext, file: FileId, search: bool) ->
             }
         }
     }
-    mtime
+    Ok(mtime)
 }
 
 /// # Safety
@@ -2402,11 +2415,14 @@ unsafe fn follow_symlink_mtime(
     }
     mtime
 }
-unsafe extern "C" fn library_search(
+// Not `extern "C"` since #442: it takes a `&ExecContext`, so it was never
+// callable from C — the ABI was a c2rust leftover, and a `Result` return is
+// not FFI-safe.
+unsafe fn library_search(
     ctx: &crate::execctx::ExecContext,
     mut lib: *const ::core::ffi::c_char,
     mtime_ptr: *mut uintmax_t,
-) -> *const ::core::ffi::c_char {
+) -> Result<*const ::core::ffi::c_char, crate::build_result::BuildError> {
     const dirs: [*const ::core::ffi::c_char; 4] = [
         b"/lib\0" as *const u8 as *const ::core::ffi::c_char,
         b"/usr/lib\0" as *const u8 as *const ::core::ffi::c_char,
@@ -2423,16 +2439,11 @@ unsafe extern "C" fn library_search(
     let mut best_vpath: ::core::ffi::c_uint = 0;
     let mut best_path: ::core::ffi::c_uint = 0;
     let mut dp: *const *const ::core::ffi::c_char;
-    // `library_search` returns a bare name pointer and its only caller is
-    // `f_mtime`, which returns `uintmax_t` across 24 call sites — that cone is
-    // its own slice, so a rejected `.LIBPATTERNS` expansion bridges here until
-    // then (#432 Phase B, #442).
     libpatterns = allocated_expand_variable(
         ctx,
         b".LIBPATTERNS\0" as *const u8 as *const ::core::ffi::c_char,
         (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-    )
-    .unwrap_or_else(|e| crate::output::exit_on_err(e));
+    )?;
     lib = lib.offset(2_i32 as isize);
     liblen = strlen(lib) as size_t;
     p2 = libpatterns;
@@ -2493,7 +2504,7 @@ unsafe extern "C" fn library_search(
                     },
                     &raw mut vpath_index,
                     &raw mut path_index,
-                );
+                )?;
                 if !f.is_null()
                     && (file.is_null()
                         || vpath_index < best_vpath
@@ -2554,7 +2565,7 @@ unsafe extern "C" fn library_search(
         }
     }
     free(libpatterns as *mut ::core::ffi::c_void);
-    file
+    Ok(file)
 }
 pub const LIBDIR: [::core::ffi::c_char; 15] =
     unsafe { ::core::mem::transmute::<[u8; 15], [::core::ffi::c_char; 15]>(*b"/usr/local/lib\0") };
@@ -2607,7 +2618,7 @@ mod f_mtime_tests {
         let (path, name) = make_temp_file();
         let ctx = crate::execctx::ExecContext::default();
         let id = intern_named(&ctx, &name, true, false);
-        let mtime = f_mtime(&ctx, id, false);
+        let mtime = f_mtime(&ctx, id, false).expect("no `~`/archive rejection in this fixture");
         assert_ne!(
             mtime, NONEXISTENT_MTIME as uintmax_t,
             "an existing file has a real mtime"
@@ -2643,7 +2654,7 @@ mod f_mtime_tests {
         let name = missing.to_str().unwrap().as_bytes().to_vec();
         let ctx = crate::execctx::ExecContext::default();
         let id = intern_named(&ctx, &name, true, true);
-        let mtime = f_mtime(&ctx, id, false);
+        let mtime = f_mtime(&ctx, id, false).expect("no `~`/archive rejection in this fixture");
         assert_eq!(
             mtime, NONEXISTENT_MTIME as uintmax_t,
             "a missing file with no search reports nonexistent"
@@ -2658,7 +2669,7 @@ mod f_mtime_tests {
         let (path, name) = make_temp_file();
         let ctx = crate::execctx::ExecContext::default();
         let id = intern_named(&ctx, &name, false, false);
-        let mtime = f_mtime(&ctx, id, false);
+        let mtime = f_mtime(&ctx, id, false).expect("no `~`/archive rejection in this fixture");
         assert!(
             mtime > ORDINARY_MTIME_MIN as uintmax_t,
             "an existing past-dated file resolves to an ordinary mtime"
@@ -2702,7 +2713,7 @@ mod f_mtime_tests {
         }
         let ctx = crate::execctx::ExecContext::default();
         let id = intern_named(&ctx, &name, false, false);
-        let mtime = f_mtime(&ctx, id, false);
+        let mtime = f_mtime(&ctx, id, false).expect("no `~`/archive rejection in this fixture");
         assert!(
             mtime > ORDINARY_MTIME_MIN as uintmax_t,
             "the future-dated file still resolves to an ordinary mtime"
@@ -2792,5 +2803,74 @@ mod f_mtime_tests {
             c_new = nn;
             c_ora = on;
         }
+    }
+}
+
+#[cfg(test)]
+mod touch_file_tests {
+    //! Since #442 `touch_file` returns `Result`: the archive arm's rejection
+    //! travels back out to `notice_finished_file` instead of ending the
+    //! process. These also give `touch_file` its first coverage.
+
+    use super::touch_file;
+    use crate::file::{enter_file, UpdateStatus};
+
+    fn fresh_ctx() -> crate::execctx::ExecContext {
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: fresh context; each table is initialized once.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+            crate::expand::initialize_variable_output(&ctx);
+        }
+        ctx
+    }
+
+    /// Touching an ordinary existing file succeeds and leaves it in place.
+    #[test]
+    fn touches_an_existing_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "touch-file-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("target.txt");
+        std::fs::write(&path, b"contents").unwrap();
+
+        let ctx = fresh_ctx();
+        let name = path.to_str().unwrap().as_bytes().to_vec();
+        let id = enter_file(&ctx, &name);
+        let status = touch_file(&ctx, id).expect("a plain path is not an archive reference");
+        assert_eq!(status, UpdateStatus::Success);
+        assert!(path.exists(), "touch does not remove the file");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            b"contents",
+            "touch does not truncate the file"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A target that does not exist is created by the touch, matching make's
+    /// `open(..., O_CREAT)`.
+    #[test]
+    fn creates_a_missing_file() {
+        let dir = std::env::temp_dir().join(format!(
+            "touch-file-new-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("fresh.txt");
+
+        let ctx = fresh_ctx();
+        let name = path.to_str().unwrap().as_bytes().to_vec();
+        let id = enter_file(&ctx, &name);
+        let status = touch_file(&ctx, id).expect("a plain path is not an archive reference");
+        assert_eq!(status, UpdateStatus::Success);
+        assert!(path.exists(), "the target is created");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

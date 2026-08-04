@@ -106,7 +106,7 @@ pub struct passwd {
     pub pw_dir: *mut ::core::ffi::c_char,
     pub pw_shell: *mut ::core::ffi::c_char,
 }
-use crate::ar::{ar_glob, ar_name, ParsedArName};
+use crate::ar::{ar_glob, ar_name_err, ParsedArName};
 use crate::dir::{dir_setup_glob, file_exists_p};
 use crate::expand::{
     allocated_expand_string_for_file, allocated_expand_variable, expand_string_buf,
@@ -336,7 +336,7 @@ pub unsafe fn read_all_makefiles(
         let default_makefiles_table = default_makefiles;
         let mut p_0: *const *const ::core::ffi::c_char =
             &raw const default_makefiles_table as *const *const ::core::ffi::c_char;
-        while !(*p_0).is_null() && file_exists_p(ctx, *p_0) == 0 {
+        while !(*p_0).is_null() && file_exists_p(ctx, *p_0)? == 0 {
             p_0 = p_0.offset(1_i32 as isize);
         }
         if !(*p_0).is_null() {
@@ -1167,7 +1167,7 @@ pub unsafe fn eval(
                                 c.as_mut_ptr() as *mut ::core::ffi::c_char
                             }),
                             p,
-                        );
+                        )?;
                     } else if matches!(
                         line_class,
                         crate::parser::LineClass::File(
@@ -3683,7 +3683,7 @@ pub unsafe fn parse_file_seq(
                         name = tildep;
                     }
                 }
-                if !(flags & 0x2_i32 != 0) && ar_name(ctx, CStr::from_ptr(name)) {
+                if !(flags & 0x2_i32 != 0) && ar_name_err(ctx, CStr::from_ptr(name))? {
                     let parsed = ParsedArName::parse(CStr::from_ptr(name));
                     memname = parsed.memname();
                     name = parsed.arname();

@@ -122,23 +122,32 @@ fn dep_with_name(name: Vec<u8>) -> DepNode {
 }
 
 /// Whether `name` is impossible to make (wraps the name-based `file_impossible_p`).
-fn is_impossible(ctx: &crate::execctx::ExecContext, name: &[u8]) -> bool {
+fn is_impossible(
+    ctx: &crate::execctx::ExecContext,
+    name: &[u8],
+) -> Result<bool, crate::build_result::BuildError> {
     let mut buf = name.to_vec();
     buf.push(0);
     // SAFETY: NUL-terminated name; `file_impossible_p` is name-based.
-    unsafe { file_impossible_p(ctx, buf.as_ptr().cast()) != 0 }
+    unsafe { file_impossible_p(ctx, buf.as_ptr().cast()) }.map(|r| r != 0)
 }
 
 /// Whether `name` exists on disk (wraps the name-based `file_exists_p`).
-fn exists(ctx: &crate::execctx::ExecContext, name: &[u8]) -> bool {
+fn exists(
+    ctx: &crate::execctx::ExecContext,
+    name: &[u8],
+) -> Result<bool, crate::build_result::BuildError> {
     let mut buf = name.to_vec();
     buf.push(0);
     // SAFETY: NUL-terminated name; `file_exists_p` is name-based.
-    unsafe { file_exists_p(ctx, buf.as_ptr().cast()) != 0 }
+    unsafe { file_exists_p(ctx, buf.as_ptr().cast()) }.map(|r| r != 0)
 }
 
 /// Mark `name` impossible (wraps the name-based `file_impossible`).
-fn mark_impossible(ctx: &crate::execctx::ExecContext, name: &[u8]) {
+fn mark_impossible(
+    ctx: &crate::execctx::ExecContext,
+    name: &[u8],
+) -> Result<(), crate::build_result::BuildError> {
     let mut buf = name.to_vec();
     buf.push(0);
     // SAFETY: NUL-terminated name; `file_impossible` is name-based.
@@ -146,7 +155,10 @@ fn mark_impossible(ctx: &crate::execctx::ExecContext, name: &[u8]) {
 }
 
 /// VPATH search for `name`; returns the resolved name bytes if found.
-fn vpath_lookup(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Option<Vec<u8>> {
+fn vpath_lookup(
+    ctx: &crate::execctx::ExecContext,
+    name: &[u8],
+) -> Result<Option<Vec<u8>>, crate::build_result::BuildError> {
     let mut buf = name.to_vec();
     buf.push(0);
     // SAFETY: NUL-terminated name; the out-params are all null (we only want the
@@ -159,13 +171,13 @@ fn vpath_lookup(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Option<Vec<u8
             ::core::ptr::null_mut::<::core::ffi::c_uint>(),
             ::core::ptr::null_mut::<::core::ffi::c_uint>(),
         )
-    };
-    if p.is_null() {
+    }?;
+    Ok(if p.is_null() {
         None
     } else {
         // SAFETY: non-null NUL-terminated string from vpath_search.
         Some(unsafe { ::core::ffi::CStr::from_ptr(p).to_bytes().to_vec() })
-    }
+    })
 }
 
 /// Search the implicit-rule database for a rule that can build `file`,
@@ -612,7 +624,7 @@ pub fn pattern_search(
                 for dr in &expanded {
                     let dr_name = dr.name.clone().into_bytes();
                     let is_rule = dr.name.as_bytes() == dep_name_bytes.as_slice();
-                    if is_impossible(ctx, &dr_name) {
+                    if is_impossible(ctx, &dr_name)? {
                         let defn = rule_defn_of(ctx, rule_idx);
                         let mut msg = b"Rejecting rule '".to_vec();
                         msg.extend_from_slice(&defn);
@@ -673,7 +685,7 @@ pub fn pattern_search(
                         msg.extend_from_slice(&dr_name);
                         msg.extend_from_slice(b"' ought to exist.\n");
                         dbs(ctx, depth, &msg);
-                    } else if exists(ctx, &dr_name) {
+                    } else if exists(ctx, &dr_name)? {
                         deplist.push(pe);
                         let mut msg = b"Found '".to_vec();
                         msg.extend_from_slice(&dr_name);
@@ -689,7 +701,7 @@ pub fn pattern_search(
                         if df.is_some() {
                             found_compat_rule = true;
                         }
-                        if let Some(vname) = vpath_lookup(ctx, &dr_name) {
+                        if let Some(vname) = vpath_lookup(ctx, &dr_name)? {
                             let mut msg = b"Found prerequisite '".to_vec();
                             msg.extend_from_slice(&dr_name);
                             msg.extend_from_slice(b"' as VPATH '");
@@ -731,7 +743,7 @@ pub fn pattern_search(
                                     found_intermediate = true;
                                 } else {
                                     if df.is_none() {
-                                        mark_impossible(ctx, &dr_name);
+                                        mark_impossible(ctx, &dr_name)?;
                                     }
                                 }
                             }
@@ -1114,7 +1126,7 @@ fn second_expansion_deps(
                 &stem_str[..nul]
             };
             crate::variable::initialize_file_variables(ctx, file, 0)?;
-            crate::commands::set_file_variables(ctx, file, Some(stem_slice));
+            crate::commands::set_file_variables(ctx, file, Some(stem_slice))?;
             *file_vars_initialized = true;
         }
 

@@ -152,7 +152,7 @@ unsafe fn vpath_from_variable(
         name.as_ptr() as *const c_char,
         (name.len() - 1) as size_t,
     )
-    .map(|p| vpath_chain_from_expansion(ctx, p))
+    .and_then(|p| vpath_chain_from_expansion(ctx, p))
 }
 
 /// Build a `%`-pattern vpath chain from an already-expanded search path.
@@ -164,7 +164,7 @@ unsafe fn vpath_from_variable(
 unsafe fn vpath_chain_from_expansion(
     ctx: &crate::execctx::ExecContext,
     p: *mut c_char,
-) -> Option<*mut Vpath> {
+) -> Result<Option<*mut Vpath>, crate::build_result::BuildError> {
     // The expansion lives in a mutable buffer that construct_vpath_list may
     // overwrite in place; view it (plus its NUL) as a byte slice.
     let len = strlen(p);
@@ -175,19 +175,22 @@ unsafe fn vpath_chain_from_expansion(
         .position(|&c| !stop_set(c, MAP_SPACE))
         .unwrap_or(len);
     if start == len {
-        return None;
+        return Ok(None);
     }
     let saved = ctx.vpaths.0.get();
     ctx.vpaths.0.set(null_mut());
     let mut pattern = *b"%\0";
-    construct_vpath_list(
+    // The saved chain is restored before a rejection escapes, so a refused
+    // `dir_name` never leaves the module's vpath list swapped out.
+    let built = construct_vpath_list(
         ctx,
         pattern.as_mut_ptr() as *mut c_char,
         buf[start..].as_mut_ptr() as *mut c_char,
     );
     let list = ctx.vpaths.0.get();
     ctx.vpaths.0.set(saved);
-    Some(list)
+    built?;
+    Ok(Some(list))
 }
 
 /// Construct the `Vpath` listing for the pattern and search path given.
@@ -204,7 +207,7 @@ pub unsafe fn construct_vpath_list(
     ctx: &crate::execctx::ExecContext,
     pattern: *mut c_char,
     dirpath: *mut c_char,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let percent: *const c_char = if pattern.is_null() {
         null()
     } else {
@@ -239,7 +242,7 @@ pub unsafe fn construct_vpath_list(
             }
             path = next;
         }
-        return;
+        return Ok(());
     }
 
     // Tokenize the search path into its directory entries.
@@ -269,7 +272,7 @@ pub unsafe fn construct_vpath_list(
         if len > 1 || bytes[start] != b'.' {
             let cached =
                 strcache_add_len(ctx, bytes[start..].as_ptr() as *const c_char, len as size_t);
-            entries.push(dir_name(ctx, cached));
+            entries.push(dir_name(ctx, cached)?);
             if len as size_t > maxvpath {
                 maxvpath = len as size_t;
             }
@@ -282,7 +285,7 @@ pub unsafe fn construct_vpath_list(
 
     if entries.is_empty() {
         // There were no entries; forget the whole thing.
-        return;
+        return Ok(());
     }
 
     // Copy the gathered entries into an xmalloc'd, null-terminated array
@@ -312,6 +315,7 @@ pub unsafe fn construct_vpath_list(
         let off = percent as usize - pattern as usize;
         cstr_bytes((*path).pattern)[off..].as_ptr() as *const c_char
     };
+    Ok(())
 }
 
 /// Search the `GPATH` list for a pathname (`file` of length `len`, which is
@@ -480,7 +484,7 @@ unsafe fn selective_vpath_search(
     file: *const c_char,
     mut mtime_ptr: *mut uintmax_t,
     path_index: *mut c_uint,
-) -> *const c_char {
+) -> Result<*const c_char, crate::build_result::BuildError> {
     let maxvpath = (*path).maxlen;
 
     // If and only if *FILE is NOT a target, accept prospective files that
@@ -552,7 +556,7 @@ unsafe fn selective_vpath_search(
             // (the directory cache knows it already), and ask the cache
             // whether the file exists there.
             name_buf[p] = 0;
-            exists = dir_file_exists_p(ctx, name, filename) != 0;
+            exists = dir_file_exists_p(ctx, name, filename)? != 0;
             exists_in_cache = exists;
         }
 
@@ -596,11 +600,11 @@ unsafe fn selective_vpath_search(
             if let Some(slot) = path_index.as_mut() {
                 *slot = i as c_uint;
             }
-            return strcache_add_len(ctx, name, (p + 1 + flen) as size_t);
+            return Ok(strcache_add_len(ctx, name, (p + 1 + flen) as size_t));
         }
     }
 
-    null()
+    Ok(null())
 }
 
 /// Compose `"<entry>[/<dirprefix>]/<filename>\0"` into `name_buf` and return the
@@ -649,7 +653,7 @@ pub unsafe fn vpath_search(
     mtime_ptr: *mut uintmax_t,
     vpath_index: *mut c_uint,
     path_index: *mut c_uint,
-) -> *const c_char {
+) -> Result<*const c_char, crate::build_result::BuildError> {
     // Absolute names need no vpath search.
     let file_ref = file
         .as_ref()
@@ -657,7 +661,7 @@ pub unsafe fn vpath_search(
     let vpaths = ctx.vpaths.0.get();
     let general_vpath = ctx.general_vpath.0.get();
     if *file_ref == '/' as c_char || (vpaths.is_null() && general_vpath.is_null()) {
-        return null();
+        return Ok(null());
     }
 
     if !vpath_index.is_null() {
@@ -673,9 +677,9 @@ pub unsafe fn vpath_search(
     let mut v = vpaths;
     while !v.is_null() {
         if pattern_matches((*v).pattern, (*v).percent, file) != 0 {
-            let p = selective_vpath_search(ctx, v, file, mtime_ptr, path_index);
+            let p = selective_vpath_search(ctx, v, file, mtime_ptr, path_index)?;
             if !p.is_null() {
-                return p;
+                return Ok(p);
             }
         }
         if !vpath_index.is_null() {
@@ -685,13 +689,13 @@ pub unsafe fn vpath_search(
     }
 
     if !general_vpath.is_null() {
-        let p = selective_vpath_search(ctx, general_vpath, file, mtime_ptr, path_index);
+        let p = selective_vpath_search(ctx, general_vpath, file, mtime_ptr, path_index)?;
         if !p.is_null() {
-            return p;
+            return Ok(p);
         }
     }
 
-    null()
+    Ok(null())
 }
 
 /// Print the data base of VPATH search paths.

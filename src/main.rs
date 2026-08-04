@@ -2664,7 +2664,7 @@ unsafe fn main_0(
                 .to_vec()
         };
         let f = enter_file(&ctx, &name_bytes);
-        let mtime = f_mtime(&ctx, f, false);
+        let mtime = f_mtime(&ctx, f, false)?;
         if let Some(node) = ctx.filenodes.get(f) {
             let mut guard = node.lock().expect("file node poisoned");
             guard.updated = true;
@@ -2941,7 +2941,7 @@ unsafe fn main_0(
     install_default_suffix_rules(&ctx, options);
     convert_to_pattern(&ctx);
     install_default_implicit_rules(&ctx, options)?;
-    snap_implicit_rules(&ctx);
+    snap_implicit_rules(&ctx)?;
     build_vpath_lists(&ctx)?;
     if !options.old_files.borrow().is_empty() {
         for of in options.old_files.borrow().iter() {
@@ -3028,7 +3028,7 @@ unsafe fn main_0(
             };
             if !skip {
                 let mtime = if last_mtime == UNKNOWN_MTIME as uintmax_t {
-                    f_mtime(&ctx, fid, false)
+                    f_mtime(&ctx, fid, false)?
                 } else {
                     last_mtime
                 };
@@ -3145,7 +3145,7 @@ unsafe fn main_0(
                     if updated {
                         if upd_status == crate::file::UpdateStatus::Success {
                             let mtime = if last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                f_mtime(&ctx, fid.unwrap(), false)
+                                f_mtime(&ctx, fid.unwrap(), false)?
                             } else {
                                 last_mtime
                             };
@@ -3164,7 +3164,7 @@ unsafe fn main_0(
                                 &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
                             );
                             let mtime: uintmax_t = if last_mtime == UNKNOWN_MTIME as uintmax_t {
-                                f_mtime(&ctx, fid.unwrap(), false)
+                                f_mtime(&ctx, fid.unwrap(), false)?
                             } else {
                                 last_mtime
                             };

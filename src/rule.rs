@@ -170,7 +170,9 @@ fn streq(a: &[u8], b: &[u8]) -> bool {
 /// Snap the implicit-rule database after reading all makefiles: count rules,
 /// compute the various `max_pattern_*` statistics, mark deps whose directory
 /// does not exist, and append `.EXTRA_PREREQS` to every rule's dep chain.
-pub fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
+pub fn snap_implicit_rules(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
     // `.EXTRA_PREREQS` expansion is a cross-file concern (`expand_extra_prereqs`
     // is still legacy `*mut`-based). The pointer-free port collects the extra
     // prereq names here; until that callee is converted this stays empty.
@@ -192,6 +194,10 @@ pub fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
     ctx.max_pattern_targets.set(0);
     ctx.max_pattern_deps.set(0);
 
+    // The closure the rule store hands out returns `()`, so the walk's verdict
+    // is carried out in a local and re-raised once the borrow has been
+    // released — the store must not stay borrowed across a `?`.
+    let mut rejected = None;
     with_pattern_rules_mut(ctx, |rules| {
         for rr in rules.iter_mut() {
             let mut ndeps: ::core::ffi::c_uint = pre_ndeps;
@@ -222,7 +228,14 @@ pub fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
                     // SAFETY: `dir_file_exists_p` reads two NUL-terminated C
                     // strings; `dirname` is NUL-terminated and `c""` is empty.
                     let exists =
-                        unsafe { dir_file_exists_p(ctx, dirname.as_ptr().cast(), c"".as_ptr()) };
+                        match unsafe { dir_file_exists_p(ctx, dirname.as_ptr().cast(), c"".as_ptr()) }
+                        {
+                            Ok(e) => e,
+                            Err(e) => {
+                                rejected = Some(e);
+                                return;
+                            }
+                        };
                     d.changed = exists == 0;
                 } else {
                     d.changed = false;
@@ -235,6 +248,10 @@ pub fn snap_implicit_rules(ctx: &crate::execctx::ExecContext) {
             }
         }
     });
+    match rejected {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 /// Build a `%`-prefixed copy of `s` (e.g. `.c` becomes `%.c`).

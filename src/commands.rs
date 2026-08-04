@@ -4,7 +4,7 @@
 //!
 //! Port of `commands.c`.
 
-use crate::ar::{ar_member_date, ar_name};
+use crate::ar::{ar_member_date, ar_name_err};
 pub use crate::ffi_types::{pid_t, sig_atomic_t, size_t, time_t, uintmax_t};
 use crate::dep::DepNode;
 use crate::file::{
@@ -114,17 +114,21 @@ fn dep_uses_auto_vars(d: &DepNode) -> bool {
 /// The bytes naming a dependency as they appear in `$+`/`$^`/`$|`: for an
 /// archive ref `lib(member)` only `member` (sans the trailing `)`), otherwise
 /// the whole name. The returned slice borrows `name`'s storage.
-fn autovar_dep_name<'a>(ctx: &crate::execctx::ExecContext, name: &'a [u8]) -> &'a [u8] {
+fn autovar_dep_name<'a>(
+    ctx: &crate::execctx::ExecContext,
+    name: &'a [u8],
+) -> Result<&'a [u8], crate::build_result::BuildError> {
     let mut c = name.to_vec();
     c.push(0);
-    let is_ar = ar_name(ctx, CStr::from_bytes_with_nul(&c).expect("dep name has interior NUL"));
-    if is_ar {
+    let is_ar =
+        ar_name_err(ctx, CStr::from_bytes_with_nul(&c).expect("dep name has interior NUL"))?;
+    Ok(if is_ar {
         split_archive_ref(name)
             .expect("ar_name guarantees a lib(member) reference")
             .1
     } else {
         name
-    }
+    })
 }
 
 /// Append a list entry `nm` to `buf`, followed by a `FILE_LIST_SEPARATOR`.
@@ -148,9 +152,13 @@ fn trim_list(mut buf: Vec<u8>) -> Vec<u8> {
 /// `$|`) on `file`, computing the stem first if needed. All values are built
 /// as owned byte strings and attached to the `FileNode` as per-target
 /// variables (no raw pointers, no `c_char`).
-pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) {
+pub fn set_file_variables(
+    ctx: &ExecContext,
+    file: FileId,
+    stem: Option<&[u8]>,
+) -> Result<(), crate::build_result::BuildError> {
     let Some(node) = ctx.filenodes.get(file) else {
-        return;
+        return Ok(());
     };
 
     // Snapshot everything we need out of the node, then drop the guard before
@@ -175,10 +183,10 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
     let (at, percent): (Vec<u8>, Vec<u8>) = {
         let mut nm = name.clone();
         nm.push(0);
-        let is_ar = ar_name(
+        let is_ar = ar_name_err(
             ctx,
             CStr::from_bytes_with_nul(&nm).expect("file name has interior NUL"),
-        );
+        )?;
         if is_ar {
             let (lib, member) =
                 split_archive_ref(&name).expect("ar_name guarantees a lib(member) reference");
@@ -195,7 +203,7 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
     } else if let Some(s) = node_stem.take() {
         s
     } else {
-        let nm = autovar_dep_name(ctx, &name);
+        let nm = autovar_dep_name(ctx, &name)?;
         let mut derived: Option<Vec<u8>> = None;
         if let Some(sid) = lookup_file(ctx, b".SUFFIXES") {
             if let Some(snode) = ctx.filenodes.get(sid) {
@@ -245,7 +253,7 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
     let mut plus: Vec<u8> = Vec::new();
     for d in &deps {
         if !d.ignore_mtime && dep_uses_auto_vars(d) {
-            push_entry(&mut plus, autovar_dep_name(ctx, &dep_name_bytes(ctx, d)));
+            push_entry(&mut plus, autovar_dep_name(ctx, &dep_name_bytes(ctx, d))?);
         }
     }
     define_target_variable(ctx, file, b"+", &trim_list(plus), VarOrigin::Automatic);
@@ -279,7 +287,7 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
         // Take only each name's canonical (first-inserted) dep.
         if dep_uses_auto_vars(d) && canonical.get(dep_name_bytes(ctx, d).as_slice()).copied() == Some(i)
         {
-            let nm = autovar_dep_name(ctx, &dep_name_bytes(ctx, d)).to_vec();
+            let nm = autovar_dep_name(ctx, &dep_name_bytes(ctx, d))?.to_vec();
             if ignore_mtime[i] {
                 push_entry(&mut bar, &nm);
             } else {
@@ -294,6 +302,7 @@ pub fn set_file_variables(ctx: &ExecContext, file: FileId, stem: Option<&[u8]>) 
     define_target_variable(ctx, file, b"^", &trim_list(caret), VarOrigin::Automatic);
     define_target_variable(ctx, file, b"?", &trim_list(qmark), VarOrigin::Automatic);
     define_target_variable(ctx, file, b"|", &trim_list(bar), VarOrigin::Automatic);
+    Ok(())
 }
 
 /// Split `recipe.text` into individual recipe lines (respecting
@@ -444,7 +453,7 @@ pub fn execute_file_commands(
             en.command_state = CommandState::Running;
             en.update_status = UpdateStatus::Success;
         }
-        notice_finished_file(ctx, file, entry);
+        notice_finished_file(ctx, file, entry)?;
         return Ok(());
     }
 
@@ -453,7 +462,7 @@ pub fn execute_file_commands(
         let mut guard = node.lock().expect("file node poisoned");
         entry_node(&mut guard, entry).stem.as_ref().map(|s| s.clone().into_bytes())
     };
-    set_file_variables(ctx, file, stem.as_deref());
+    set_file_variables(ctx, file, stem.as_deref())?;
 
     // A loaded dynamic object being rebuilt must be unloaded first.
     if loaded {
@@ -560,7 +569,10 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         // `delete_child_targets` sees real mtimes to compare (#468).
         let mut c = live_children;
         while !c.is_null() {
-            crate::make_main::with_exec_context(|live_ctx| delete_child_targets(live_ctx, c));
+            // Same boundary as the reaps below: this is a kernel-invoked
+            // signal handler with no Rust frame to carry a `Result`.
+            crate::make_main::with_exec_context(|live_ctx| delete_child_targets(live_ctx, c))
+                .unwrap_or_else(|e| exit_on_err(e));
             c = (*c).next;
         }
         // Wait for them all to die before cleaning up. Reaping walks the live
@@ -621,9 +633,13 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
 /// timestamp (i.e. it is a half-finished build product). `on_behalf_of` is the
 /// sibling target whose rule also builds this one (`None` for the direct
 /// target).
-fn delete_target(ctx: &ExecContext, file: FileId, on_behalf_of: Option<&[u8]>) {
+fn delete_target(
+    ctx: &ExecContext,
+    file: FileId,
+    on_behalf_of: Option<&[u8]>,
+) -> Result<(), crate::build_result::BuildError> {
     let Some(node) = ctx.filenodes.get(file) else {
-        return;
+        return Ok(());
     };
     let (name, precious, phony, last_mtime) = {
         let guard = node.lock().expect("file node poisoned");
@@ -635,7 +651,7 @@ fn delete_target(ctx: &ExecContext, file: FileId, on_behalf_of: Option<&[u8]>) {
         )
     };
     if precious || phony {
-        return;
+        return Ok(());
     }
 
     // NUL-terminated buffers for the libc/printf calls.
@@ -655,17 +671,17 @@ fn delete_target(ctx: &ExecContext, file: FileId, on_behalf_of: Option<&[u8]>) {
     // libc stat/unlink and the `error`/`ar_*` printers are still pointer-based.
     unsafe {
         // An archive member can't be unlinked; just warn if it looks touched.
-        if ar_name(
+        if ar_name_err(
             ctx,
             CStr::from_bytes_with_nul(&name_c).expect("file name has interior NUL"),
-        ) {
+        )? {
             let file_date: time_t = if last_mtime == NONEXISTENT_MTIME as uintmax_t {
                 -1
             } else {
                 (last_mtime.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                     >> if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }) as time_t
             };
-            if ar_member_date(ctx, name_ptr) != file_date {
+            if ar_member_date(ctx, name_ptr)? != file_date {
                 if !behalf_ptr.is_null() {
                     error(
                         ctx,
@@ -684,7 +700,7 @@ fn delete_target(ctx: &ExecContext, file: FileId, on_behalf_of: Option<&[u8]>) {
                     );
                 }
             }
-            return;
+            return Ok(());
         }
 
         let mut st: libc::stat = ::core::mem::zeroed();
@@ -724,6 +740,7 @@ fn delete_target(ctx: &ExecContext, file: FileId, on_behalf_of: Option<&[u8]>) {
                 perror_with_name(ctx, c"unlink: ".as_ptr(), name_ptr);
             }
         }
+        Ok(())
     }
 }
 
@@ -733,12 +750,15 @@ fn delete_target(ctx: &ExecContext, file: FileId, on_behalf_of: Option<&[u8]>) {
 /// # Safety
 ///
 /// `child` must be a valid child record.
-pub unsafe fn delete_child_targets(ctx: &ExecContext, child: *mut child) {
+pub unsafe fn delete_child_targets(
+    ctx: &ExecContext,
+    child: *mut child,
+) -> Result<(), crate::build_result::BuildError> {
     if (*child).deleted() != 0 || (*child).pid < 0 {
-        return;
+        return Ok(());
     }
     let cf = (*child).file;
-    delete_target(ctx, cf, None);
+    delete_target(ctx, cf, None)?;
     // Each sibling the rule also makes is deleted on behalf of this target.
     let (cf_name, also) = {
         match ctx.filenodes.get(cf) {
@@ -751,10 +771,11 @@ pub unsafe fn delete_child_targets(ctx: &ExecContext, child: *mut child) {
     };
     for d in &also {
         if let Some(did) = d.file {
-            delete_target(ctx, did, Some(&cf_name));
+            delete_target(ctx, did, Some(&cf_name))?;
         }
     }
     (*child).set_deleted(1);
+    Ok(())
 }
 
 /// Print `recipe` for `make -p`, one line per recipe line with the command
@@ -948,7 +969,7 @@ mod autovar_dep_name_unsafe_oracle {
     /// Drive both implementations over `input` and assert identical bytes.
     fn check(input: &CStr) {
         let ctx = ExecContext::default();
-        let safe = autovar_dep_name(&ctx, input.to_bytes());
+        let safe = autovar_dep_name(&ctx, input.to_bytes()).expect("plain name, no nested archive");
         // SAFETY: the oracle returns a pointer/len into `input`'s live storage.
         let from_oracle = unsafe {
             let (p, len) = oracle(&ctx, input.as_ptr());
