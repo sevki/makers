@@ -861,7 +861,7 @@ pub unsafe fn reap_children(
             }
             crate::make_main::bump_command_count(ctx);
             if remote == 0 && pid == shell_function_pid(ctx) {
-                shell_completed(ctx, exit_code, exit_sig);
+                shell_completed(ctx, exit_code, exit_sig)?;
                 break;
             } else {
                 lastc = ::core::ptr::null_mut::<child>();
@@ -4067,7 +4067,8 @@ mod shell_settings_tests {
             1,
             ctx.variable_globals.global_variable_set.as_ptr(),
             ::core::ptr::null::<crate::floc::Floc>(),
-        );
+        )
+        .expect("test fixture defines a well-formed name");
     }
 
     fn fresh_ctx() -> crate::execctx::ExecContext {

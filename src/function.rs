@@ -1132,7 +1132,8 @@ mod func_origin_flavor_tests {
                 recursive as i32,
                 ::core::ptr::null_mut(),
                 ::core::ptr::null(),
-            );
+            )
+            .expect("test fixture defines a well-formed name");
         }
         let mut argv: [*mut c_char; 2] = [cname.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
         let fname = CString::new("f").unwrap();
@@ -1154,7 +1155,8 @@ mod func_origin_flavor_tests {
                 name.len() as size_t,
                 o_override,
                 ::core::ptr::null_mut(),
-            );
+            )
+            .expect("test fixture defines a well-formed name");
         }
         out
     }
@@ -2772,6 +2774,9 @@ unsafe fn func_foreach(
     )));
     *vp_eot = 0;
     push_new_variable_scope(ctx);
+    // `inspect_err` rather than a bare `?`: the scope pushed above is popped at
+    // the tail, and that has to happen on the rejection path too or the
+    // rejected expansion leaves an automatic scope installed (#561).
     var = define_variable_in_set(
         ctx,
         vp,
@@ -2781,7 +2786,8 @@ unsafe fn func_foreach(
         0,
         (*ctx.variable_globals.current_variable_set_list.get()).set,
         NILF,
-    );
+    )
+    .inspect_err(|_| pop_variable_scope(ctx))?;
     loop {
         p = find_next_token(&raw mut list_iterator, &raw mut len);
         if p.is_null() {
@@ -2789,11 +2795,10 @@ unsafe fn func_foreach(
         }
         free((*var).value as *mut ::core::ffi::c_void);
         (*var).value = xstrndup(p, len);
-        let result = ExpandedArg::from_raw(allocated_expand_string_for_file(
-            ctx,
-            body,
-            ::core::ptr::null_mut::<File>(),
-        )?);
+        let result = ExpandedArg::from_raw(
+            allocated_expand_string_for_file(ctx, body, ::core::ptr::null_mut::<File>())
+                .inspect_err(|_| pop_variable_scope(ctx))?,
+        );
         o = variable_buffer_output(ctx, o, result.as_ptr(), strlen(result.as_ptr()) as size_t);
         o = variable_buffer_output(ctx, o, b" \0" as *const u8 as *const ::core::ffi::c_char, 1);
         doneany = 1;
@@ -2854,7 +2859,8 @@ unsafe fn func_let(
             0,
             (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
-        );
+        )
+        .inspect_err(|_| pop_variable_scope(ctx))?;
         vp = find_next_token(&raw mut vp_next, &raw mut vlen);
         while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
             .offset(*vp_next as ::core::ffi::c_uchar as isize) as i32
@@ -2874,9 +2880,13 @@ unsafe fn func_let(
             0,
             (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
-        );
+        )
+        .inspect_err(|_| pop_variable_scope(ctx))?;
     }
-    o = expand_string_buf(ctx, o, body, SIZE_MAX as size_t)?;
+    // Same contract as the definitions above: the scope comes back off before
+    // a rejected body expansion escapes.
+    o = expand_string_buf(ctx, o, body, SIZE_MAX as size_t)
+        .inspect_err(|_| pop_variable_scope(ctx))?;
     pop_variable_scope(ctx);
     Ok(o.add(strlen(o)))
 }
@@ -3843,7 +3853,7 @@ pub unsafe fn shell_completed(
     ctx: &crate::execctx::ExecContext,
     mut exit_code: i32,
     exit_sig: i32,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let mut buf: [::core::ffi::c_char; 22] = [0; 22];
     ctx.shell_function_pid.0.store(0, Ordering::Relaxed);
     if exit_sig == 0 && exit_code == 127 {
@@ -3861,16 +3871,16 @@ pub unsafe fn shell_completed(
         b"%d\0" as *const u8 as *const ::core::ffi::c_char,
         exit_code,
     );
-    define_variable_in_set(
+    // `map` rather than `?` + `Ok(())`: the definition's verdict is this
+    // function's whole result, so threading it through costs no decision point.
+    crate::variable::define_named(
         ctx,
-        b".SHELLSTATUS\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
+        b".SHELLSTATUS\0",
         &raw mut buf as *mut ::core::ffi::c_char,
         o_override,
         0,
-        (*ctx.variable_globals.current_variable_set_list.get()).set,
-        NILF,
-    );
+    )
+    .map(|_| ())
 }
 /// Read everything from pipe `fd` into an owned, growing buffer (was the inline
 /// xmalloc/xrealloc read loop in `func_shell_base`). Retries on `EINTR`, grows
@@ -4079,7 +4089,7 @@ pub unsafe fn func_shell_base(
             child.output.err = errfd;
             pid = child_execute_job(ctx, &raw mut child, 1, command_argv);
             if pid < 0 {
-                shell_completed(ctx, 127, 0);
+                shell_completed(ctx, 127, 0)?;
             } else {
                 ctx.shell_function_pid.0.store(pid, Ordering::Relaxed);
                 ctx.shell_function_completed.0.store(0, Ordering::Relaxed);
@@ -5091,7 +5101,7 @@ unsafe fn func_call(
             0,
             (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
-        );
+        )?;
         i = i.wrapping_add(1);
         argv = argv.offset(1_i32 as isize);
     }
@@ -5110,7 +5120,7 @@ unsafe fn func_call(
             0,
             (*ctx.variable_globals.current_variable_set_list.get()).set,
             NILF,
-        );
+        )?;
         i = i.wrapping_add(1);
     }
     (*v).set_exp_count(EXP_COUNT_MAX as ::core::ffi::c_uint as ::core::ffi::c_uint);

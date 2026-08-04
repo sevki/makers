@@ -280,7 +280,7 @@ unsafe fn populate_suffixes(
             0,
             (*ctx.variable_globals.current_variable_set_list.get()).set,
             null::<Floc>(),
-        );
+        )?;
     } else {
         install_builtin_suffixes(ctx, suffix_file)?;
     }
@@ -327,7 +327,7 @@ unsafe fn install_builtin_suffixes(
         0,
         (*ctx.variable_globals.current_variable_set_list.get()).set,
         null::<Floc>(),
-    );
+    )?;
     Ok(())
 }
 
@@ -438,11 +438,14 @@ fn install_rule_table(
 pub unsafe fn define_default_variables(
     ctx: &crate::execctx::ExecContext,
     options: &crate::make_main::Options,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     if options.no_builtin_variables.get() {
-        return;
+        return Ok(());
     }
-    for &(name, value) in DEFAULT_VARIABLES {
+    // `try_for_each` rather than a `for` + `?`: the table is pure data and the
+    // rejection is the whole result, so the iteration costs this frame no
+    // decision point of its own.
+    DEFAULT_VARIABLES.iter().try_for_each(|&(name, value)| {
         define_variable_in_set(
             ctx,
             name.as_ptr(),
@@ -452,8 +455,9 @@ pub unsafe fn define_default_variables(
             1,
             (*ctx.variable_globals.current_variable_set_list.get()).set,
             null::<Floc>(),
-        );
-    }
+        )
+        .map(|_| ())
+    })
 }
 
 /// Undefine all the default variables (used by `-R`/`--no-builtin-variables`
@@ -461,8 +465,12 @@ pub unsafe fn define_default_variables(
 ///
 /// # Safety
 /// Must run single-threaded: it mutates the global variable set.
-pub unsafe fn undefine_default_variables(ctx: &crate::execctx::ExecContext) {
-    for &(name, _) in DEFAULT_VARIABLES {
+pub unsafe fn undefine_default_variables(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
+    // Same shape as `define_default_variables`: the table drives the whole
+    // frame, so the rejection threads through without a branch here.
+    DEFAULT_VARIABLES.iter().try_for_each(|&(name, _)| {
         undefine_variable_in_set(
             ctx,
             null(),
@@ -470,6 +478,6 @@ pub unsafe fn undefine_default_variables(ctx: &crate::execctx::ExecContext) {
             name.to_bytes().len() as size_t,
             o_default,
             ::core::ptr::null_mut(),
-        );
-    }
+        )
+    })
 }

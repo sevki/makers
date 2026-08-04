@@ -3005,7 +3005,8 @@ mod tests {
                 0,
                 ::core::ptr::null_mut(),
                 ::core::ptr::null::<crate::floc::Floc>(),
-            );
+            )
+            .expect("test fixture defines a well-formed name");
             let prereqs = expand_extra_prereqs(&ctx, v).expect("well-formed value");
             let names: Vec<Vec<u8>> = prereqs.iter().map(dep_name_bytes).collect();
             assert_eq!(names, vec![b"alpha".to_vec(), b"beta".to_vec()]);
