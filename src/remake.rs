@@ -2049,7 +2049,6 @@ pub fn f_mtime(
         let parsed = ParsedArName::parse(unsafe { ::core::ffi::CStr::from_ptr(name_ptr) });
         let arname = parsed.arname();
         let memname = parsed.memname();
-        let member_date: time_t;
         unsafe {
             memmtime = name_mtime(ctx, memname);
         }
@@ -2101,7 +2100,7 @@ pub fn f_mtime(
             return Ok(NONEXISTENT_MTIME as uintmax_t);
         }
         let fh = cname(&file_hname);
-        member_date =
+        let member_date: time_t =
             unsafe { ar_member_date(ctx, fh.as_ptr() as *const ::core::ffi::c_char)? };
         if member_date == -1_i32 as time_t
             || memmtime != NONEXISTENT_MTIME as uintmax_t
