@@ -494,16 +494,13 @@ fn emit_var_name_warning(
     is_error: bool,
     kind: &str,
     name: &[u8],
-) {
+) -> Result<(), crate::build_result::BuildError> {
     let body = format!("{kind} '{}'", String::from_utf8_lossy(name));
     if is_error {
-        // `emit_var_name_warning` has wide, non-`Result` fan-out across this
-        // file; bridge through the shared `_err`/`exit_on_err` path rather
-        // than propagating `Result` through this whole call chain (#432
-        // Phase B, #539).
-        crate::output::exit_on_err(msg::fatal_err(ctx, loc, &body));
+        return Err(msg::fatal_err(ctx, loc, &body));
     }
     msg::error(ctx, loc, &format!("warning: {body}"));
+    Ok(())
 }
 
 unsafe fn check_valid_name(
@@ -524,13 +521,18 @@ unsafe fn check_valid_name(
         return;
     }
     if warning::is_active(ctx, Type::InvalidVar) {
+        // The one bridge this slice leaves standing: `define_variable_in_set`
+        // and its `undefine` twin, the only callers of this check, have
+        // non-`Result` fan-out across 75 call sites and flip in the next slice
+        // of the stack, which retires this line (#432 Phase B, #442).
         emit_var_name_warning(
             ctx,
             flocp.as_ref(),
             warning::action(ctx, Type::InvalidVar) == Action::Error,
             "invalid variable name",
             name_bytes,
-        );
+        )
+        .unwrap_or_else(|e| crate::output::exit_on_err(e));
     }
 }
 /// # Safety
@@ -838,9 +840,9 @@ unsafe fn check_variable_reference(
     ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     length: size_t,
-) {
+) -> Result<(), crate::build_result::BuildError> {
     if !(warning::is_active(ctx, Type::InvalidRef)) {
-        return;
+        return Ok(());
     }
     // The reference is valid unless it contains an unquoted blank or newline.
     let name_bytes = ::core::slice::from_raw_parts(name as *const u8, length);
@@ -848,10 +850,10 @@ unsafe fn check_variable_reference(
         .iter()
         .any(|&c| stop_set(c, MAP_BLANK | MAP_NEWLINE))
     {
-        return;
+        return Ok(());
     }
     if warning::is_active(ctx, Type::InvalidRef) {
-        emit_var_name_warning(
+        return emit_var_name_warning(
             ctx,
             ctx.expanding_var_floc().as_ref(),
             warning::action(ctx, Type::InvalidRef) == Action::Error,
@@ -859,6 +861,7 @@ unsafe fn check_variable_reference(
             name_bytes,
         );
     }
+    Ok(())
 }
 /// # Safety
 ///
@@ -868,7 +871,7 @@ pub unsafe fn lookup_variable(
     ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
     length: size_t,
-) -> *mut variable {
+) -> Result<*mut variable, crate::build_result::BuildError> {
     let mut setlist: *const variable_set_list;
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -882,7 +885,7 @@ pub unsafe fn lookup_variable(
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
     let mut is_parent: i32 = 0;
-    check_variable_reference(ctx, name, length);
+    check_variable_reference(ctx, name, length)?;
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
     setlist = ctx.variable_globals.current_variable_set_list.get();
@@ -894,16 +897,16 @@ pub unsafe fn lookup_variable(
             &raw mut var_key as *const ::core::ffi::c_void,
         ) as *mut variable;
         if !v.is_null() && (is_parent == 0 || (*v).private_var() == 0) {
-            return if (*v).special() as i32 != 0 {
+            return Ok(if (*v).special() as i32 != 0 {
                 lookup_special_var(ctx, v)
             } else {
                 v
-            };
+            });
         }
         is_parent |= (*setlist).next_is_parent;
         setlist = (*setlist).next;
     }
-    ::core::ptr::null_mut::<variable>()
+    Ok(::core::ptr::null_mut::<variable>())
 }
 /// # Safety
 ///
@@ -914,7 +917,7 @@ pub unsafe fn lookup_variable_in_set(
     name: *const ::core::ffi::c_char,
     length: size_t,
     set: *const variable_set,
-) -> *mut variable {
+) -> Result<*mut variable, crate::build_result::BuildError> {
     let mut var_key: variable = variable {
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
@@ -926,16 +929,16 @@ pub unsafe fn lookup_variable_in_set(
         length: 0,
         recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
     };
-    check_variable_reference(ctx, name, length);
+    check_variable_reference(ctx, name, length)?;
     var_key.name = name as *mut ::core::ffi::c_char;
     var_key.length = length as ::core::ffi::c_uint;
     let Some(setr) = set.as_ref() else {
-        return ::core::ptr::null_mut::<variable>();
+        return Ok(::core::ptr::null_mut::<variable>());
     };
-    hash_find_item(
+    Ok(hash_find_item(
         &raw const setr.table as *mut HashTable,
         &raw mut var_key as *const ::core::ffi::c_void,
-    ) as *mut variable
+    ) as *mut variable)
 }
 /// # Safety
 ///
@@ -2201,7 +2204,7 @@ pub unsafe fn do_variable_definition(
     let mut v: *mut variable = ::core::ptr::null_mut::<variable>();
     let mut append: i32 = 0;
     if conditional != 0 {
-        v = lookup_variable(ctx, varname, strlen(varname) as size_t);
+        v = lookup_variable(ctx, varname, strlen(varname) as size_t)?;
         if !v.is_null() {
             return Ok(v);
         }
@@ -2250,7 +2253,7 @@ pub unsafe fn do_variable_definition(
         4 | 6 => {
             let mut override_0: i32 = 0;
             if scope as ::core::ffi::c_uint == s_global as i32 as ::core::ffi::c_uint {
-                v = lookup_variable(ctx, varname, strlen(varname) as size_t);
+                v = lookup_variable(ctx, varname, strlen(varname) as size_t)?;
             } else {
                 append = 1;
                 v = lookup_variable_in_set(
@@ -2258,7 +2261,7 @@ pub unsafe fn do_variable_definition(
                     varname,
                     strlen(varname) as size_t,
                     (*ctx.variable_globals.current_variable_set_list.get()).set,
-                );
+                )?;
                 if let Some(vr) = v.as_ref() {
                     if vr.append() == 0 {
                         append = 0;
@@ -2598,7 +2601,10 @@ const DEFINED_VARS: [DefinedVars; 13] = [
 /// Emit a "reference to undefined variable" warning for `name`, unless `name`
 /// is one of the built-in always-defined variables in the `DEFINED_VARS`
 /// table, or the warning is inactive.
-pub fn warn_undefined(ctx: &crate::execctx::ExecContext, name: &[u8]) {
+pub fn warn_undefined(
+    ctx: &crate::execctx::ExecContext,
+    name: &[u8],
+) -> Result<(), crate::build_result::BuildError> {
     if warning::is_active(ctx, Type::UndefinedVar) {
         // SAFETY: `DEFINED_VARS` is a NUL-terminated table of built-in
         // variable names. We only read it here, walking until the sentinel
@@ -2618,10 +2624,10 @@ pub fn warn_undefined(ctx: &crate::execctx::ExecContext, name: &[u8]) {
             found
         };
         if is_builtin {
-            return;
+            return Ok(());
         }
         if warning::is_active(ctx, Type::UndefinedVar) {
-            emit_var_name_warning(
+            return emit_var_name_warning(
                 ctx,
                 // SAFETY: `reading_file` is a pointer to the current Floc,
                 // set during makefile evaluation; read-only here.
@@ -2632,6 +2638,7 @@ pub fn warn_undefined(ctx: &crate::execctx::ExecContext, name: &[u8]) {
             );
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2661,13 +2668,16 @@ mod warn_undefined_unsafe_oracle {
                 dp = dp.offset(1 as i32 as isize);
             }
             if warning::is_active(ctx, Type::UndefinedVar) {
+                // The oracle keeps the original diverging behaviour so it
+                // stays faithful to the translated source (AGENTS.md rule 3).
                 emit_var_name_warning(
                     ctx,
                     ctx.reading_file.0.get().as_ref(),
                     warning::action(ctx, Type::UndefinedVar) == Action::Error,
                     "reference to undefined variable",
                     ::core::slice::from_raw_parts(name as *const u8, len),
-                );
+                )
+                .unwrap_or_else(|e| crate::output::exit_on_err(e));
             }
         }
     }
@@ -3610,6 +3620,72 @@ mod shell_assignment_tests {
                 "the caller's variable buffer must be swapped back in"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod var_name_rejection_tests {
+    //! Since #442 `emit_var_name_warning` returns `Result`, so the
+    //! `invalid-ref` policy no longer ends the process from inside the
+    //! variable layer: `lookup_variable` and `lookup_variable_in_set` hand the
+    //! rejection back to whichever expansion frame asked for the name.
+
+    use super::{lookup_variable, lookup_variable_in_set};
+    use crate::build_result::BuildError;
+    use crate::warning::{Action, Type};
+    use std::ffi::CString;
+
+    fn fresh_ctx() -> crate::execctx::ExecContext {
+        crate::make_main::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: fresh context; each table is initialized once.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            crate::variable::init_hash_global_variable_set(&ctx);
+            crate::expand::initialize_variable_output(&ctx);
+        }
+        crate::warning::set_action(&ctx, Type::InvalidRef, Action::Error);
+        ctx
+    }
+
+    /// A reference whose name carries an unquoted blank is refused rather than
+    /// exiting, and the refusal is the hard `Failure` the C code exited with.
+    #[test]
+    fn blank_in_reference_is_rejected() {
+        let ctx = fresh_ctx();
+        let name = CString::new("foo bar").unwrap();
+        // SAFETY: `name` outlives the call and its length is exact.
+        let outcome = unsafe { lookup_variable(&ctx, name.as_ptr(), 7) };
+        assert!(matches!(outcome, Err(BuildError::Failure)));
+    }
+
+    /// The set-scoped twin takes the same path, so neither entry point can
+    /// still tear the process down on a bad reference.
+    #[test]
+    fn blank_in_reference_is_rejected_in_set() {
+        let ctx = fresh_ctx();
+        let name = CString::new("foo\nbar").unwrap();
+        // SAFETY: as above; the global set is initialized by `fresh_ctx`.
+        let outcome = unsafe {
+            lookup_variable_in_set(
+                &ctx,
+                name.as_ptr(),
+                7,
+                ctx.variable_globals.global_variable_set.as_ptr(),
+            )
+        };
+        assert!(matches!(outcome, Err(BuildError::Failure)));
+    }
+
+    /// A well-formed name still resolves, so the flip did not turn ordinary
+    /// lookups into errors: an undefined name is `Ok(null)`, not `Err`.
+    #[test]
+    fn well_formed_reference_still_resolves() {
+        let ctx = fresh_ctx();
+        let name = CString::new("PLAIN").unwrap();
+        // SAFETY: as above.
+        let v = unsafe { lookup_variable(&ctx, name.as_ptr(), 5) }.expect("well-formed name");
+        assert!(v.is_null());
     }
 }
 

@@ -1896,7 +1896,7 @@ pub fn snap_deps(
                 ctx,
                 b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
                 (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
-            ),
+            )?,
         )?
     };
     // Snapshot the arena's files, then snap each. Matching the C `hash_dump`,

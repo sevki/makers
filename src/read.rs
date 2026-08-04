@@ -68,6 +68,7 @@ pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 use crate::floc::Floc;
 
+
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
 pub const o_override: variable_origin = 5;
@@ -736,6 +737,47 @@ fn vpath_pattern_token(token: &[u8]) -> Vec<u8> {
     pat.push(0);
     pat
 }
+/// Apply the pending `export`/`unexport` state to every whitespace-separated
+/// name in `list`, defining any name that does not exist yet so the flag has
+/// somewhere to live.
+///
+/// # Safety
+///
+/// `list` must be a NUL-terminated buffer that stays live for the call, and
+/// `fstart` must point to the location definitions made here should record.
+unsafe fn mark_exported_names(
+    ctx: &crate::execctx::ExecContext,
+    list: *const ::core::ffi::c_char,
+    exporting: i32,
+    fstart: *const Floc,
+) -> Result<(), crate::build_result::BuildError> {
+    let mut cp: *const ::core::ffi::c_char = list;
+    let mut l: size_t = 0;
+    let mut p = find_next_token(&raw mut cp, &raw mut l);
+    let flag = (if exporting != 0 {
+        v_export as i32
+    } else {
+        v_noexport as i32
+    }) as variable_export;
+    while !p.is_null() {
+        let mut v: *mut variable = lookup_variable(ctx, p, l)?;
+        if v.is_null() {
+            v = define_variable_in_set(
+                ctx,
+                p,
+                l,
+                b"\0" as *const u8 as *const ::core::ffi::c_char,
+                o_file,
+                0,
+                ::core::ptr::null_mut::<variable_set>(),
+                fstart,
+            );
+        }
+        v.as_mut().expect("export: null variable").set_export(flag);
+        p = find_next_token(&raw mut cp, &raw mut l);
+    }
+    Ok(())
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -1057,41 +1099,18 @@ pub unsafe fn eval(
                                 o.export_all_variables.set(exporting != 0)
                             });
                         } else {
-                            let mut l: size_t = 0;
-                            let mut cp: *const ::core::ffi::c_char;
                             let ap: *mut ::core::ffi::c_char;
                             ap = allocated_expand_string_for_file(
                                 ctx,
                                 p2,
                                 ::core::ptr::null_mut::<File>(),
                             )?;
-                            cp = ap;
-                            p = find_next_token(&raw mut cp, &raw mut l);
-                            while !p.is_null() {
-                                let mut v_0: *mut variable = lookup_variable(ctx, p, l);
-                                if v_0.is_null() {
-                                    v_0 = define_variable_in_set(
-                                        ctx,
-                                        p,
-                                        l,
-                                        b"\0" as *const u8 as *const ::core::ffi::c_char,
-                                        o_file,
-                                        0,
-                                        ::core::ptr::null_mut::<variable_set>(),
-                                        fstart,
-                                    );
-                                }
-                                v_0.as_mut().expect("export: null variable").set_export(
-                                    (if exporting != 0 {
-                                        v_export as i32
-                                    } else {
-                                        v_noexport as i32
-                                    }) as variable_export
-                                        as variable_export,
-                                );
-                                p = find_next_token(&raw mut cp, &raw mut l);
-                            }
+                            let marked = mark_exported_names(ctx, ap, exporting, fstart);
+                            // The expansion buffer is released before the
+                            // rejection escapes, so a bad reference inside the
+                            // name list does not leak it (#561).
                             free(ap as *mut ::core::ffi::c_void);
+                            marked?;
                         }
                     } else if matches!(
                         line_class,
@@ -2334,7 +2353,7 @@ unsafe fn conditional_line(
                     None => return Ok(-1_i32),
                 };
             *var.add(l) = 0;
-            v = lookup_variable(ctx, var, l);
+            v = lookup_variable(ctx, var, l)?;
             ctx.conditionals.borrow_mut().ignoring[o] = ((!v.is_null() && *(*v).value as i32 != 0)
                 as i32
                 == (cmdtype as ::core::ffi::c_uint == c_ifndef as i32 as ::core::ffi::c_uint)
@@ -2484,8 +2503,12 @@ unsafe fn record_target_var(
                 // The global lookup must search the underlying global set, not
                 // the per-file head we just installed.
                 ctx.variable_globals.current_variable_set_list.set(global);
-                let gv: *mut variable = lookup_variable(ctx, vref.name, len);
+                let looked = lookup_variable(ctx, vref.name, len);
                 ctx.variable_globals.current_variable_set_list.set(head);
+                // The set list is swapped back before the rejection escapes, so
+                // a rejected reference check cannot leave the per-file head
+                // installed over the globals (#561).
+                let gv: *mut variable = looked?;
                 if !gv.is_null()
                     && v != gv
                     && ((*gv).origin() as i32 == o_env_override as i32
@@ -2517,7 +2540,7 @@ unsafe fn record_target_var(
         }
         if vref.origin() as i32 != o_override as i32 {
             let len: size_t = strlen(vref.name) as size_t;
-            let gv: *mut variable = lookup_variable(ctx, vref.name, len);
+            let gv: *mut variable = lookup_variable(ctx, vref.name, len)?;
             if !gv.is_null()
                 && v != gv
                 && ((*gv).origin() as i32 == o_env_override as i32

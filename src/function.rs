@@ -857,7 +857,7 @@ fn func_origin(
             *argv.offset(0_i32 as isize),
             strlen(*argv.offset(0_i32 as isize)) as size_t,
         )
-    };
+    }?;
     let origin = if v.is_null() {
         None
     } else {
@@ -906,7 +906,7 @@ fn func_flavor(
             *argv.offset(0_i32 as isize),
             strlen(*argv.offset(0_i32 as isize)) as size_t,
         )
-    };
+    }?;
     let recursive = if v.is_null() {
         None
     } else {
@@ -995,11 +995,14 @@ mod func_origin_flavor_tests {
         argv: *mut *mut c_char,
         mut _funcname: *const c_char,
     ) -> *mut c_char {
+        // The oracle keeps the original diverging behaviour so it stays
+        // faithful to the translated source (AGENTS.md rule 3).
         let v: *mut variable = lookup_variable(
             ctx,
             *argv.offset(0_i32 as isize),
             strlen(*argv.offset(0_i32 as isize)) as size_t,
-        );
+        )
+        .unwrap_or_else(|e| crate::output::exit_on_err(e));
         if v.is_null() {
             o = variable_buffer_output(ctx, o, b"undefined\0" as *const u8 as *const c_char, 9);
         } else {
@@ -1069,11 +1072,14 @@ mod func_origin_flavor_tests {
         argv: *mut *mut c_char,
         mut _funcname: *const c_char,
     ) -> *mut c_char {
+        // The oracle keeps the original diverging behaviour so it stays
+        // faithful to the translated source (AGENTS.md rule 3).
         let v: *mut variable = lookup_variable(
             ctx,
             *argv.offset(0_i32 as isize),
             strlen(*argv.offset(0_i32 as isize)) as size_t,
-        );
+        )
+        .unwrap_or_else(|e| crate::output::exit_on_err(e));
         if v.is_null() {
             o = variable_buffer_output(ctx, o, b"undefined\0" as *const u8 as *const c_char, 9);
         } else if (*v).recursive() != 0 {
@@ -3727,7 +3733,7 @@ unsafe fn func_value(
         ctx,
         *argv.offset(0_i32 as isize),
         strlen(*argv.offset(0_i32 as isize)) as size_t,
-    );
+    )?;
     if !v.is_null() {
         o = variable_buffer_output(ctx, o, (*v).value, strlen((*v).value) as size_t);
     }
@@ -5059,11 +5065,11 @@ unsafe fn func_call(
         return expand_builtin_function(ctx, o, i, argv.offset(1_i32 as isize), entry_p);
     }
     flen = strlen(fname) as size_t;
-    v = lookup_variable(ctx, fname, flen);
+    v = lookup_variable(ctx, fname, flen)?;
     if v.is_null() {
         // SAFETY: `fname` points to `flen` valid bytes (length precomputed
         // above via `strlen`); read-only bridge to the safe `warn_undefined`.
-        warn_undefined(ctx, ::core::slice::from_raw_parts(fname as *const u8, flen));
+        warn_undefined(ctx, ::core::slice::from_raw_parts(fname as *const u8, flen))?;
     }
     if v.is_null() || *(*v).value as i32 == 0 {
         return Ok(o);

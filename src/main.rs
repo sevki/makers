@@ -2112,12 +2112,7 @@ unsafe fn main_0(
         }
         i = i.wrapping_add(1);
     }
-    if !lookup_variable(
-        &ctx,
-        b"GNUMAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-    )
-    .is_null()
+    if !lookup_named(&ctx, b"GNUMAKEFLAGS\0")?.is_null()
     {
         decode_env_switches(
             &ctx,
@@ -2191,12 +2186,7 @@ unsafe fn main_0(
         }
     }
     if isatty(libc::STDOUT_FILENO) != 0
-        && lookup_variable(
-            &ctx,
-            b"MAKE_TERMOUT\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        )
-        .is_null()
+        && lookup_named(&ctx, b"MAKE_TERMOUT\0")?.is_null()
     {
         let tty: *const ::core::ffi::c_char = ttyname(libc::STDOUT_FILENO);
         let fresh39 = &mut (*define_variable_in_set(
@@ -2216,12 +2206,7 @@ unsafe fn main_0(
         (*fresh39).set_export(v_export as variable_export);
     }
     if isatty(libc::STDERR_FILENO) != 0
-        && lookup_variable(
-            &ctx,
-            b"MAKE_TERMERR\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        )
-        .is_null()
+        && lookup_named(&ctx, b"MAKE_TERMERR\0")?.is_null()
     {
         let tty_0: *const ::core::ffi::c_char = ttyname(libc::STDERR_FILENO);
         let fresh40 = &mut (*define_variable_in_set(
@@ -2251,11 +2236,7 @@ unsafe fn main_0(
     } else {
         ::core::ptr::null_mut::<output>()
     });
-    let v_0: *mut variable = lookup_variable(
-        &ctx,
-        b"MAKELEVEL\0" as *const u8 as *const ::core::ffi::c_char,
-        (::core::mem::size_of::<[::core::ffi::c_char; 10]>() as size_t).wrapping_sub(1),
-    );
+    let v_0: *mut variable = lookup_named(&ctx, b"MAKELEVEL\0")?;
     let parsed_makelevel: u32 = if !v_0.is_null()
         && *(*v_0).value.offset(0_i32 as isize) as i32 != 0
         && *(*v_0).value.offset(0_i32 as isize) as i32 != '-' as i32
@@ -2700,7 +2681,7 @@ unsafe fn main_0(
     );
     set_default_suffixes(&ctx, options)?;
     define_automatic_variables(&ctx);
-    let fresh46 = &mut (*define_makeflags(&ctx, options, 0));
+    let fresh46 = &mut (*define_makeflags(&ctx, options, 0)?);
     (*fresh46).set_export(v_export as variable_export);
     define_default_variables(&ctx, options);
     enter_file(&ctx, b".DEFAULT");
@@ -2936,7 +2917,7 @@ unsafe fn main_0(
         let mtx_c = ::std::ffi::CString::new(mtx.as_bytes()).unwrap_or_default();
         crate::output::trace_parts(&[b"Using output-sync mutex ", mtx_c.to_bytes(), b"\n"]);
     }
-    define_makeflags(&ctx, options, 0);
+    define_makeflags(&ctx, options, 0)?;
     snap_deps(&ctx)?;
     install_default_suffix_rules(&ctx, options);
     convert_to_pattern(&ctx);
@@ -3049,7 +3030,7 @@ unsafe fn main_0(
             }
         }
         read_files = kept;
-        define_makeflags(&ctx, options, 1);
+        define_makeflags(&ctx, options, 1)?;
         let orig_db_level: i32 = db_level(&ctx);
         if 0x100_i32 & db_level(&ctx) == 0 {
             set_db_level(&ctx, DB_NONE);
@@ -3512,7 +3493,7 @@ unsafe fn main_0(
             return Err(BuildError::Failure);
         }
     }
-    define_makeflags(&ctx, options, 0);
+    define_makeflags(&ctx, options, 0)?;
     ctx.always_make_flag.set(options.always_make.get());
     if restarts != 0 && !options.new_files.borrow().is_empty() {
         for nf in options.new_files.borrow().iter() {
@@ -3582,11 +3563,7 @@ unsafe fn main_0(
         }
     }
     if options.goals.borrow().is_empty() {
-        let v_2: *mut variable = lookup_variable(
-            &ctx,
-            b"MAKEFILE_LIST\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 14]>() as size_t).wrapping_sub(1),
-        );
+        let v_2: *mut variable = lookup_named(&ctx, b"MAKEFILE_LIST\0")?;
         if !v_2.is_null()
             && !(*v_2).value.is_null()
             && *(*v_2).value.offset(0_i32 as isize) as i32 != 0
@@ -3687,11 +3664,7 @@ unsafe fn handle_non_switch_argument(
         let fname_ptr = fname_c.as_ptr() as *const ::core::ffi::c_char;
         let gv: *mut variable;
         let value: *const ::core::ffi::c_char;
-        gv = lookup_variable(
-            ctx,
-            b"MAKECMDGOALS\0" as *const u8 as *const ::core::ffi::c_char,
-            (::core::mem::size_of::<[::core::ffi::c_char; 13]>() as size_t).wrapping_sub(1),
-        );
+        gv = lookup_named(ctx, b"MAKECMDGOALS\0")?;
         if gv.is_null() {
             value = fname_ptr;
         } else {
@@ -3761,7 +3734,7 @@ pub unsafe fn reset_makeflags(
         construct_include_path(ctx, &inc_paths)?;
     }
     disable_builtins(ctx, options);
-    define_makeflags(ctx, options, opt_rebuilding_makefiles(ctx) as i32);
+    define_makeflags(ctx, options, opt_rebuilding_makefiles(ctx) as i32)?;
     Ok(())
 }
 /// Switch chars whose `CommandSwitch.type_0` is `flag`/`flag_off` and which
@@ -4545,6 +4518,23 @@ pub unsafe fn disable_builtins(ctx: &crate::execctx::ExecContext, options: &Opti
         undefine_default_variables(ctx);
     }
 }
+/// Look up a variable whose name is a NUL-terminated byte literal, the shape
+/// every lookup in this module uses. The trailing NUL is not part of the name,
+/// so the length passed down is one less than the literal's.
+///
+/// # Safety
+///
+/// Inherits `lookup_variable`'s contract; `name` must end in a NUL byte.
+unsafe fn lookup_named(
+    ctx: &crate::execctx::ExecContext,
+    name: &'static [u8],
+) -> Result<*mut variable, crate::build_result::BuildError> {
+    lookup_variable(
+        ctx,
+        name.as_ptr() as *const ::core::ffi::c_char,
+        (name.len() - 1) as size_t,
+    )
+}
 /// # Safety
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
@@ -4553,7 +4543,7 @@ pub unsafe fn define_makeflags(
     ctx: &crate::execctx::ExecContext,
     options: &Options,
     makefile: i32,
-) -> *mut variable {
+) -> Result<*mut variable, crate::build_result::BuildError> {
     let mut alloca_allocations: Vec<Vec<u8>> = Vec::new();
     let ref_0: [::core::ffi::c_char; 14] =
         ::core::mem::transmute::<[u8; 14], [::core::ffi::c_char; 14]>(*b"MAKEOVERRIDES\0");
@@ -4905,7 +4895,11 @@ pub unsafe fn define_makeflags(
         &raw const ref_0 as *const ::core::ffi::c_char
     };
     let l: size_t = strlen(r) as size_t;
-    v = lookup_variable(ctx, r, l);
+    // `inspect_err` rather than a bare `?`: the tail restores the variable
+    // buffer this frame swapped out, and that has to run on the rejection path
+    // too or the caller's expansion buffer is left displaced (#561).
+    v = lookup_variable(ctx, r, l)
+        .inspect_err(|_| restore_variable_buffer(ctx, bufsave, lensave))?;
     if v.as_ref()
         .is_some_and(|vr| !vr.value.is_null() && *vr.value.offset(0) as i32 != 0)
     {
@@ -4944,7 +4938,7 @@ pub unsafe fn define_makeflags(
     );
     (*v).set_special(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     restore_variable_buffer(ctx, bufsave, lensave);
-    v
+    Ok(v)
 }
 /// Decide whether `make` should announce directory changes.
 ///
