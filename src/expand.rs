@@ -229,7 +229,6 @@ pub unsafe fn recursively_expand_for_file(
     let mut savev: *mut variable_set_list = ::core::ptr::null_mut::<variable_set_list>();
     let mut set_reading: i32 = 0;
     let nl: size_t = strlen((*v).name) as size_t;
-    let mut parent: *mut variable = ::core::ptr::null_mut::<variable>();
     if (*v).expanding() != 0 && env_recursion(ctx) != 0 {
         // A self-referencing variable being exported to a $(shell ...)
         // function: hand back the unexpanded environment value instead.
@@ -286,34 +285,27 @@ pub unsafe fn recursively_expand_for_file(
         install_file_context(ctx, file, &raw mut savev, ::core::ptr::null_mut::<*const Floc>());
     }
     (*v).set_expanding(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
-    if (*v).append() != 0 {
-        let mut sl: *mut variable_set_list;
-        sl = ctx.variable_globals.current_variable_set_list.get();
-        while !sl.is_null() && parent.is_null() {
-            let vp: *mut variable = lookup_variable_in_set(ctx, (*v).name, nl, (*sl).set);
-            if !vp.is_null() && vp != v && (*vp).origin() as i32 == o_override as i32 {
-                parent = vp;
-            }
-            sl = (*sl).next;
-        }
-    }
     // Held rather than `?`-ed on the spot: the four restorations below have to
     // run on the error path too, or a rejected expansion would leave `v`
     // flagged as expanding and the file context installed (the cleanup-paths
-    // contract from #561).
-    let value = if let Some(pref) = parent.as_ref() {
-        if (*v).origin() == o_override {
+    // contract from #561). The parent search joins the same hold because it
+    // now runs after that context is installed, and its own reference check
+    // can be rejected.
+    let value = append_override_parent(ctx, v, nl).and_then(|parent| {
+        if let Some(pref) = parent.as_ref() {
+            if (*v).origin() == o_override {
+                allocated_variable_append(ctx, v)
+            } else {
+                Ok(xstrdup(pref.value))
+            }
+        } else if (*v).origin() == o_command || (*v).origin() == o_env_override {
+            allocated_expand_string_for_file(ctx, (*v).value, ::core::ptr::null_mut::<file>())
+        } else if (*v).append() != 0 {
             allocated_variable_append(ctx, v)
         } else {
-            Ok(xstrdup(pref.value))
+            allocated_expand_string_for_file(ctx, (*v).value, ::core::ptr::null_mut::<file>())
         }
-    } else if (*v).origin() == o_command || (*v).origin() == o_env_override {
-        allocated_expand_string_for_file(ctx, (*v).value, ::core::ptr::null_mut::<file>())
-    } else if (*v).append() != 0 {
-        allocated_variable_append(ctx, v)
-    } else {
-        allocated_expand_string_for_file(ctx, (*v).value, ::core::ptr::null_mut::<file>())
-    };
+    });
     (*v).set_expanding(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     if set_reading != 0 {
         ctx.reading_file.0.set(::core::ptr::null::<Floc>());
@@ -323,6 +315,56 @@ pub unsafe fn recursively_expand_for_file(
     }
     ctx.expanding_var.set(saved_varp);
     value
+}
+/// Find the `override` definition of `v` that a pending `+=` should append to,
+/// walking the current variable set list outward. Returns null when `v` is not
+/// an append or no override is in scope.
+///
+/// # Safety
+///
+/// `v` must point to a live `variable` whose name is `nl` bytes long.
+unsafe fn append_override_parent(
+    ctx: &crate::execctx::ExecContext,
+    v: *mut variable,
+    nl: size_t,
+) -> Result<*mut variable, crate::build_result::BuildError> {
+    let mut parent = ::core::ptr::null_mut::<variable>();
+    if (*v).append() == 0 {
+        return Ok(parent);
+    }
+    let mut sl = ctx.variable_globals.current_variable_set_list.get();
+    while !sl.is_null() && parent.is_null() {
+        let vp: *mut variable = lookup_variable_in_set(ctx, (*v).name, nl, (*sl).set)?;
+        if !vp.is_null() && vp != v && (*vp).origin() as i32 == o_override as i32 {
+            parent = vp;
+        }
+        sl = (*sl).next;
+    }
+    Ok(parent)
+}
+/// Resolve `name` the way variable output needs it: the variable if one is
+/// defined, null otherwise, having first announced an undefined reference
+/// under the `undefined-var` warning. Since #442 that announcement can be a
+/// rejection, which travels out instead of ending the process.
+///
+/// # Safety
+///
+/// `name` must point to `length` readable bytes that stay live for the call.
+unsafe fn lookup_for_output(
+    ctx: &crate::execctx::ExecContext,
+    name: *const ::core::ffi::c_char,
+    length: size_t,
+) -> Result<*mut variable, crate::build_result::BuildError> {
+    let v = lookup_variable(ctx, name, length)?;
+    if v.is_null() {
+        // SAFETY: `name` points to `length` valid bytes (caller contract);
+        // read-only bridge to the safe `warn_undefined`.
+        warn_undefined(
+            ctx,
+            ::core::slice::from_raw_parts(name as *const u8, length),
+        )?;
+    }
+    Ok(v)
 }
 /// # Safety
 ///
@@ -334,15 +376,7 @@ pub unsafe fn expand_variable_output(
     name: *const ::core::ffi::c_char,
     length: size_t,
 ) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
-    let v = lookup_variable(ctx, name, length);
-    if v.is_null() {
-        // SAFETY: `name` points to `length` valid bytes (caller contract);
-        // read-only bridge to the safe `warn_undefined`.
-        warn_undefined(
-            ctx,
-            ::core::slice::from_raw_parts(name as *const u8, length),
-        );
-    }
+    let v = lookup_for_output(ctx, name, length)?;
     if v.is_null() || *(*v).value.offset(0_i32 as isize) as i32 == 0 && (*v).append() == 0 {
         return Ok(ptr);
     }
@@ -550,7 +584,11 @@ pub unsafe fn expand_string_buf(
                             let replace_beg: *const ::core::ffi::c_char = subst_end.add(1);
                             let replace_end: *const ::core::ffi::c_char = end;
                             let name_len = colon.offset_from(beg) as size_t;
-                            let v = lookup_variable(ctx, beg, name_len).as_mut();
+                            // Bound before the reference is taken, so the
+                            // pointer `as_mut` reads is only ever one the
+                            // `Result` has already yielded.
+                            let looked = lookup_variable(ctx, beg, name_len)?;
+                            let v = looked.as_mut();
                             if v.is_none() {
                                 // SAFETY: `beg` points to `name_len` valid
                                 // bytes (`name_len = colon - beg`, both within
@@ -559,7 +597,7 @@ pub unsafe fn expand_string_buf(
                                 warn_undefined(
                                     ctx,
                                     ::core::slice::from_raw_parts(beg as *const u8, name_len),
-                                );
+                                )?;
                             }
                             if let Some(v) = v.filter(|v| *v.value != 0) {
                                 // Recursive values are freshly expanded and
@@ -813,7 +851,7 @@ unsafe fn variable_append(
         return Ok(initialize_variable_output(ctx));
     }
     let nextlocal = (local != 0 && (*set).next_is_parent == 0) as i32;
-    let v: *const variable = lookup_variable_in_set(ctx, name, length, (*set).set);
+    let v: *const variable = lookup_variable_in_set(ctx, name, length, (*set).set)?;
     if v.is_null() || (local == 0 && (*v).private_var() != 0) {
         return variable_append(ctx, name, length, (*set).next, nextlocal);
     }

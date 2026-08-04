@@ -718,6 +718,53 @@ fn warn_invalid_var_ref() {
 }
 
 #[test]
+fn warn_invalid_var_ref_error() {
+    // Same fixture under `:error`: since #442 the invalid reference is raised
+    // as a `BuildError` that travels out through `lookup_variable` and the
+    // expansion frames above it rather than ending the process in place, so
+    // this pins the rejection path the conversion introduced.
+    check(
+        "warn-invalid-ref-error",
+        "48_invalid_var_ref.mk",
+        "all",
+        &["--warn=invalid-ref:error"],
+    );
+}
+
+#[test]
+fn warn_undefined_var_error() {
+    // The undefined-variable rejection leaves `warn_undefined` as an `Err` and
+    // unwinds through `expand_variable_output` and `expand_string_buf`, both of
+    // which restore their expansion state on the way out.
+    check(
+        "warn-undefined-var-error",
+        "09_warn.mk",
+        "all",
+        &["--warn=undefined-var:error"],
+    );
+}
+
+#[test]
+fn var_ref_rejection_paths() {
+    // Success side: the `override ... +=` append lands and both undefined
+    // references resolve to empty, exactly as before the conversion.
+    check("var-ref-paths", "102_var_ref_rejection.mk", "all", &[]);
+}
+
+#[test]
+fn var_ref_rejection_paths_error() {
+    // Rejection side: the undefined reference now leaves `warn_undefined` as
+    // an `Err` and unwinds through the expansion frames, each of which puts
+    // its saved state back on the way out.
+    check(
+        "var-ref-paths-error",
+        "102_var_ref_rejection.mk",
+        "all",
+        &["--warn=undefined-var:error"],
+    );
+}
+
+#[test]
 fn warn_global_action() {
     check(
         "warn-error",

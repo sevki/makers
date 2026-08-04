@@ -1890,14 +1890,15 @@ pub fn snap_deps(
     // its exact byte length; `expand_extra_prereqs` only reads the `variable`
     // it returns.
     let prereqs: Vec<DepNode> = unsafe {
-        expand_extra_prereqs(
+        // Bound before the call rather than `?`-ed inside its argument list, so
+        // the pointer handed to `expand_extra_prereqs` is only ever a value the
+        // `Result` has already yielded.
+        let extra = lookup_variable(
             ctx,
-            lookup_variable(
-                ctx,
-                b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
-                (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
-            ),
-        )?
+            b".EXTRA_PREREQS\0" as *const u8 as *const ::core::ffi::c_char,
+            (::core::mem::size_of::<[::core::ffi::c_char; 15]>() as size_t).wrapping_sub(1),
+        )?;
+        expand_extra_prereqs(ctx, extra)?
     };
     // Snapshot the arena's files, then snap each. Matching the C `hash_dump`,
     // any files entered while snapping are not themselves re-processed here.

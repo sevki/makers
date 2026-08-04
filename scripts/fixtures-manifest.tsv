@@ -62,6 +62,10 @@ shuffle-identity	unordered	08_shuffle.mk	all	--shuffle=identity		simple
 shuffle-invalid	ordered	08_shuffle.mk	all	--shuffle=bogus		simple
 warn-undefined-var	ordered	09_warn.mk	all	--warn=undefined-var		simple
 warn-invalid-ref	ordered	48_invalid_var_ref.mk	all	--warn=invalid-ref		simple
+warn-invalid-ref-error	ordered	48_invalid_var_ref.mk	all	--warn=invalid-ref:error		simple
+var-ref-paths	ordered	102_var_ref_rejection.mk	all			simple
+var-ref-paths-error	ordered	102_var_ref_rejection.mk	all	--warn=undefined-var:error		simple
+warn-undefined-var-error	ordered	09_warn.mk	all	--warn=undefined-var:error		simple
 warn-error	ordered	09_warn.mk	all	--warn=error,undefined-var		simple
 jobs-1	ordered	10_jobs.mk	all	-j1		simple
 jobserver-tokens	unordered	20_job_slots.mk	all	-j2		simple
