@@ -2681,7 +2681,11 @@ unsafe fn main_0(
     );
     set_default_suffixes(&ctx, options)?;
     define_automatic_variables(&ctx);
-    let fresh46 = &mut (*define_makeflags(&ctx, options, 0)?);
+    // Bound before the dereference rather than `?`-ed inside it: the pointer
+    // only exists once the `Result` has been unwrapped, and spelling that out
+    // keeps the deref off an expression that has an error edge in it.
+    let makeflags = define_makeflags(&ctx, options, 0)?;
+    let fresh46 = &mut (*makeflags);
     (*fresh46).set_export(v_export as variable_export);
     define_default_variables(&ctx, options);
     enter_file(&ctx, b".DEFAULT");

@@ -568,7 +568,11 @@ pub unsafe fn expand_string_buf(
                             let replace_beg: *const ::core::ffi::c_char = subst_end.add(1);
                             let replace_end: *const ::core::ffi::c_char = end;
                             let name_len = colon.offset_from(beg) as size_t;
-                            let v = lookup_variable(ctx, beg, name_len)?.as_mut();
+                            // Bound before the reference is taken, so the
+                            // pointer `as_mut` reads is only ever one the
+                            // `Result` has already yielded.
+                            let looked = lookup_variable(ctx, beg, name_len)?;
+                            let v = looked.as_mut();
                             if v.is_none() {
                                 // SAFETY: `beg` points to `name_len` valid
                                 // bytes (`name_len = colon - beg`, both within
