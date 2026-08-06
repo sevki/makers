@@ -419,6 +419,35 @@ jobs:
               run: cargo test
 
     # ─────────────────────────────────────────────────────────────────────
+    # The fuzz crate declares its own `[workspace]`, so the repo-root
+    # `cargo check --all-targets` never builds it. Without this job a
+    # signature change to a fuzzed function compiles fine on the PR and only
+    # breaks the nightly fuzzing run — which is how #510 went unnoticed for a
+    # month. Type-check only: no nightly toolchain, no cargo-fuzz install, no
+    # fuzzing. The nightly workflow still does the actual running.
+    # ─────────────────────────────────────────────────────────────────────
+    fuzz-targets-build:
+        name: fuzz targets compile
+        needs: build
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Type-check every fuzz target
+              working-directory: fuzz
+              run: cargo check --all-targets
+
+    # ─────────────────────────────────────────────────────────────────────
     # Coverage: the ONE instrumented build+test run. It generates the single
     # lcov.info that both this report and the CRAP gate (below) consume — the
     # old design ran `cargo llvm-cov` twice per PR. Generated the way crap.sh
