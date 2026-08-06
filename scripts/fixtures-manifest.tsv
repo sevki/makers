@@ -123,7 +123,7 @@ wait-special	ordered	27_wait_special.mk	all			simple
 nothing-todo	ordered	28_nothing_todo.mk	noop			simple
 recipe-runs	ordered	28_nothing_todo.mk	done			simple
 oneshell	ordered	29_oneshell.mk	all			simple
-origin-flavor	ordered	92_origin_flavor.mk	all	CMDLINE_VAR=cli-value	known divergence #459: $(flavor) of automatic variables is 'recursive', oracle says 'simple'	simple
+origin-flavor	ordered	92_origin_flavor.mk	all	CMDLINE_VAR=cli-value		simple
 jobserver_parallel	unordered_stdout_only	10_jobs.mk	all	-j4		simple
 job_slots_capped_parallel	unordered_stdout_only	20_job_slots.mk	all	-j3		simple
 library-search	ordered	93_library_search.mk	all		known divergence #484: $< for a resolved -lNAME prerequisite stays unresolved	simple
