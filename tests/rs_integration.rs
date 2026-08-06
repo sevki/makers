@@ -2086,7 +2086,6 @@ fn dash_i_include_resolution_found_and_not_found() {
 }
 
 #[test]
-#[ignore = "known divergence #459: $(flavor) of automatic variables is 'recursive', oracle says 'simple'"]
 fn origin_and_flavor_functions() {
     // `$(origin NAME)` / `$(flavor NAME)`: exercises func_origin/func_flavor
     // (converted from `unsafe fn` to safe `fn`, confining unsafe to the
@@ -2101,7 +2100,6 @@ fn origin_and_flavor_functions() {
 }
 
 #[test]
-#[ignore = "known divergence #459: $(flavor) of automatic variables is 'recursive', oracle says 'simple'"]
 fn origin_environment_variable() {
     // `$(origin NAME)` for a variable that comes solely from the process
     // environment (not touched by the makefile) reports "environment".
@@ -2109,9 +2107,10 @@ fn origin_environment_variable() {
     let fixture = fixtures_dir().join("92_origin_flavor.mk");
     let workdir = tempdir();
     let r = PathBuf::from(RUST_MAKE);
-    // Differential comparison against the C oracle now runs in CI; this
-    // stays #[ignore]d (known divergence #459) and just pins the documented
-    // "environment" origin for a variable set only via the process env.
+    // Differential comparison against the C oracle runs in CI; this test just
+    // pins the documented "environment" origin for a variable set only via the
+    // process env, which `check()` cannot express (it needs an explicit env
+    // var on the child).
     let r_run: Run = Command::new(&r)
         .arg("--no-print-directory")
         .arg("-f")

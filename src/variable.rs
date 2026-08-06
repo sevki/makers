@@ -313,10 +313,16 @@ pub fn define_target_variable(
         value: value.to_vec(),
         defined_in: None,
         defined_lineno: 0,
-        flavor: VarFlavor::Recursive,
+        // Automatic variables are *simply* expanded: GNU make's
+        // `set_file_variables` defines each one through `DEFINE_VARIABLE`,
+        // which passes `recursive = 0`. Defining them recursively made
+        // `$(flavor $@)` report "recursive" where the C oracle reports
+        // "simple", and would re-expand a `$` that appeared in a file name
+        // (#459).
+        flavor: VarFlavor::Simple,
         origin,
         export: VarExport::Default,
-        recursive: true,
+        recursive: false,
         append: false,
         conditional: false,
         per_target: true,
