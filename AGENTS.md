@@ -114,7 +114,13 @@ exempted from the gate by quarantining it: the `skip` column in
 fail), mirrored by `#[ignore = "known divergence #NNN: ..."]` on the
 corresponding `tests/rs_integration.rs` test, pointing at an open issue that
 tracks the divergence. Keep the fixture's manifest row in sync with its test
-(fixture file, target, args) when either changes.
+(fixture file, target, args) when either changes. When the *oracle* is the
+wrong side — the C code has a bug and matching it means shipping a known-wrong
+result — do not quarantine: keep the default bug-compatible so the fixture
+stays in the gate, and put the correct behaviour behind an opt-in
+`MAKERS_*` environment variable documented in
+[docs/divergences.md](docs/divergences.md), with the default pinned by the
+fixture and the opt-in by its own test.
 
 **Regression fixes land test-first.** When a C↔Rust output divergence is
 found, the history must prove it: first a commit adding a differential
