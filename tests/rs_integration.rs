@@ -1705,7 +1705,6 @@ fn load_directive_unsupported_aborts() {
 }
 
 #[test]
-#[ignore = "known divergence #460: $(wildcard lib.a(*.o)) name form differs from the C oracle"]
 fn ar_glob_member_sort_matches_oracle() {
     // ar_glob (src/ar.rs): archive-member wildcards like `lib.a(*.o)` expand to
     // the members sorted by make's `alpha_compare` ordering. That sort was a
@@ -1737,9 +1736,11 @@ fn ar_glob_member_sort_matches_oracle() {
     )
     .unwrap();
 
-    // Still quarantined (#460): differential comparison against the C
-    // oracle for this fixture now runs in CI (fixtures-diff), but this test
-    // stays #[ignore]d and just smoke-tests the Rust make below.
+    // Deliberately *not* compared against the C oracle: GNU make 4.4.90 has a
+    // bug here (see #460 and the note in scripts/fixtures-manifest.tsv), so the
+    // oracle prints the archive name five times instead of the five member
+    // names. The assertions below pin the correct behaviour, which is what
+    // `ar_glob_match` in src/ar.rs builds and what src/read.c intends.
     let r = std::path::PathBuf::from(RUST_MAKE);
     let r_run: Run = Command::new(&r)
         .arg("--no-print-directory")
@@ -1750,12 +1751,15 @@ fn ar_glob_member_sort_matches_oracle() {
         .into();
     assert_eq!(r_run.code, Some(0), "rust make failed: {r_run:?}");
     let stdout = String::from_utf8_lossy(&r_run.stdout);
-    for m in &members {
-        assert!(
-            stdout.contains(m),
-            "expected archive member {m} in wildcard expansion, got: {stdout}"
-        );
-    }
+    // Sorted by `misc::alpha_cmp`, which is a plain byte comparison: 'M' (77)
+    // sorts ahead of every lowercase initial. Each element keeps the
+    // `archive(member)` form that `ar_glob_match` builds.
+    assert_eq!(
+        stdout.trim_end(),
+        "[libdiff.a(Mid.o) libdiff.a(alpha.o) libdiff.a(beta.o) \
+         libdiff.a(mid.o) libdiff.a(zeta.o)]",
+        "unexpected wildcard expansion"
+    );
 }
 
 #[test]
