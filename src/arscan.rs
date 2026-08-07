@@ -13,11 +13,6 @@ extern "C" {
         __format: *const ::core::ffi::c_char,
         ...
     ) -> i32;
-    fn memcpy(
-        __dest: *mut ::core::ffi::c_void,
-        __src: *const ::core::ffi::c_void,
-        __n: size_t,
-    ) -> *mut ::core::ffi::c_void;
     fn memset(__s: *mut ::core::ffi::c_void, __c: i32, __n: size_t) -> *mut ::core::ffi::c_void;
     fn memcmp(
         __s1: *const ::core::ffi::c_void,
@@ -46,7 +41,7 @@ pub type ar_member_func_t = Option<
 >;
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub struct ar_hdr {
+pub struct ArHdr {
     pub ar_name: [::core::ffi::c_char; 16],
     pub ar_date: [::core::ffi::c_char; 12],
     pub ar_uid: [::core::ffi::c_char; 6],
@@ -64,7 +59,7 @@ pub const ARMAG: [::core::ffi::c_char; 9] =
 pub const SARMAG: i32 = 8;
 pub const ARFMAG: [::core::ffi::c_char; 3] =
     unsafe { ::core::mem::transmute::<[u8; 3], [::core::ffi::c_char; 3]>(*b"`\n\0") };
-pub const AR_HDR_SIZE: usize = ::core::mem::size_of::<ar_hdr>();
+pub const AR_HDR_SIZE: usize = ::core::mem::size_of::<ArHdr>();
 /// Parse one fixed-width ASCII numeric field out of an `ar` archive header.
 ///
 /// `field` is the raw bytes (space-padded ASCII), `base` is the numeric base
@@ -104,6 +99,20 @@ fn parse_int(field: &[u8], base: u32, max: u64) -> Option<u64> {
 
     (value <= max).then_some(value)
 }
+/// Right-trims an `ar_name` archive-header field down to its significant
+/// bytes: everything up to (but not including) the run of trailing ASCII
+/// spaces. An all-spaces field trims to an empty slice.
+///
+/// `ar_name` is raw on-disk archive data, not platform `char` text, so this
+/// takes plain bytes rather than `c_char` — the `c_char`/`u8` conversion
+/// happens once, at the boundary where the header is read off disk.
+fn trim_ar_name(field: &[u8; 16]) -> &[u8] {
+    match field.iter().rposition(|&b| b != b' ') {
+        Some(last) => &field[..=last],
+        None => &field[..0],
+    }
+}
+
 /// # Safety
 ///
 /// C-style API operating on raw pointers; all pointer arguments must be
@@ -138,7 +147,7 @@ pub unsafe fn ar_scan(
         let mut member_offset: ::core::ffi::c_long = SARMAG as ::core::ffi::c_long;
         loop {
             let mut nread_0: ssize_t;
-            let mut member_header: ar_hdr = ar_hdr {
+            let mut member_header: ArHdr = ArHdr {
                 ar_name: [0; 16],
                 ar_date: [0; 12],
                 ar_uid: [0; 6],
@@ -147,7 +156,7 @@ pub unsafe fn ar_scan(
                 ar_size: [0; 10],
                 ar_fmag: [0; 2],
             };
-            let mut namebuf: [::core::ffi::c_char; 17] = [0; 17];
+            let mut namebuf: [u8; 17] = [0; 17];
             let mut name: *mut ::core::ffi::c_char;
             let is_namemap: i32;
             let mut long_name: i32 = 0;
@@ -156,7 +165,7 @@ pub unsafe fn ar_scan(
             memset(
                 &raw mut member_header as *mut ::core::ffi::c_void,
                 0,
-                ::core::mem::size_of::<ar_hdr>() as size_t,
+                ::core::mem::size_of::<ArHdr>() as size_t,
             );
             loop {
                 o = lseek(desc, member_offset as __off_t, 0) as off_t;
@@ -187,24 +196,12 @@ pub unsafe fn ar_scan(
             {
                 break;
             }
-            name = &raw mut namebuf as *mut ::core::ffi::c_char;
-            memcpy(
-                name as *mut ::core::ffi::c_void,
-                &raw mut member_header.ar_name as *mut ::core::ffi::c_char
-                    as *const ::core::ffi::c_void,
-                ::core::mem::size_of::<[::core::ffi::c_char; 16]>() as size_t,
-            );
-            let mut p: *mut ::core::ffi::c_char =
-                name.offset(::core::mem::size_of::<[::core::ffi::c_char; 16]>() as usize as isize);
-            loop {
-                *p = 0;
-                if !(p > name && {
-                    p = p.offset(-1_i32 as isize);
-                    *p as i32 == ' ' as i32
-                }) {
-                    break;
-                }
-            }
+            name = &raw mut namebuf as *mut u8 as *mut ::core::ffi::c_char;
+            let ar_name_bytes: [u8; 16] = member_header.ar_name.map(|c| c as u8);
+            let trimmed = trim_ar_name(&ar_name_bytes);
+            namebuf[..trimmed.len()].copy_from_slice(trimmed);
+            namebuf[trimmed.len()..].fill(0);
+            let p: *mut ::core::ffi::c_char = name.add(trimmed.len().saturating_sub(1));
             is_namemap = (strcmp(name, b"//\0" as *const u8 as *const ::core::ffi::c_char) == 0
                 || strcmp(
                     name,
@@ -457,7 +454,7 @@ pub unsafe fn ar_member_touch(
     );
     let opos: off_t;
     let mut fd: i32;
-    let mut ar_hdr: ar_hdr = ar_hdr {
+    let mut ar_hdr: ArHdr = ArHdr {
         ar_name: [0; 16],
         ar_date: [0; 12],
         ar_uid: [0; 6],
@@ -658,5 +655,91 @@ mod ar_name_equal_unsafe_oracle {
         check(c"abcdefghijklmno1", c"abcdefghijklmno2", true);
         check(c"abcdefghijklmno1", c"abcdefghijklmno2", false);
         check(c"short.o", c"shorter.o", true);
+    }
+}
+
+#[cfg(test)]
+mod trim_ar_name_tests {
+    use super::trim_ar_name;
+
+    #[test]
+    fn full_16_bytes_no_trailing_space() {
+        assert_eq!(trim_ar_name(b"abcdefghijklmnop"), b"abcdefghijklmnop");
+    }
+
+    #[test]
+    fn trailing_spaces_trimmed() {
+        assert_eq!(trim_ar_name(b"foo.o           "), b"foo.o");
+    }
+
+    #[test]
+    fn all_spaces_trim_to_empty() {
+        assert_eq!(trim_ar_name(b"                "), b"");
+    }
+
+    #[test]
+    fn trailing_slash_terminator_survives_trim() {
+        // The `/` short-name terminator is not a space, so it is kept; the
+        // caller strips it separately once it knows this is a short name.
+        assert_eq!(trim_ar_name(b"short.o/        "), b"short.o/");
+    }
+}
+
+#[cfg(test)]
+mod trim_ar_name_unsafe_oracle {
+    //! The original c2rust `ar_scan` trimmed `ar_name` in place with a raw
+    //! pointer walk (`p = p.offset(-1); *p == ' '`) starting one byte past
+    //! the 16-byte field, leaving `p` pointing at the last significant byte
+    //! (not one past it — the loop always decrements before its first
+    //! check, and an all-spaces field walks `p` down to the field start).
+    //! This keeps that walk verbatim as a differential oracle and asserts
+    //! the safe, slice-based `trim_ar_name` agrees (AGENTS rule 3).
+    use super::trim_ar_name;
+
+    /// Verbatim pre-conversion pointer walk. `buf` holds the 16-byte field
+    /// followed by one scratch byte (mirroring the original's 17-byte
+    /// `namebuf`). Returns the raw index `p` lands on.
+    unsafe fn oracle(buf: &mut [u8; 17]) -> usize {
+        let name = buf.as_mut_ptr();
+        let mut p = name.offset(16);
+        loop {
+            *p = 0;
+            if !(p > name && {
+                p = p.offset(-1);
+                *p == b' '
+            }) {
+                break;
+            }
+        }
+        p.offset_from(name) as usize
+    }
+
+    fn check(field: [u8; 16]) {
+        let safe = trim_ar_name(&field);
+        let field_is_all_spaces = field.iter().all(|&b| b == b' ');
+
+        let mut buf: [u8; 17] = [0; 17];
+        buf[..16].copy_from_slice(&field);
+        // SAFETY: `buf` is a valid, fully-initialized 17-element array.
+        let last = unsafe { oracle(&mut buf) };
+        // `p` always lands on the index of the last significant byte,
+        // *unless* the whole field is spaces, in which case it also lands
+        // on index 0 — but there it means "nothing kept" (see module doc).
+        let oracle_last = (!field_is_all_spaces || last != 0).then_some(last);
+
+        match oracle_last {
+            Some(last) => assert_eq!(safe, &buf[..=last], "field={field:?}"),
+            None => assert_eq!(safe, b"", "field={field:?}"),
+        }
+    }
+
+    #[test]
+    fn differential() {
+        check(*b"abcdefghijklmnop");
+        check(*b"foo.o           ");
+        check(*b"                ");
+        check(*b"short.o/        ");
+        check(*b"a               ");
+        check(*b"          spaced");
     }
 }
