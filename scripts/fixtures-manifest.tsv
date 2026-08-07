@@ -135,7 +135,7 @@ dash_i_found	ordered	-	found			dash_i
 dash_i_not_found	ordered	-	notfound			dash_i
 sigint-cleanup	ordered	-	INT			signal
 sigterm-cleanup	ordered	-	TERM			signal
-ar-glob-member-sort	ordered	-	-		known divergence #460: $(wildcard lib.a(*.o)) name form differs from the C oracle	ar_glob
+ar-glob-member-sort	ordered	-	-			ar_glob
 usage_help	ordered	01_basic.mk	all	-h		simple
 file_func	ordered	94_file_func.mk	check			simple
 bad_debug_level	ordered	01_basic.mk	all	--debug=z		simple
