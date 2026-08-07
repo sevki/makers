@@ -2670,6 +2670,11 @@ mod tests {
     // keep the verbatim oracle compilable per AGENTS.md "preserve the original
     // as a test oracle". Production stays free of this FFI/unsafe.
     const CLOCK_REALTIME: i32 = 0;
+    // `timeval` mirrors the real POSIX `struct timeval` for the
+    // `gettimeofday` call below and is kept verbatim (including its C
+    // spelling) as part of the preserved-oracle rule (AGENTS.md rule 3) —
+    // renaming it would make this no longer a verbatim copy of the
+    // pre-conversion code it exists to differential-test against.
     #[derive(Copy, Clone)]
     #[repr(C)]
     struct timeval {
