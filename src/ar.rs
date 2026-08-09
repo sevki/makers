@@ -394,6 +394,51 @@ fn ar_glob_pattern_p(pattern: &[u8], quote: bool) -> bool {
     false
 }
 
+/// Name of the opt-in switch for the `archive(member)` names an archive-member
+/// wildcard should expand to. See [`ar_glob_member_names`].
+pub const AR_GLOB_MEMBER_NAMES_VAR: &str = "MAKERS_AR_GLOB_MEMBER_NAMES";
+
+/// Is the value of [`AR_GLOB_MEMBER_NAMES_VAR`] on? Unset, empty, and `0` are
+/// off; any other value is on. Split out from the environment read so the
+/// parsing is testable without touching process state.
+fn flag_on(value: Option<&::std::ffi::OsStr>) -> bool {
+    match value {
+        None => false,
+        Some(v) => !v.is_empty() && v != "0",
+    }
+}
+
+/// Should `$(wildcard lib.a(*.o))` keep the `archive(member)` names that
+/// [`ar_glob_match`] builds, instead of the archive name GNU make 4.4.90
+/// substitutes for every element?
+///
+/// Off by default: the default expansion stays byte-identical to the C oracle,
+/// bug included (see `docs/divergences.md` and #460). Set
+/// `MAKERS_AR_GLOB_MEMBER_NAMES=1` to get the member names.
+pub fn ar_glob_member_names() -> bool {
+    flag_on(::std::env::var_os(AR_GLOB_MEMBER_NAMES_VAR).as_deref())
+}
+
+#[cfg(test)]
+mod ar_glob_member_names_tests {
+    use super::flag_on;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn unset_empty_and_zero_are_off() {
+        assert!(!flag_on(None));
+        assert!(!flag_on(Some(OsStr::new(""))));
+        assert!(!flag_on(Some(OsStr::new("0"))));
+    }
+
+    #[test]
+    fn any_other_value_is_on() {
+        assert!(flag_on(Some(OsStr::new("1"))));
+        assert!(flag_on(Some(OsStr::new("yes"))));
+        assert!(flag_on(Some(OsStr::new("00"))));
+    }
+}
+
 #[cfg(test)]
 mod ar_glob_pattern_p_tests {
     use super::ar_glob_pattern_p;

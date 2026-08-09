@@ -1704,19 +1704,11 @@ fn load_directive_unsupported_aborts() {
     );
 }
 
-#[test]
-#[ignore = "known divergence #460: $(wildcard lib.a(*.o)) name form differs from the C oracle"]
-fn ar_glob_member_sort_matches_oracle() {
-    // ar_glob (src/ar.rs): archive-member wildcards like `lib.a(*.o)` expand to
-    // the members sorted by make's `alpha_compare` ordering. That sort was a
-    // libc `qsort` driven by an `unsafe extern "C"` comparator; it is now an
-    // idiomatic `Vec::sort_by` over the safe `misc::alpha_cmp`. Build an archive
-    // whose members are inserted OUT of sorted order, then assert both makes
-    // expand the wildcard to the same (sorted) sequence — proving the new sort
-    // is byte-for-byte order-equivalent to the C oracle.
+/// Build an archive whose members are inserted OUT of sorted order, plus a
+/// makefile that expands `$(wildcard libdiff.a(*.o))`, and return the directory.
+/// Mixed case exercises the first-byte ordering ('M'=77 < 'a'=97).
+fn ar_glob_member_sort_fixture() -> std::path::PathBuf {
     let dir = tempdir();
-    // Insertion order is deliberately unsorted; the expansion must come out
-    // sorted. Mixed case exercises the first-byte ordering ('M'=77 < 'a'=97).
     let members = ["zeta.o", "alpha.o", "Mid.o", "beta.o", "mid.o"];
     for m in &members {
         std::fs::write(dir.join(m), b"x\n").unwrap();
@@ -1736,26 +1728,60 @@ fn ar_glob_member_sort_matches_oracle() {
         "all: ; @echo '[$(wildcard libdiff.a(*.o))]'\n",
     )
     .unwrap();
+    dir
+}
 
-    // Still quarantined (#460): differential comparison against the C
-    // oracle for this fixture now runs in CI (fixtures-diff), but this test
-    // stays #[ignore]d and just smoke-tests the Rust make below.
-    let r = std::path::PathBuf::from(RUST_MAKE);
-    let r_run: Run = Command::new(&r)
-        .arg("--no-print-directory")
-        .arg("all")
-        .current_dir(&dir)
-        .output()
-        .expect("failed to spawn make")
-        .into();
-    assert_eq!(r_run.code, Some(0), "rust make failed: {r_run:?}");
-    let stdout = String::from_utf8_lossy(&r_run.stdout);
-    for m in &members {
-        assert!(
-            stdout.contains(m),
-            "expected archive member {m} in wildcard expansion, got: {stdout}"
-        );
+/// Run rust make over [`ar_glob_member_sort_fixture`], optionally with the
+/// member-names opt-in set, and return its trimmed stdout.
+fn ar_glob_member_sort_expansion(dir: &std::path::Path, member_names: bool) -> String {
+    let mut cmd = Command::new(std::path::PathBuf::from(RUST_MAKE));
+    cmd.arg("--no-print-directory").arg("all").current_dir(dir);
+    if member_names {
+        cmd.env("MAKERS_AR_GLOB_MEMBER_NAMES", "1");
+    } else {
+        cmd.env_remove("MAKERS_AR_GLOB_MEMBER_NAMES");
     }
+    let run: Run = cmd.output().expect("failed to spawn make").into();
+    assert_eq!(run.code, Some(0), "rust make failed: {run:?}");
+    String::from_utf8_lossy(&run.stdout).trim_end().to_string()
+}
+
+#[test]
+fn ar_glob_member_sort_matches_oracle() {
+    // ar_glob (src/ar.rs): archive-member wildcards like `lib.a(*.o)` expand to
+    // the members sorted by make's `alpha_compare` ordering. That sort was a
+    // libc `qsort` driven by an `unsafe extern "C"` comparator; it is now an
+    // idiomatic `Vec::sort_by` over the safe `misc::alpha_cmp`.
+    //
+    // The default expansion is bug-compatible with GNU make 4.4.90: read.c
+    // overwrites every element's `archive(member)` name with the bare archive
+    // name (#460), and `$(wildcard)` always takes that branch, so the archive
+    // name is printed once per matched member. The sort is still what decides
+    // how many elements come out and in what order; the member names are
+    // pinned by `ar_glob_member_names_opt_in` below. The `ar-glob-member-sort`
+    // fixture diffs this same case against the C oracle in CI.
+    let dir = ar_glob_member_sort_fixture();
+    assert_eq!(
+        ar_glob_member_sort_expansion(&dir, false),
+        "[libdiff.a libdiff.a libdiff.a libdiff.a libdiff.a]",
+        "unexpected default wildcard expansion"
+    );
+}
+
+#[test]
+fn ar_glob_member_names_opt_in() {
+    // MAKERS_AR_GLOB_MEMBER_NAMES=1 opts out of the upstream bug (#460, and see
+    // docs/divergences.md) and keeps the `archive(member)` names that
+    // `ar_glob_match` builds — which is what src/read.c's own "massage names"
+    // loop intends. Sorted by `misc::alpha_cmp`, a plain byte comparison, so
+    // 'M' (77) sorts ahead of every lowercase initial.
+    let dir = ar_glob_member_sort_fixture();
+    assert_eq!(
+        ar_glob_member_sort_expansion(&dir, true),
+        "[libdiff.a(Mid.o) libdiff.a(alpha.o) libdiff.a(beta.o) \
+         libdiff.a(mid.o) libdiff.a(zeta.o)]",
+        "unexpected wildcard expansion under MAKERS_AR_GLOB_MEMBER_NAMES=1"
+    );
 }
 
 #[test]

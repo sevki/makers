@@ -3478,10 +3478,12 @@ pub struct ParsedName {
 /// result is collected into owned name byte-vectors instead of a `*mut T`
 /// chain. `*stringp` is advanced past the consumed text exactly as before.
 ///
-/// `cache` (the former `!PARSEFS_NOCACHE`) only affected whether names were
-/// `strcache_add`'d vs `xstrdup`'d for chain ownership; since each name is now
-/// copied into an owned `Vec<u8>` regardless, it no longer changes the result
-/// and is accepted for signature parity.
+/// `cache` (the former `!PARSEFS_NOCACHE`) chose between `strcache_add` and
+/// `xstrdup` for chain ownership; since each name is now copied into an owned
+/// `Vec<u8>` regardless, that part of it no longer changes the result. It does
+/// still select one behaviour: in the archive-member branch, `cachep` with no
+/// `prefix` is the one case where read.c leaves `found->name` alone instead of
+/// overwriting it with the archive name (see the loop below and #460).
 ///
 /// # Safety
 ///
@@ -3497,7 +3499,6 @@ pub unsafe fn parse_file_seq(
     flags: i32,
 ) -> Result<Vec<ParsedName>, crate::build_result::BuildError> {
     let cachep: i32 = !(flags & 0x10_i32 != 0) as i32;
-    let _ = cachep;
     // Collected results, owned, replacing the `*mut T` intrusive chain.
     let mut out: Vec<ParsedName> = Vec::new();
     let mut found_wait: i32 = 0;
@@ -3745,16 +3746,33 @@ pub unsafe fn parse_file_seq(
                             ]);
                             push_name!(__n_0_buf.as_ptr() as *const ::core::ffi::c_char);
                         } else {
+                            // Which base name each element carries. `ar_glob`
+                            // built `archive(member)`, but read.c then rewrites
+                            // every element as `prefix + name` — and `name` is
+                            // the *archive* name, so the member names are lost
+                            // (upstream bug, #460: the intended operand is
+                            // `found->name`). Only the `cachep && !prefix` case
+                            // escapes the rewrite and keeps the member name.
+                            // Reproduced bug-for-bug by default so the oracle
+                            // diff stays byte-identical; opt in to the fix with
+                            // `MAKERS_AR_GLOB_MEMBER_NAMES=1`.
+                            let member_names = crate::ar::ar_glob_member_names();
                             let mut node = found;
                             while let Some(nref) = node.as_ref() {
+                                let base: *const ::core::ffi::c_char =
+                                    if member_names || (cachep != 0 && prefix.is_null()) {
+                                        nref.name
+                                    } else {
+                                        name
+                                    };
                                 let nm_buf = if !prefix.is_null() {
-                                    Some(concat(&[cstr_bytes_or_empty(prefix), cstr_bytes_or_empty(nref.name)]))
+                                    Some(concat(&[cstr_bytes_or_empty(prefix), cstr_bytes_or_empty(base)]))
                                 } else {
                                     None
                                 };
                                 let nm: *const ::core::ffi::c_char = match &nm_buf {
                                     Some(buf) => buf.as_ptr() as *const ::core::ffi::c_char,
-                                    None => nref.name,
+                                    None => base,
                                 };
                                 push_name!(nm);
                                 node = nref.next;
