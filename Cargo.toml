@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "proc-macros",
+    "src/make-srv/server",
 ]
 [package]
 name = "make-sys"

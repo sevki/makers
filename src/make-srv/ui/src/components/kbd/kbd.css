@@ -1,0 +1,182 @@
+.kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-family:
+        ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono",
+        Menlo, monospace;
+    font-weight: 500;
+    background-color: var(--kbd-bg);
+    color: var(--kbd-text);
+    border: 1px solid var(--kbd-border);
+    border-radius: 6px;
+    box-shadow: var(--kbd-shadow-outer), var(--kbd-shadow-inner);
+    transition: all 0.15s ease;
+    user-select: none;
+    cursor: default;
+    --kbd-bg: var(--color-background);
+    --kbd-bg-hover: var(--color-muted);
+    --kbd-border: var(--color-border);
+    --kbd-text: var(--color-text);
+}
+
+/* Size variants */
+.kbd-sm {
+    padding: 0.125rem 0.375rem;
+    font-size: 0.75rem;
+    min-width: 1.5rem;
+    min-height: 1.5rem;
+}
+
+.kbd-md {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+    min-width: 2rem;
+    min-height: 2rem;
+}
+
+.kbd-lg {
+    padding: 0.375rem 0.75rem;
+    font-size: 1rem;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+}
+
+/* Variant styles */
+.kbd-default,
+.kbd-light {
+    --kbd-shadow-outer: 0 2px 0 0 rgba(0, 0, 0, 0.15);
+    --kbd-shadow-inner: inset 0 -2px 0 0 rgba(0, 0, 0, 0.1);
+}
+
+.kbd-dark {
+    --kbd-shadow-outer: 0 2px 0 0 rgba(0, 0, 0, 0.5);
+    --kbd-shadow-inner: inset 0 -2px 0 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .kbd-default,
+    .kbd-dark {
+        --kbd-shadow-outer: 0 2px 0 0 rgba(0, 0, 0, 0.5);
+        --kbd-shadow-inner: inset 0 -2px 0 0 rgba(255, 255, 255, 0.1);
+    }
+
+    .kbd-light {
+        --kbd-shadow-outer: 0 2px 0 0 rgba(0, 0, 0, 0.15);
+        --kbd-shadow-inner: inset 0 -2px 0 0 rgba(0, 0, 0, 0.1);
+    }
+}
+
+/* Hover effect */
+.kbd:hover {
+    background-color: var(--kbd-bg-hover);
+    transform: translateY(1px);
+    box-shadow:
+        var(--kbd-shadow-outer) translateY(-1px),
+        var(--kbd-shadow-inner);
+}
+
+/* Active/pressed effect */
+.kbd:active {
+    transform: translateY(2px);
+    box-shadow: inset 0 1px 0 0 rgba(0, 0, 0, 0.2);
+}
+
+#search:hover .kbd {
+    background-color: var(--kbd-bg-hover);
+    transform: translateY(1px);
+    box-shadow:
+        var(--kbd-shadow-outer) translateY(-1px),
+        var(--kbd-shadow-inner);
+}
+
+#search .kbd:hover {
+    /* Reset individual hover since parent handles it */
+    background-color: var(--kbd-bg-hover);
+    transform: translateY(1px);
+    box-shadow:
+        var(--kbd-shadow-outer) translateY(-1px),
+        var(--kbd-shadow-inner);
+}
+
+/* Key combination styles */
+.kbd-combo {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding-left: var(--spacing);
+    padding-right: var(--spacing);
+}
+
+/* Hover effect for all kbd children when hovering over combo */
+.kbd-combo:hover .kbd {
+    background-color: var(--kbd-bg-hover);
+    transform: translateY(1px);
+    box-shadow:
+        var(--kbd-shadow-outer) translateY(-1px),
+        var(--kbd-shadow-inner);
+}
+
+/* Prevent double hover effect */
+.kbd-combo .kbd:hover {
+    /* Reset individual hover since parent handles it */
+    background-color: var(--kbd-bg-hover);
+    transform: translateY(1px);
+    box-shadow:
+        var(--kbd-shadow-outer) translateY(-1px),
+        var(--kbd-shadow-inner);
+}
+
+.kbd-separator {
+    color: #6b7280;
+    font-size: 0.875rem;
+    margin: 0 0.125rem;
+}
+
+/* Demo styles */
+.kbd-demo {
+    padding: 2rem;
+    max-width: 800px;
+    margin: 0 auto;
+}
+
+.kbd-demo-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-bottom: 2rem;
+}
+
+.kbd-demo-section {
+    margin-bottom: 2rem;
+}
+
+.kbd-demo-section h3 {
+    font-size: 1.125rem;
+    font-weight: 500;
+    margin-bottom: 1rem;
+}
+
+.kbd-demo-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    align-items: center;
+}
+
+/* Special key styling */
+.kbd[data-key="space"]::after {
+    content: "Space";
+    font-size: 0.75em;
+}
+
+/* Responsive adjustments */
+@media (max-width: 640px) {
+    .kbd-demo {
+        padding: 1rem;
+    }
+
+    .kbd-demo-row {
+        gap: 0.5rem;
+    }
+}

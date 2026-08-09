@@ -1,0 +1,143 @@
+name: UI screenshot job
+
+# Builds the make-srv dashboard, boots the make-srv job server against it,
+# and enqueues a screenshot job for this PR's own preview. The server posts
+# the resulting screenshots as a PR comment. This is the CI trigger for the
+# server+UI added under src/make-srv/: every job it runs demonstrates the
+# concurrent job queue end to end (see src/make-srv/server/tests/concurrency.rs
+# for the queue's own concurrency guarantees).
+#
+# Fork PRs get a read-only GITHUB_TOKEN from GitHub regardless of the
+# `permissions` block below, so publishing (which needs contents:write to
+# push the screenshot branch and pull-requests:write to comment) will fail
+# for them. The job is skipped entirely for fork PRs rather than turning CI
+# red for something outside the PR author's control.
+
+on:
+    pull_request:
+        paths:
+            - "src/make-srv/**"
+            - ".github/workflows/ui-screenshot-job.yml"
+    workflow_dispatch:
+
+concurrency:
+    group: ui-screenshot-job-${{ github.ref }}
+    cancel-in-progress: true
+
+permissions:
+    contents: read
+
+jobs:
+    screenshot:
+        name: screenshot make-srv UI and comment on PR
+        runs-on: ubuntu-latest
+        if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+        permissions:
+            contents: write
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Build make-srv
+              run: cargo build --release -p make-srv
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+                  cache: "npm"
+                  cache-dependency-path: src/make-srv/ui/package-lock.json
+
+            - name: Install UI dependencies
+              working-directory: src/make-srv/ui
+              run: npm ci
+
+            - name: Install Playwright's Chromium
+              working-directory: src/make-srv/ui
+              run: npx playwright install --with-deps chromium
+
+            - name: Build the UI
+              working-directory: src/make-srv/ui
+              run: npm run build
+
+            - name: Start the UI preview server
+              working-directory: src/make-srv/ui
+              run: |
+                  npm run preview -- --port 4173 --strictPort &
+                  echo $! > preview.pid
+                  for i in $(seq 1 30); do
+                      curl -fsS http://localhost:4173/ >/dev/null 2>&1 && exit 0
+                      sleep 1
+                  done
+                  echo "::error::UI preview server did not become ready"
+                  exit 1
+
+            - name: Start make-srv
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              run: |
+                  PORT=8787 \
+                  ARTIFACTS_DIR="$GITHUB_WORKSPACE/artifacts" \
+                  SCREENSHOT_SCRIPT="$GITHUB_WORKSPACE/src/make-srv/ui/scripts/screenshot.mjs" \
+                  RUST_LOG=info \
+                  ./target/release/make-srv &
+                  echo $! > make-srv.pid
+                  for i in $(seq 1 30); do
+                      curl -fsS http://localhost:8787/api/health >/dev/null 2>&1 && exit 0
+                      sleep 1
+                  done
+                  echo "::error::make-srv did not become ready"
+                  exit 1
+
+            - name: Enqueue the screenshot job and wait for it to finish
+              run: |
+                  job=$(curl -fsS -X POST http://localhost:8787/api/jobs \
+                      -H 'content-type: application/json' \
+                      -d "$(jq -n \
+                          --arg repo "${{ github.repository }}" \
+                          --argjson pr "${{ github.event.pull_request.number || 0 }}" \
+                          --arg sha "${{ github.event.pull_request.head.sha || github.sha }}" \
+                          '{repo: $repo, pr_number: $pr, head_sha: $sha, base_url: "http://localhost:4173", routes: ["/"]}')")
+                  id=$(echo "$job" | jq -r .id)
+                  echo "job id: $id"
+
+                  for i in $(seq 1 60); do
+                      job=$(curl -fsS "http://localhost:8787/api/jobs/$id")
+                      status=$(echo "$job" | jq -r .status)
+                      echo "status: $status"
+                      if [ "$status" = "succeeded" ]; then
+                          echo "$job" | jq '.comment_url'
+                          exit 0
+                      fi
+                      if [ "$status" = "failed" ]; then
+                          echo "::error::screenshot job failed: $(echo "$job" | jq -r .error)"
+                          exit 1
+                      fi
+                      sleep 2
+                  done
+                  echo "::error::timed out waiting for the screenshot job to finish"
+                  exit 1
+
+            - name: Dump make-srv logs
+              if: always()
+              run: |
+                  if [ -f make-srv.pid ] && kill -0 "$(cat make-srv.pid)" 2>/dev/null; then
+                      kill "$(cat make-srv.pid)"
+                  fi
+
+            - name: Upload screenshot artifacts
+              if: always()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ui-screenshots-${{ github.sha }}
+                  path: artifacts
+                  if-no-files-found: ignore
+                  retention-days: 14

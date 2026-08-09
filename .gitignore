@@ -92,3 +92,8 @@ checkcfg.*.log
 mutants.out/
 .direnv
 .codex
+
+# make-srv dashboard (Node) and job artifacts
+/src/make-srv/ui/node_modules/
+/src/make-srv/ui/dist/
+/artifacts/
