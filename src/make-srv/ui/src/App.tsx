@@ -1,9 +1,11 @@
+import { RefreshCw } from "lucide-react";
 import * as React from "react";
 import { CommandProvider } from "@/components/command-provider/command-provider";
 import { JobDetailDialog } from "@/components/job-detail-dialog";
 import { JobStatusBadge } from "@/components/job-status-badge";
 import { NewJobDialog } from "@/components/new-job-dialog";
 import ThemeToggle from "@/components/theme-toggle/theme-toggle";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -23,7 +25,7 @@ function formatTime(iso: string) {
 const STATUS_ORDER = ["queued", "running", "succeeded", "failed"] as const;
 
 function Dashboard() {
-  const { jobs, loading, error } = useJobs();
+  const { jobs, loading, error, refresh } = useJobs();
   const [selected, setSelected] = React.useState<Job | null>(null);
 
   const runningCount = jobs.filter((j) => j.status === "running").length;
@@ -44,6 +46,15 @@ function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Refresh jobs"
+            disabled={loading}
+            onClick={() => refresh()}
+          >
+            <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+          </Button>
           <NewJobDialog />
           <ThemeToggle />
         </div>

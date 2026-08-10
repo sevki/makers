@@ -12,18 +12,20 @@ export function useJobs() {
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
-  React.useEffect(() => {
-    let cancelled = false;
-
-    api
+  const refresh = React.useCallback(() => {
+    setLoading(true);
+    return api
       .listJobs()
       .then((list) => {
-        if (cancelled) return;
         setJobs(new Map(list.map((job) => [job.id, job])));
         setError(null);
       })
-      .catch((err: Error) => !cancelled && setError(err.message))
-      .finally(() => !cancelled && setLoading(false));
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  React.useEffect(() => {
+    refresh();
 
     const unsubscribe = api.subscribe((job) => {
       setJobs((prev) => {
@@ -33,16 +35,13 @@ export function useJobs() {
       });
     });
 
-    return () => {
-      cancelled = true;
-      unsubscribe();
-    };
-  }, []);
+    return unsubscribe;
+  }, [refresh]);
 
   const list = React.useMemo(
     () => Array.from(jobs.values()).sort((a, b) => b.created_at.localeCompare(a.created_at)),
     [jobs],
   );
 
-  return { jobs: list, loading, error };
+  return { jobs: list, loading, error, refresh };
 }
