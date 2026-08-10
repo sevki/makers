@@ -20,11 +20,18 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleString();
 }
 
+const STATUS_ORDER = ["queued", "running", "succeeded", "failed"] as const;
+
 function Dashboard() {
   const { jobs, loading, error } = useJobs();
   const [selected, setSelected] = React.useState<Job | null>(null);
 
   const runningCount = jobs.filter((j) => j.status === "running").length;
+  const statusCounts = React.useMemo(() => {
+    const counts = { queued: 0, running: 0, succeeded: 0, failed: 0 };
+    for (const job of jobs) counts[job.status] += 1;
+    return counts;
+  }, [jobs]);
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-10">
@@ -41,6 +48,16 @@ function Dashboard() {
           <ThemeToggle />
         </div>
       </header>
+
+      {jobs.length > 0 && (
+        <div className="mb-6 flex gap-4 text-sm text-muted-foreground">
+          {STATUS_ORDER.map((status) => (
+            <span key={status}>
+              {statusCounts[status]} {status}
+            </span>
+          ))}
+        </div>
+      )}
 
       {error && (
         <p className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
