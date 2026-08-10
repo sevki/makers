@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-react";
+import { Camera, RefreshCw } from "lucide-react";
 import * as React from "react";
 import { CommandProvider } from "@/components/command-provider/command-provider";
 import { JobDetailDialog } from "@/components/job-detail-dialog";
@@ -90,8 +90,13 @@ function Dashboard() {
           <TableBody>
             {!loading && jobs.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground">
-                  No jobs yet. Enqueue one, or wait for CI to submit one from a pull request.
+                <TableCell colSpan={5} className="py-12 text-center">
+                  <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                    <Camera className="h-6 w-6" />
+                    <p className="text-sm">
+                      No jobs yet. Enqueue one, or wait for CI to submit one from a pull request.
+                    </p>
+                  </div>
                 </TableCell>
               </TableRow>
             )}
