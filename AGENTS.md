@@ -40,6 +40,108 @@ retargeted by hand, and not as one omnibus PR.
   rather than merging `main` into individual entries, so each PR's diff stays
   the slice and nothing else.
 
+### How: jujutsu
+
+The mechanics follow Alan Norbauer's
+[GitHub Stacks with Jujutsu](https://alan.norbauer.com/articles/github-stacks-with-jujutsu/),
+together with its companion
+[Stacks in Jujutsu](https://alan.norbauer.com/articles/stacks-in-jujutsu/),
+which defines the revsets used below. `jj` is the tool of record for stacks in
+this repo: one commit per slice, a bookmark naming each, and `stack()`
+addressing the whole thing at once.
+
+**Config** (`~/.config/jj/config.toml`), from the companion article:
+
+```toml
+[revset-aliases."stack_heads(to)"]
+definition = "heads(mutable() & to::)"
+[revset-aliases."stack_heads()"]
+definition = "stack_heads(@)"
+
+[revset-aliases."stack_top(to)"]
+definition = "exactly(stack_heads(to), 1)"
+[revset-aliases."stack_top()"]
+definition = "stack_top(@)"
+
+[revset-aliases."stack_bottom(to)"]
+definition = "roots(mutable() & ::to)"
+[revset-aliases."stack_bottom()"]
+definition = "stack_bottom(@)"
+
+[revset-aliases."stack(to)"]
+definition = "stack_bottom(to)::stack_top(to)"
+[revset-aliases."stack()"]
+definition = "stack(@)"
+
+[revset-aliases."substack(to)"]
+definition = "stack_bottom(to)::to"
+[revset-aliases."substack()"]
+definition = "substack(@)"
+
+[aliases.top]
+definition = ["move-to", "stack_top()"]
+[aliases.bottom]
+definition = ["move-to", "stack_bottom()"]
+[aliases.sb]
+definition = ["stack-bookmarks"]
+[aliases.stack-bookmarks]
+definition = ["--config", "revsets.log=substack()", "log", "--no-graph", "--reversed", "-T", 'if(local_bookmarks, local_bookmarks.map(|b| b.name()).join(" ") ++ " ", "")']
+```
+
+**Create a stack.** One commit per slice, then name each bottom-up and push
+the whole revset:
+
+```sh
+jj bottom --edit
+jj b c <bottom-slice-name>
+jj next --edit
+jj b c <next-slice-name>        # repeat up to the top
+jj git push -r "stack()"
+gh stack link $(jj sb -r "stack()")
+```
+
+`jj git push --change "stack()"` will name bookmarks automatically
+(`templates.git_push_bookmark`, default `"push-" ++ change_id.short()`);
+prefer explicit names so each PR reads as the slice it is, not as a change id.
+
+**Update a slice.** Edit the commit in place — jj rebases the descendants for
+you, so there is no rebase dance — then re-push the stack:
+
+```sh
+jj edit -r <change>
+# ...make the change...
+jj git push -r "stack()"
+```
+
+**Add a slice on top:**
+
+```sh
+jj edit -r <new-change>
+jj b c <name>
+jj git push -r "stack()"
+gh stack link $(jj sb)
+```
+
+**Add to the middle or bottom, or remove a slice.** Unstack in the GitHub web
+UI first, make the change locally (`jj abandon`, reorder, …), then
+`jj git push -r "stack()"` and re-link.
+
+**Reorder.** Reorder locally, unstack in the web UI, push from the bottom
+upward retargeting each PR's base, then re-link. **Never reorder a stack whose
+lower entries are already merged** — per the article this can irreversibly
+destroy the merged PRs.
+
+**When `main` moves**, rebase the whole stack onto it (`jj rebase -d main`).
+Never merge `main` into individual entries — that is the rule above, in jj
+terms.
+
+**Without `jj` or `gh`.** In an environment where neither is installed (a
+sandboxed agent container, for instance), build the same shape by hand: one
+branch per slice, each PR's base set to the branch below it, created through
+the GitHub API. Say so in the PR description, because the stack then has no
+`gh stack link` relationship backing it and has to be retargeted manually if
+an entry moves.
+
 Single, self-contained changes (a dependency bump, a one-file fix) stay
 ordinary standalone PRs.
 
