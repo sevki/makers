@@ -28,6 +28,8 @@ use std::future::Future;
 use std::io;
 use std::thread;
 
+use crate::make_main::MAKE_FAILURE;
+
 /// One tenant's execution slot: a current-thread tokio runtime that its
 /// tenant — and nothing else — runs on.
 ///
@@ -57,6 +59,40 @@ impl TenantRuntime {
     }
 }
 
+/// Run one tenant to completion on a slot of its own and return the exit
+/// status make should report.
+///
+/// This is what `bin/make.rs` calls: the CLI is the N=1 tenant, so the shim
+/// stays a single expression and every decision about starting a slot — and
+/// about failing to — lives here, where it is tested.
+pub fn run_tenant<T>(tenant: T) -> i32
+where
+    T: FnOnce(&TenantRuntime) -> i32,
+{
+    run_tenant_on(TenantRuntime::new(), tenant, &mut io::stderr())
+}
+
+/// [`run_tenant`]'s testable core: given an already-attempted slot, either run
+/// the tenant on it or report why it could not start.
+///
+/// A slot that cannot be built is reported in make's own fatal-error shape and
+/// mapped to `MAKE_FAILURE`. Nothing has been read or built at that point, so
+/// there is no output sink to route through and nothing to clean up.
+fn run_tenant_on<T>(slot: io::Result<TenantRuntime>, tenant: T, err: &mut impl io::Write) -> i32
+where
+    T: FnOnce(&TenantRuntime) -> i32,
+{
+    match slot {
+        Ok(slot) => tenant(&slot),
+        Err(e) => {
+            // The write itself can only fail if stderr is gone, in which case
+            // there is nowhere left to say so; the status still stands.
+            let _ = writeln!(err, "make: *** cannot start the runtime: {e}.  Stop.");
+            MAKE_FAILURE
+        }
+    }
+}
+
 /// Start a tenant on its own thread with its own [`TenantRuntime`], handing
 /// the slot to `tenant`.
 ///
@@ -79,6 +115,33 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn run_tenant_returns_the_tenant_status() {
+        let mut err = Vec::new();
+        let code = run_tenant_on(
+            TenantRuntime::new(),
+            |slot| slot.block_on(async { 7 }),
+            &mut err,
+        );
+        assert_eq!(code, 7);
+        assert!(err.is_empty(), "a slot that started should say nothing");
+    }
+
+    #[test]
+    fn a_slot_that_cannot_start_fails_the_run() {
+        let mut err = Vec::new();
+        let code = run_tenant_on(
+            Err(io::Error::other("no threads left")),
+            |_| unreachable!("the tenant must not run without a slot"),
+            &mut err,
+        );
+        assert_eq!(code, MAKE_FAILURE);
+        assert_eq!(
+            String::from_utf8(err).unwrap(),
+            "make: *** cannot start the runtime: no threads left.  Stop.\n"
+        );
+    }
 
     #[test]
     fn block_on_runs_to_completion() {
