@@ -1,15 +1,20 @@
 // The build runs on a tokio runtime unconditionally (#598): there is one
 // execution model in this codebase, not a synchronous one for the CLI and an
 // asynchronous one for the server. A command-line `make` is simply the N=1
-// tenant case of what the server does with many.
-//
-// `current_thread` is the behavior-preserving flavor for this slice: nothing
-// in the engine is async yet, so a work-stealing pool would only add threads
-// that never run anything. Choosing the tenant task shape for real — and with
-// it the runtime flavor a tenant gets — is E0b.
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
+// tenant case — one tenant, one execution slot, the process exiting when it
+// finishes — so it goes through the same `TenantRuntime` the server hands to
+// every other tenant.
+fn main() {
+    let tenant = match make_sys::runtime::TenantRuntime::new() {
+        Ok(tenant) => tenant,
+        // Nothing has been read or built yet, so there is no output sink to
+        // report through and nothing to clean up.
+        Err(e) => {
+            eprintln!("make: *** cannot start the runtime: {e}.  Stop.");
+            std::process::exit(2);
+        }
+    };
     // The single process-exit point (Phase B, #432): the library reports how
     // the run ended; only this shim turns that into an exit status.
-    std::process::exit(make_sys::make_main::main());
+    std::process::exit(tenant.block_on(async { make_sys::make_main::main() }));
 }

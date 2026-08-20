@@ -44,6 +44,7 @@ pub mod recipe;
 pub mod remake;
 pub mod remote_stub;
 pub mod rule;
+pub mod runtime;
 pub mod shuffle;
 pub mod signame;
 pub mod stdio;
