@@ -13,9 +13,9 @@
 //! red run because "a test that has never been seen red proves nothing" —
 //! keeping the pair in one PR means no finished fix waits on an unrelated one.
 //!
-//! This file covers the umask hazard (#608). The sibling hazards arrive with
-//! their own fixes: the workspace root in #605, and the session-scoped interner
-//! in #607.
+//! This file covers the umask hazard (#608) and the workspace-root hazard
+//! (#605). The remaining sibling arrives with its own fix: the session-scoped
+//! interner in #607.
 //!
 //! Two hazards from #598 are deliberately not covered anywhere:
 //!
@@ -31,7 +31,7 @@
 //!   retires those fields it should add the one-line `assert_send::<ExecContext>()`
 //!   this module cannot write yet.
 
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::os::unix::fs::PermissionsExt as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -183,5 +183,61 @@ fn one_tenants_temp_files_do_not_change_another_tenants_output_permissions() {
         worst, 0o644,
         "a build output was created with {worst:#o} because a neighbouring \
          tenant held the umask at 0o77"
+    );
+}
+
+/// `-C` is a real `chdir(2)` (`src/main.rs:1825`), and cwd is process-wide, so
+/// a tenant that starts while another tenant holds the working directory used
+/// to resolve its own workspace against the wrong root. A session is now
+/// *given* its root instead of inheriting whatever directory the process
+/// happens to be sitting in, so neither tenant depends on the process cwd at
+/// all — note this test never `chdir`s to tenant A's root.
+///
+/// Note what made this hazard easy to miss before: an *already-warm* context
+/// kept answering correctly, because `dir.rs` had cached the listing of `.`
+/// back when `.` meant its own root. That was not isolation, it was a stale
+/// cache keyed by a name whose meaning changed underneath it — right by
+/// accident, and wrong as soon as the tenant asked about a file in the
+/// directory it had actually moved to. Keying by the resolved path fixes both
+/// halves at once.
+#[test]
+fn a_tenant_starting_up_sees_its_own_root_not_another_tenants() {
+    let _guard = hazard_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let entry = std::env::current_dir().unwrap();
+
+    let root = std::env::temp_dir().join(format!("hazard-cwd-{}", std::process::id()));
+    let (a, b) = (root.join("tenant-a"), root.join("tenant-b"));
+    std::fs::create_dir_all(&a).unwrap();
+    std::fs::create_dir_all(&b).unwrap();
+    std::fs::write(a.join("only-in-a.mk"), b"all:;@:").unwrap();
+
+    let name = CString::new("only-in-a.mk").unwrap();
+
+    // Tenant A is running, rooted at `a` — without the process ever going there.
+    let tenant_a = ExecContext::default();
+    *tenant_a.workspace_root.borrow_mut() = a.clone();
+    let a_sees_it = unsafe { make_sys::dir::file_exists_p(&tenant_a, name.as_ptr()) };
+
+    // Tenant B starts and applies its own `-C`, which moves the whole process.
+    std::env::set_current_dir(&b).unwrap();
+
+    // A second session for tenant A — a new build on the same workspace.
+    let tenant_a_again = ExecContext::default();
+    *tenant_a_again.workspace_root.borrow_mut() = a.clone();
+    let still_sees_it = unsafe { make_sys::dir::file_exists_p(&tenant_a_again, name.as_ptr()) };
+
+    std::env::set_current_dir(&entry).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+
+    assert_eq!(
+        a_sees_it.unwrap(),
+        1,
+        "tenant A should see its own makefile"
+    );
+    assert_eq!(
+        still_sees_it.unwrap(),
+        1,
+        "a new session for tenant A could not find its own makefile, because \
+         tenant B's -C had moved the process working directory"
     );
 }
