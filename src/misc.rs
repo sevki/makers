@@ -10,10 +10,10 @@ use ::core::ptr::{null, null_mut};
 
 use libc::{
     __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, realloc, sleep,
-    sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, EINTR,
+    sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, EINTR,
 };
 
-use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t};
+use crate::ffi_types::{__mode_t, pid_t, size_t, ssize_t};
 use crate::file::nameseq;
 use crate::floc::Floc;
 use crate::make_main::{posix_pedantic, stopchar_map};
@@ -754,8 +754,19 @@ pub unsafe fn get_tmptemplate(ctx: &crate::execctx::ExecContext) -> *mut c_char 
 /// Always safe in practice; `unsafe` only for the libc temp-file calls. The
 /// caller takes ownership of the returned name.
 pub unsafe fn open_named_tmpfd(ctx: &crate::execctx::ExecContext) -> (i32, *mut c_char) {
-    // Make sure the temporary file is never readable by other users.
-    let mask: mode_t = umask(0o77);
+    // The temporary file must never be readable by other users. The C
+    // original gets that by borrowing the *process* umask — `umask(0o77)`
+    // around the `mkstemp`, then restoring the saved value — which is not
+    // safe once more than one build shares a process (#608): two of them
+    // interleaved in that window both save the restrictive value and both
+    // "restore" it, leaving the process at `0o77` for good. The damage is not
+    // confined to temp files, since a build output written by anyone else
+    // during the window is created `0o600` instead of `0o644`.
+    //
+    // Nothing here needs a process-wide setting to say something about one
+    // file: POSIX requires `mkstemp` to create with `S_IRUSR|S_IWUSR` (0600)
+    // and nothing wider, which is exactly the guarantee the umask dance was
+    // reaching for. `open_named_tmpfd_mode_is_private` pins it.
     let tmpnm = get_tmptemplate(ctx);
     let mut fd: i32;
     loop {
@@ -777,12 +788,9 @@ pub unsafe fn open_named_tmpfd(ctx: &crate::execctx::ExecContext) -> (i32, *mut 
             ],
         );
         free(tmpnm as *mut c_void);
-        // Note: like the original, `umask` is intentionally left at the
-        // restrictive value on this failure path.
         return (-1, null_mut());
     }
 
-    umask(mask);
     (fd, tmpnm)
 }
 
@@ -805,9 +813,8 @@ pub unsafe fn open_anon_tmpfd(ctx: &crate::execctx::ExecContext) -> i32 {
         return -1;
     }
 
-    // Unlink immediately so the file has no name; `umask` only affects the
-    // already-completed creation, so restoring it before the unlink (as
-    // `open_named_tmpfd` does) is equivalent to the original's order.
+    // Unlink immediately so the file has no name. The mode was fixed when the
+    // file was created, so ordering against it does not matter here.
     let r = unlink_c(tmpnm);
     if r < 0 {
         error(
