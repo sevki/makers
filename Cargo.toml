@@ -29,6 +29,7 @@ jj-lib-proc-macros = { path = "proc-macros" }
 libc = "0.2"
 rustc-hash = "2"
 salsa = "0.28"
+tokio = { version = "1", features = ["rt", "macros"] }
 
 [dev-dependencies]
 insta = { version = "=1.48.0", default-features = false }
