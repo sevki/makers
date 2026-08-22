@@ -50,6 +50,7 @@ pub mod stdio;
 pub mod strcache;
 pub mod sys_stat;
 pub mod target_var;
+pub mod tenant;
 pub mod variable;
 pub mod version;
 pub mod vpath;
