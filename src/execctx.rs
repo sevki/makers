@@ -801,6 +801,17 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// a raw pointer + length pair.
     pub variable_buffer: VariableBuffer,
 
+    /// The session's workspace root: what `-C` selects, and what every relative
+    /// path in this session resolves against.
+    ///
+    /// Empty means "resolve against the process working directory", which is
+    /// still what the CLI does — it keeps its `chdir` for now, so single-tenant
+    /// behaviour is unchanged. A server instead hands each tenant its own root
+    /// here, which is what lets two tenants hold different roots in one process
+    /// (#605). Later slices move the rest of the engine onto the root and then
+    /// drop the process `chdir`, at which point this stops being optional.
+    pub workspace_root: ::core::cell::RefCell<::std::path::PathBuf>,
+
     /// The sink every recipe/trace/diagnostic stdout write goes through —
     /// `output::trace_out`/`_outputs`'s non-synced path, `hash_print_stats`,
     /// the usage/version printers. `Rc<RefCell<_>>` rather than a bare `Out`
@@ -1977,6 +1988,7 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
             config: self.config,
             options: self.options,
             db: self.db,
+            workspace_root: self.workspace_root,
             mtime_adjusted_now: self.mtime_adjusted_now,
             clock_skew_detected: self.clock_skew_detected,
             load_sample_second: self.load_sample_second,

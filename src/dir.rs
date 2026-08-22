@@ -124,6 +124,29 @@ fn clear_directory_contents(ctx: &crate::execctx::ExecContext, dc: &mut Director
     dc.dirfiles = None;
 }
 
+/// Resolve a directory name against this session's workspace root.
+///
+/// A relative name means "relative to the session's root", not to whatever
+/// directory the process happens to be sitting in — that is the point of #605:
+/// two tenants both looking up `.` must not collide on one cache entry, nor
+/// `stat`/`opendir` each other's directory. An absolute name, or a session with
+/// no root set (the CLI, which still `chdir`s), is returned untouched, so
+/// single-tenant behaviour is byte-identical.
+fn resolve_in_workspace(ctx: &crate::execctx::ExecContext, name: &[u8]) -> Vec<u8> {
+    use ::std::os::unix::ffi::OsStrExt as _;
+
+    let root = ctx.workspace_root.borrow();
+    if root.as_os_str().is_empty() || name.first() == Some(&b'/') {
+        return name.to_vec();
+    }
+    let mut out = root.as_os_str().as_bytes().to_vec();
+    if out.last() != Some(&b'/') {
+        out.push(b'/');
+    }
+    out.extend_from_slice(name);
+    out
+}
+
 /// Look up (or create) the cache entry for directory `name`, refreshing
 /// it when a new command has run since it was cached.
 ///
@@ -136,7 +159,12 @@ pub unsafe fn find_directory(
 ) -> Result<*mut directory, crate::build_result::BuildError> {
     // Look the directory up by its name bytes in the idiomatic `FxHashMap`
     // cache on the context.
-    let key: Box<[u8]> = ::core::ffi::CStr::from_ptr(name).to_bytes().into();
+    // Key by the workspace-resolved path rather than the spelling: `.` names a
+    // different directory for every tenant.
+    let resolved = resolve_in_workspace(ctx, ::core::ffi::CStr::from_ptr(name).to_bytes());
+    let key: Box<[u8]> = resolved.as_slice().into();
+    let resolved_c = ::std::ffi::CString::new(resolved)
+        .expect("a directory name cannot contain an interior NUL");
     let dir: *mut directory = {
         let mut table = ctx.directories.0.borrow_mut();
         if let Some(boxed) = table.get_mut(&key) {
@@ -184,7 +212,7 @@ pub unsafe fn find_directory(
     let mut st: stat = ::core::mem::zeroed();
     let mut r;
     loop {
-        r = stat(name, &raw mut st);
+        r = stat(resolved_c.as_ptr(), &raw mut st);
         if !(r == -1 && *__errno_location() == EINTR) {
             break;
         }
@@ -226,7 +254,7 @@ pub unsafe fn find_directory(
         dc.counter = crate::make_main::opt_command_count(ctx);
         loop {
             *__errno_location() = 0;
-            dc.dirstream = opendir(name);
+            dc.dirstream = opendir(resolved_c.as_ptr());
             if !(dc.dirstream.is_null() && *__errno_location() == EINTR) {
                 break;
             }
