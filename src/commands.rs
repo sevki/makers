@@ -5,8 +5,8 @@
 //! Port of `commands.c`.
 
 use crate::ar::{ar_member_date, ar_name_err};
-pub use crate::ffi_types::{pid_t, sig_atomic_t, size_t, time_t, uintmax_t};
 use crate::dep::DepNode;
+pub use crate::ffi_types::{pid_t, sig_atomic_t, size_t, time_t, uintmax_t};
 use crate::file::{
     file_timestamp_cons, lookup_file, remove_intermediates, system_time_from_unix, CommandState,
     FileId, FileNode, UpdateStatus, VarOrigin, NONEXISTENT_MTIME, ORDINARY_MTIME_MIN,
@@ -32,10 +32,12 @@ use rustc_hash::FxHashMap;
 
 use std::sync::atomic::Ordering;
 
-use libc::{
-    __errno_location, exit, kill, signal, EINTR, ENOENT, SIGHUP, SIGINT, SIGQUIT,
-    SIGTERM, SIG_DFL, S_IFMT, S_IFREG,
-};
+use libc::{__errno_location, exit, EINTR, ENOENT, S_IFMT, S_IFREG};
+
+#[cfg(target_family = "wasm")]
+use crate::compat::{kill, signal, SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIG_DFL};
+#[cfg(unix)]
+use libc::{kill, signal, SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIG_DFL};
 
 pub const MAKE_TROUBLE: i32 = 1;
 
@@ -120,8 +122,10 @@ fn autovar_dep_name<'a>(
 ) -> Result<&'a [u8], crate::build_result::BuildError> {
     let mut c = name.to_vec();
     c.push(0);
-    let is_ar =
-        ar_name_err(ctx, CStr::from_bytes_with_nul(&c).expect("dep name has interior NUL"))?;
+    let is_ar = ar_name_err(
+        ctx,
+        CStr::from_bytes_with_nul(&c).expect("dep name has interior NUL"),
+    )?;
     Ok(if is_ar {
         split_archive_ref(name)
             .expect("ar_name guarantees a lib(member) reference")
@@ -235,9 +239,13 @@ pub fn set_file_variables(
     }
     if let Some(ref rt) = node_recipe_text {
         let default_recipe = lookup_file(ctx, b".DEFAULT").and_then(|did| {
-            ctx.filenodes
-                .get(did)
-                .and_then(|n| n.lock().expect("file node poisoned").recipe.as_ref().map(|r| r.text.clone()))
+            ctx.filenodes.get(did).and_then(|n| {
+                n.lock()
+                    .expect("file node poisoned")
+                    .recipe
+                    .as_ref()
+                    .map(|r| r.text.clone())
+            })
         });
         if default_recipe.as_ref() == Some(rt) {
             less = at.clone();
@@ -285,7 +293,8 @@ pub fn set_file_variables(
     let mut bar: Vec<u8> = Vec::new();
     for (i, d) in deps.iter().enumerate() {
         // Take only each name's canonical (first-inserted) dep.
-        if dep_uses_auto_vars(d) && canonical.get(dep_name_bytes(ctx, d).as_slice()).copied() == Some(i)
+        if dep_uses_auto_vars(d)
+            && canonical.get(dep_name_bytes(ctx, d).as_slice()).copied() == Some(i)
         {
             let nm = autovar_dep_name(ctx, &dep_name_bytes(ctx, d))?.to_vec();
             if ignore_mtime[i] {
@@ -400,9 +409,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
     }
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Run `file`'s commands: set up its variables and start a job, or mark it
@@ -443,9 +450,9 @@ pub fn execute_file_commands(
         (text, loaded, nm)
     };
 
-    let empty = recipe_text.iter().all(|&c| {
-        stop_set(c, MAP_BLANK | MAP_NEWLINE) || c == b'-' || c == b'@' || c == b'+'
-    });
+    let empty = recipe_text
+        .iter()
+        .all(|&c| stop_set(c, MAP_BLANK | MAP_NEWLINE) || c == b'-' || c == b'@' || c == b'+');
     if empty {
         {
             let mut guard = node.lock().expect("file node poisoned");
@@ -460,7 +467,10 @@ pub fn execute_file_commands(
     initialize_file_variables(ctx, file, 0)?;
     let stem = {
         let mut guard = node.lock().expect("file node poisoned");
-        entry_node(&mut guard, entry).stem.as_ref().map(|s| s.clone().into_bytes())
+        entry_node(&mut guard, entry)
+            .stem
+            .as_ref()
+            .map(|s| s.clone().into_bytes())
     };
     set_file_variables(ctx, file, stem.as_deref())?;
 
@@ -711,13 +721,18 @@ fn delete_target(
                 break;
             }
         }
+        // glibc's `libc::stat` exposes `st_mtime`/`st_mtime_nsec` as
+        // convenience fields; WASI's does not (only the POSIX-standard
+        // `st_mtim: timespec`), so read the mtime through whichever shape
+        // this target's `libc::stat` provides.
+        #[cfg(unix)]
+        let (mtime_secs, mtime_nsec) = (st.st_mtime as i64, st.st_mtime_nsec as u32);
+        #[cfg(not(unix))]
+        let (mtime_secs, mtime_nsec) = (st.st_mtim.tv_sec as i64, st.st_mtim.tv_nsec as u32);
         if e == 0
             && st.st_mode & S_IFMT == S_IFREG
-            && file_timestamp_cons(
-                ctx,
-                name_ptr,
-                system_time_from_unix(st.st_mtime as i64, st.st_mtime_nsec as u32),
-            ) != last_mtime
+            && file_timestamp_cons(ctx, name_ptr, system_time_from_unix(mtime_secs, mtime_nsec))
+                != last_mtime
         {
             if !behalf_ptr.is_null() {
                 error(
@@ -788,9 +803,7 @@ pub fn print_commands(ctx: &ExecContext, recipe: &Recipe) {
             b"#  recipe to execute (from '",
             filenm,
             b"', line ",
-            (recipe.defined_lineno as ::core::ffi::c_ulong)
-                .to_string()
-                .as_bytes(),
+            recipe.defined_lineno.to_string().as_bytes(),
             b"):\n",
         ]),
     }

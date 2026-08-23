@@ -6,7 +6,6 @@ use crate::misc::{make_toui, readbuf, writebuf};
 use libc::{__errno_location, close, open, strcmp};
 extern "C" {
     fn fstat(__fd: i32, __buf: *mut stat) -> i32;
-    fn lseek(__fd: i32, __offset: __off_t, __whence: i32) -> __off_t;
     fn snprintf(
         __s: *mut ::core::ffi::c_char,
         __maxlen: size_t,
@@ -20,6 +19,19 @@ extern "C" {
         __n: size_t,
     ) -> i32;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
+}
+// Hand-declared (bypassing `libc`'s per-target gating): on wasm32-wasip1,
+// WASI's real `lseek` takes a 64-bit offset, which mismatches this 32-bit
+// `__off_t`-based prototype at link time. Archive scanning has no wasm
+// equivalent anyway, so wasm gets its own stand-in instead of the real
+// symbol.
+#[cfg(unix)]
+extern "C" {
+    fn lseek(__fd: i32, __offset: __off_t, __whence: i32) -> __off_t;
+}
+#[cfg(target_family = "wasm")]
+unsafe fn lseek(_fd: i32, _offset: __off_t, _whence: i32) -> __off_t {
+    -1
 }
 pub use crate::sys_stat::stat;
 pub use crate::sys_stat::timespec;

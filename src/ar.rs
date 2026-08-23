@@ -1,5 +1,20 @@
 use crate::output::FmtArg;
+#[cfg(unix)]
 use libc::fnmatch;
+
+/// wasm has no `fnmatch(3)`: archive-member glob matching (`ar` `$(...)`
+/// patterns) is part of the same not-yet-portable filesystem surface as the
+/// rest of this module. Report "no match" rather than panicking, so the
+/// call sites that only need this crate to compile on wasm still behave
+/// sanely if ever reached.
+#[cfg(target_family = "wasm")]
+unsafe fn fnmatch(
+    _pattern: *const ::core::ffi::c_char,
+    _string: *const ::core::ffi::c_char,
+    _flags: i32,
+) -> i32 {
+    1
+}
 
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
 use crate::file::{Dep, File, SeqNode};
@@ -286,21 +301,21 @@ pub unsafe fn ar_touch(
     match ar_member_touch(ctx, arname, memname) {
         -1 => {
             error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        strlen(arname) as size_t,
-        b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
-    );
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                strlen(arname) as size_t,
+                b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+            );
         }
         -2 => {
             error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        strlen(arname) as size_t,
-        b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
-    );
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                strlen(arname) as size_t,
+                b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+            );
         }
         -3 => {
             perror_with_name(
@@ -362,8 +377,13 @@ unsafe fn ar_glob_match<T: SeqNode>(
             new,
             strcache_add(
                 ctx,
-                concat(&[cstr_bytes_or_empty((*state).arname), b"(", cstr_bytes_or_empty(mem), b")"]).as_ptr()
-                    as *const ::core::ffi::c_char,
+                concat(&[
+                    cstr_bytes_or_empty((*state).arname),
+                    b"(",
+                    cstr_bytes_or_empty(mem),
+                    b")",
+                ])
+                .as_ptr() as *const ::core::ffi::c_char,
             ),
         );
         T::set_next(new, (*state).chain);

@@ -54,13 +54,12 @@ pub struct VariableSetList {
 
 pub type dep = Dep;
 pub type commands = Commands;
+use crate::execctx::ExecContext;
 use crate::expand::{
     allocated_expand_string_for_file, allocated_expand_variable, install_variable_buffer,
     recursively_expand_for_file, swap_variable_buffer,
 };
-use crate::execctx::ExecContext;
 use crate::floc::Floc;
-use crate::strcache::strcache_add;
 use crate::function::func_shell_base;
 use crate::hash::{
     hash_delete_at, hash_deleted_item, hash_find_item, hash_find_slot, hash_free, hash_init,
@@ -72,6 +71,7 @@ use crate::misc::{concat, cstr_bytes_or_empty};
 use crate::output::fatal_err;
 use crate::output::msg;
 use crate::posixos::jobserver_get_invalid_auth;
+use crate::strcache::strcache_add;
 
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
@@ -145,7 +145,9 @@ pub const MAKELEVEL_NAME: [::core::ffi::c_char; 10] =
 pub const RECIPEPREFIX_DEFAULT: i32 = '\t' as i32;
 /// Current environment-variable expansion recursion depth.
 pub fn env_recursion(ctx: &ExecContext) -> u64 {
-    ctx.env_recursion.0.load(::std::sync::atomic::Ordering::Relaxed)
+    ctx.env_recursion
+        .0
+        .load(::std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Reads the change counter masked to the C `unsigned long` width. The original
@@ -428,22 +430,20 @@ unsafe fn lookup_pattern_var(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> u64 {
     let key: *const variable = keyv as *const variable;
-    let mut _result_: ::core::ffi::c_ulong = 0;
+    let mut _result_: u64 = 0;
     let _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
-    _result_ = _result_.wrapping_add(jhash(::core::slice::from_raw_parts(
-        _key_,
-        (*key).length as usize,
-    )) as ::core::ffi::c_ulong);
+    _result_ = _result_
+        .wrapping_add(jhash(::core::slice::from_raw_parts(_key_, (*key).length as usize)) as u64);
     _result_
 }
 /// Secondary hash for [`variable`] keys; always zero, kept for the callback
 /// ABI. The raw key pointer is accepted to match the signature but never
 /// inspected.
-pub fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> u64 {
     let mut _key: *const variable = keyv as *const variable;
-    let mut _result_: ::core::ffi::c_ulong = 0;
+    let mut _result_: u64 = 0;
     _result_
 }
 /// Order two variable names the way the variable hash table expects: shorter
@@ -544,7 +544,7 @@ unsafe fn check_valid_name(
 pub unsafe fn init_hash_global_variable_set(ctx: &crate::execctx::ExecContext) {
     hash_init(
         &raw mut (*ctx.variable_globals.global_variable_set.as_ptr()).table,
-        VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -1047,8 +1047,12 @@ pub fn initialize_file_variables(
         name_c.push(0);
         let name_ptr = name_c.as_ptr() as *const ::core::ffi::c_char;
         let targlen: size_t = name.len() as size_t;
-        let mut p: *mut PatternVar =
-            lookup_pattern_var(ctx, ::core::ptr::null_mut::<PatternVar>(), name_ptr, targlen);
+        let mut p: *mut PatternVar = lookup_pattern_var(
+            ctx,
+            ::core::ptr::null_mut::<PatternVar>(),
+            name_ptr,
+            targlen,
+        );
         if !p.is_null() {
             // Expand the matched pattern values inside a throwaway scope so the
             // legacy expanders behave exactly as before, then snapshot each
@@ -1138,7 +1142,7 @@ pub unsafe fn create_new_variable_set(ctx: &crate::execctx::ExecContext) -> *mut
     set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
     hash_init(
         &raw mut (*set).table,
-        SMALL_SCOPE_VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        SMALL_SCOPE_VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -1154,9 +1158,7 @@ pub unsafe fn create_new_variable_set(ctx: &crate::execctx::ExecContext) -> *mut
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn push_new_variable_scope(
-    ctx: &crate::execctx::ExecContext,
-) -> *mut variable_set_list {
+pub unsafe fn push_new_variable_scope(ctx: &crate::execctx::ExecContext) -> *mut variable_set_list {
     ctx.variable_globals
         .current_variable_set_list
         .set(create_new_variable_set(ctx));
@@ -1346,7 +1348,7 @@ pub unsafe fn build_file_setlist(
     let set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
     hash_init(
         &raw mut (*set).table,
-        SMALL_SCOPE_VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        SMALL_SCOPE_VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -1377,8 +1379,7 @@ pub unsafe fn snapshot_set_to_targets(set: *mut variable_set) -> Vec<TargetVaria
     let end = slot.offset(setr.table.ht_size as isize);
     while slot < end {
         let v = *slot;
-        if !(v.is_null() || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
-        {
+        if !(v.is_null() || ::core::ptr::eq(v, hash_deleted_item as *mut variable)) {
             out.push(target_variable_from_c(v));
         }
         slot = slot.offset(1_i32 as isize);
@@ -1438,7 +1439,9 @@ pub unsafe fn install_file_context_id(
                 lineno,
                 offset: 0,
             });
-            ctx.reading_file.0.set(ctx.recipe_reading_floc.as_ptr() as *const Floc);
+            ctx.reading_file
+                .0
+                .set(ctx.recipe_reading_floc.as_ptr() as *const Floc);
         } else {
             ctx.reading_file.0.set(::core::ptr::null::<Floc>());
         }
@@ -1639,19 +1642,45 @@ pub unsafe fn define_automatic_variables(
         b"%u\0" as *const u8 as *const ::core::ffi::c_char,
         ctx.makelevel(),
     );
-    define_named(ctx, b"MAKELEVEL\0", &raw mut buf as *mut ::core::ffi::c_char, o_env, 0)?;
+    define_named(
+        ctx,
+        b"MAKELEVEL\0",
+        &raw mut buf as *mut ::core::ffi::c_char,
+        o_env,
+        0,
+    )?;
     write_make_version(ctx, &raw mut buf as *mut ::core::ffi::c_char);
-    define_named(ctx, b"MAKE_VERSION\0", &raw mut buf as *mut ::core::ffi::c_char, o_default, 0)?;
-    define_named(ctx, b"MAKE_HOST\0", crate::version::make_host(), o_default, 0)?;
+    define_named(
+        ctx,
+        b"MAKE_VERSION\0",
+        &raw mut buf as *mut ::core::ffi::c_char,
+        o_default,
+        0,
+    )?;
+    define_named(
+        ctx,
+        b"MAKE_HOST\0",
+        crate::version::make_host(),
+        o_default,
+        0,
+    )?;
     seed_shell_and_makefiles(ctx)?;
     // The dir/notdir automatic variables are pure data: same origin, same
     // recursive flag, names and bodies fixed at compile time. Driving them from
     // a table keeps this frame from carrying one decision point per definition
     // now that each can be refused (#442).
-    AUTOMATIC_PATTERN_VARS.iter().try_for_each(|&(name, body)| {
-        define_named(ctx, name, body.as_ptr() as *const ::core::ffi::c_char, o_automatic, 1)
+    AUTOMATIC_PATTERN_VARS
+        .iter()
+        .try_for_each(|&(name, body)| {
+            define_named(
+                ctx,
+                name,
+                body.as_ptr() as *const ::core::ffi::c_char,
+                o_automatic,
+                1,
+            )
             .map(|_| ())
-    })?;
+        })?;
 
     Ok(())
 }
@@ -1760,7 +1789,7 @@ pub unsafe fn target_environment(
     }
     hash_init(
         &raw mut table,
-        VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -2236,8 +2265,11 @@ pub unsafe fn do_variable_definition(
                 } else if flavor as ::core::ffi::c_uint
                     != f_append_value as i32 as ::core::ffi::c_uint
                 {
-                    tp =
-                        allocated_expand_string_for_file(ctx, val, ::core::ptr::null_mut::<file>())?;
+                    tp = allocated_expand_string_for_file(
+                        ctx,
+                        val,
+                        ::core::ptr::null_mut::<file>(),
+                    )?;
                     val = tp;
                 }
                 vallen = strlen(val) as size_t;
@@ -2766,7 +2798,11 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
             b" (from '",
             ::core::ffi::CStr::from_ptr((*v).fileinfo.filenm).to_bytes(),
             b"', line ",
-            (*v).fileinfo.lineno.wrapping_add((*v).fileinfo.offset).to_string().as_bytes(),
+            (*v).fileinfo
+                .lineno
+                .wrapping_add((*v).fileinfo.offset)
+                .to_string()
+                .as_bytes(),
             b")",
         ]);
     }
@@ -3181,11 +3217,7 @@ mod initialize_file_variables_tests {
             crate::function::hash_init_function_table(&ctx);
             crate::variable::init_hash_global_variable_set(&ctx);
             let target = ::std::ffi::CString::new("%.o").unwrap();
-            let pv = super::create_pattern_var(
-                &ctx,
-                target.as_ptr(),
-                target.as_ptr().add(0),
-            );
+            let pv = super::create_pattern_var(&ctx, target.as_ptr(), target.as_ptr().add(0));
             let name = ::std::ffi::CString::new("IFV_BAD").unwrap();
             // `$(word 1)` is a well-formed reference to a builtin called with
             // the wrong number of arguments, so expanding it is refused.
@@ -3226,21 +3258,26 @@ mod initialize_file_variables_tests {
         let ctx = crate::execctx::ExecContext::default();
         let parent = enter_file(&ctx, b"ifv_parent_probe");
         let child = enter_file(&ctx, b"ifv_child_probe");
-        ctx.filenodes
-            .get(child)
-            .unwrap()
-            .lock()
-            .unwrap()
-            .parent = Some(parent);
+        ctx.filenodes.get(child).unwrap().lock().unwrap().parent = Some(parent);
 
         initialize_file_variables(&ctx, child, 0).expect("initialize_file_variables rejected");
 
         assert!(
-            ctx.filenodes.get(parent).unwrap().lock().unwrap().pat_searched,
+            ctx.filenodes
+                .get(parent)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .pat_searched,
             "parent's pattern search ran via recursion"
         );
         assert!(
-            ctx.filenodes.get(child).unwrap().lock().unwrap().pat_searched,
+            ctx.filenodes
+                .get(child)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .pat_searched,
             "child's pattern search ran"
         );
     }
@@ -3403,20 +3440,8 @@ mod variable_cmp_tests {
     }
 
     const SAMPLES: &[&[u8]] = &[
-        b"",
-        b"a",
-        b"b",
-        b"A",
-        b"ab",
-        b"ba",
-        b"abc",
-        b"abd",
-        b"CC",
-        b"CXX",
-        b"foo",
-        b"foobar",
-        b"\xff",
-        b"\x00",
+        b"", b"a", b"b", b"A", b"ab", b"ba", b"abc", b"abd", b"CC", b"CXX", b"foo", b"foobar",
+        b"\xff", b"\x00",
     ];
 
     #[test]

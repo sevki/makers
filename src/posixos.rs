@@ -12,12 +12,22 @@ use ::core::ptr::{null, null_mut};
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location, close, fcntl, flock, free, fstat, mkfifo, open, perror, pipe, pselect, read,
-    sigemptyset, sigset_t, sprintf, sscanf, strcmp, strerror, strlen, strncmp,
-    timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET, FD_ZERO,
-    F_GETFD, F_GETFL, F_SETFD, F_SETFL, F_SETLKW, F_UNLCK, F_WRLCK, O_APPEND, O_EXCL, O_NONBLOCK,
-    O_RDONLY, O_RDWR, O_TMPFILE, O_WRONLY, SEEK_SET, S_IFMT, S_IFREG,
+    __errno_location, close, fcntl, free, fstat, open, perror, read, sigset_t, sprintf, sscanf,
+    strcmp, strerror, strlen, strncmp, timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET,
+    FD_ZERO, F_GETFD, F_GETFL, F_SETFD, F_SETFL, O_APPEND, O_EXCL, O_NONBLOCK, O_RDONLY, O_RDWR,
+    O_WRONLY, SEEK_SET, S_IFMT, S_IFREG,
 };
+// `flock`/`mkfifo`/`pipe`/`pselect`/`sigemptyset` and the `F_SETLKW`/
+// `F_UNLCK`/`F_WRLCK`/`O_TMPFILE` constants are part of the jobserver/
+// output-sync POSIX surface that WASI does not expose; see
+// `crate::compat` for the wasm stand-ins (accepted architectural gap —
+// job control does not work on wasm, it only needs to compile there).
+#[cfg(target_family = "wasm")]
+use crate::compat::{
+    flock, mkfifo, pipe, pselect, sigemptyset, F_SETLKW, F_UNLCK, F_WRLCK, O_TMPFILE,
+};
+#[cfg(unix)]
+use libc::{flock, mkfifo, pipe, pselect, sigemptyset, F_SETLKW, F_UNLCK, F_WRLCK, O_TMPFILE};
 
 use crate::commands::handling_fatal_signal;
 use crate::floc::Floc;
@@ -177,8 +187,9 @@ pub unsafe fn jobserver_setup(
 
     if style.is_null() || strcmp(style, c"fifo".as_ptr()) == 0 {
         let tmpdir = get_tmpdir(ctx);
-        let fifo_name = xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
-            as *mut c_char;
+        let fifo_name =
+            xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
+                as *mut c_char;
         sprintf(
             fifo_name,
             c"%s/GmFIFO%03lld".as_ptr(),
@@ -552,9 +563,7 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
     }
 
     if 0x4 & db_level(ctx) != 0 {
-        crate::output::trace_out(
-            format!("Acquired all {} jobserver tokens.\n", tokens).as_bytes(),
-        );
+        crate::output::trace_out(format!("Acquired all {} jobserver tokens.\n", tokens).as_bytes());
     }
 
     jobserver_clear();
@@ -821,7 +830,12 @@ pub unsafe fn osync_acquire(ctx: &crate::execctx::ExecContext) -> c_uint {
         fl.l_whence = SEEK_SET as ::core::ffi::c_short;
         fl.l_start = 0;
         fl.l_len = 1;
-        if fcntl(ctx.osync_handle.0.load(Ordering::Relaxed), F_SETLKW, &mut fl) == -1 {
+        if fcntl(
+            ctx.osync_handle.0.load(Ordering::Relaxed),
+            F_SETLKW,
+            &mut fl,
+        ) == -1
+        {
             perror(c"fcntl()".as_ptr());
             return 0;
         }
@@ -840,7 +854,12 @@ pub unsafe fn osync_release(ctx: &crate::execctx::ExecContext) {
         fl.l_whence = SEEK_SET as ::core::ffi::c_short;
         fl.l_start = 0;
         fl.l_len = 1;
-        if fcntl(ctx.osync_handle.0.load(Ordering::Relaxed), F_SETLKW, &mut fl) == -1 {
+        if fcntl(
+            ctx.osync_handle.0.load(Ordering::Relaxed),
+            F_SETLKW,
+            &mut fl,
+        ) == -1
+        {
             perror(c"fcntl()".as_ptr());
         }
     }
@@ -994,19 +1013,21 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
 /// counter-qualified name (create_new retries collisions), then unlink it so
 /// only the descriptor remains.
 fn anon_unlinked_tmp() -> std::io::Result<std::fs::File> {
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
     static SEQ: ::core::sync::atomic::AtomicU32 = ::core::sync::atomic::AtomicU32::new(0);
     let pid = std::process::id();
     loop {
         let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         let path = format!("/tmp/GmAnon{pid}-{seq}");
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-        {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.read(true).write(true).create_new(true);
+        // WASI's `OpenOptions` has no `mode()` extension (no POSIX permission
+        // bits over its capability-based filesystem API); the file is opened
+        // with the target's default permissions there instead.
+        #[cfg(unix)]
+        opts.mode(0o600);
+        match opts.open(&path) {
             Ok(f) => {
                 let _ = std::fs::remove_file(&path);
                 return Ok(f);
@@ -1391,7 +1412,10 @@ mod tests {
     fn jobserver_parse_auth_reports_unopenable_fifo() {
         let ctx = crate::execctx::ExecContext::default();
         let result = unsafe {
-            jobserver_parse_auth(&ctx, c"fifo:/nonexistent-dir-for-jobserver-test/fifo".as_ptr())
+            jobserver_parse_auth(
+                &ctx,
+                c"fifo:/nonexistent-dir-for-jobserver-test/fifo".as_ptr(),
+            )
         };
         assert_eq!(result, Ok(0));
     }

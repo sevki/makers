@@ -165,8 +165,7 @@ pub unsafe fn hash_find_slot(ht: *mut HashTable, key: *const c_void) -> *mut *mu
         .wrapping_add(1);
     loop {
         // ht_size is a power of two, so this is "hash_1 % size".
-        hash_1 = (hash_1 as u64
-            & (ht.as_ref().expect("hash table pointer is null").ht_size - 1))
+        hash_1 = (hash_1 as u64 & (ht.as_ref().expect("hash table pointer is null").ht_size - 1))
             as c_uint;
         let idx = hash_1 as usize;
         let slot_val = *table_slots_mut(ht)
@@ -384,13 +383,17 @@ pub unsafe fn hash_free(ht: *mut HashTable, free_items: i32) {
 /// `ht` must be initialized and `map` non-null.
 pub unsafe fn hash_map(ht: *mut HashTable, map: hash_map_func_t) {
     let map = map.expect("hash_map without callback");
-    ht.as_mut().expect("hash table pointer is null").set_ht_in_map(1);
+    ht.as_mut()
+        .expect("hash table pointer is null")
+        .set_ht_in_map(1);
     for &item in table_slots(ht) {
         if is_real_item(item) {
             map(item);
         }
     }
-    ht.as_mut().expect("hash table pointer is null").set_ht_in_map(0);
+    ht.as_mut()
+        .expect("hash table pointer is null")
+        .set_ht_in_map(0);
 }
 
 /// Call `map(item, arg)` on every item. The table must not be modified

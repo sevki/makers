@@ -1,3 +1,5 @@
+#[cfg(target_family = "wasm")]
+use crate::compat::{stpcpy, ttyname};
 use crate::default::{
     define_default_variables, install_default_implicit_rules, install_default_suffix_rules,
     set_default_suffixes, undefine_default_variables,
@@ -20,9 +22,11 @@ use crate::vpath::{build_vpath_lists, print_vpath_data_base};
 use c2rust_bitfields;
 use libc;
 use libc::{
-    __errno_location, _exit, atof, exit, free, isatty, putenv, setlocale,
-    sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname,
+    __errno_location, _exit, atof, exit, free, isatty, putenv, setlocale, sprintf, strchr, strcmp,
+    strerror, strrchr, tolower,
 };
+#[cfg(unix)]
+use libc::{stpcpy, ttyname};
 use std::sync::atomic::Ordering;
 
 /// Differential-test oracle for the clap-based `decode_switches`: the
@@ -37,11 +41,34 @@ use std::sync::atomic::Ordering;
 #[path = "getopt_oracle_test.rs"]
 mod getopt_oracle_test;
 
+// Signal handling has no wasm equivalent (no signal delivery in WASI); see
+// the matching note in job.rs. These four are declared by hand (bypassing
+// `libc`'s per-target gating), so wasm needs its own stand-ins to link.
+#[cfg(unix)]
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> i32;
     fn sigaddset(__set: *mut sigset_t, __signo: i32) -> i32;
     fn sigprocmask(__how: i32, __set: *const sigset_t, __oset: *mut sigset_t) -> i32;
     fn sigaction(__sig: i32, __act: *const Sigaction, __oact: *mut Sigaction) -> i32;
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigemptyset(_set: *mut sigset_t) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigaddset(_set: *mut sigset_t, _signo: i32) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigprocmask(_how: i32, _set: *const sigset_t, _oset: *mut sigset_t) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigaction(_sig: i32, _act: *const Sigaction, _oact: *mut Sigaction) -> i32 {
+    0
+}
+
+extern "C" {
     static mut environ: *mut *mut ::core::ffi::c_char;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
     fn atexit(__func: Option<unsafe extern "C" fn() -> ()>) -> i32;
@@ -259,9 +286,8 @@ use crate::load::load_file;
 use crate::misc::{concat, cstr_bytes_or_empty};
 pub use crate::output::output;
 use crate::output::{
-    error, fatal_err, output_context, perror_with_name, pfatal_with_name_err,
-    set_output_context, set_stdio_traced,
-    stdio_traced, FmtArg,
+    error, fatal_err, output_context, perror_with_name, pfatal_with_name_err, set_output_context,
+    set_stdio_traced, stdio_traced, FmtArg,
 };
 use crate::posixos::{
     check_io_state, jobserver_acquire_all, jobserver_clear, jobserver_enabled, jobserver_get_auth,
@@ -309,7 +335,7 @@ pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::
 pub const PATH_MAX: i32 = 4096_i32;
 pub const GET_PATH_MAX: i32 = PATH_MAX;
 pub const EXIT_SUCCESS: i32 = 0;
-pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
+pub const SIZE_MAX: ::core::ffi::c_ulong = ::core::ffi::c_ulong::MAX;
 pub const __LC_ALL: i32 = 6;
 pub const LC_ALL: i32 = __LC_ALL;
 pub const DB_NONE: i32 = 0;
@@ -384,7 +410,9 @@ pub fn set_db_level(ctx: &crate::execctx::ExecContext, level: i32) {
 
 #[cfg(test)]
 mod db_level_tests {
-    use super::{db_level, set_db_level, DB_ALL, DB_BASIC, DB_IMPLICIT, DB_JOBS, DB_NONE, DB_PRINT, DB_WHY};
+    use super::{
+        db_level, set_db_level, DB_ALL, DB_BASIC, DB_IMPLICIT, DB_JOBS, DB_NONE, DB_PRINT, DB_WHY,
+    };
     use crate::execctx::ExecContext;
 
     /// Exercises the accessors: a plain store/load round-trip plus the
@@ -595,7 +623,7 @@ pub struct Options {
     /// through [`opt_command_count`] to invalidate stat/contents entries
     /// recorded before the latest command. Reached via `ctx.options`
     /// (through [`opt_command_count`]).
-    pub command_count: ::core::cell::Cell<::core::ffi::c_ulong>,
+    pub command_count: ::core::cell::Cell<u64>,
     /// `snap_deps`-complete latch for this run, the former `file::SNAPPED_DEPS`
     /// global. Set once at the end of `snap_deps` via [`mark_snapped_deps`] and
     /// read by `record_files` through [`opt_snapped_deps`] to reject
@@ -1042,7 +1070,7 @@ pub fn opt_job_slots(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_uint {
 /// read through the `with_options` borrow channel by the directory cache
 /// (`find_directory`) and the `update_goal_chain` loop, which carry no
 /// `&Options`.
-pub fn opt_command_count(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_ulong {
+pub fn opt_command_count(ctx: &crate::execctx::ExecContext) -> u64 {
     with_options(ctx, |o| o.command_count.get())
 }
 /// Bump the command-generation counter, once per shell command run
@@ -1050,7 +1078,9 @@ pub fn opt_command_count(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_ul
 /// channel so it always reaches `main_0`'s real `Options`, even on the
 /// `gmk_eval` throwaway-context path the `$(shell)`/`$(file)` writers take.
 pub fn bump_command_count(ctx: &crate::execctx::ExecContext) {
-    with_options(ctx, |o| o.command_count.set(o.command_count.get().wrapping_add(1)));
+    with_options(ctx, |o| {
+        o.command_count.set(o.command_count.get().wrapping_add(1))
+    });
 }
 /// Whether `snap_deps` has run for this make (the former `file::SNAPPED_DEPS`
 /// global), read through the `with_options` channel by `record_files` — which
@@ -1823,7 +1853,10 @@ pub unsafe fn reset_jobserver_mirror(ctx: &crate::execctx::ExecContext) {
 /// # Safety
 /// `dir` must be a valid NUL-terminated path.
 unsafe fn chdir_c(dir: *const ::core::ffi::c_char) -> i32 {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let os = ::std::ffi::OsStr::from_bytes(::core::ffi::CStr::from_ptr(dir).to_bytes());
     match ::std::env::set_current_dir(os) {
         Ok(()) => 0,
@@ -1840,7 +1873,10 @@ unsafe fn chdir_c(dir: *const ::core::ffi::c_char) -> i32 {
 /// # Safety
 /// `buf` must be valid for writes of `size` bytes.
 unsafe fn getcwd_into(buf: *mut ::core::ffi::c_char, size: usize) -> bool {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     match ::std::env::current_dir() {
         Ok(p) => {
             let b = p.as_os_str().as_bytes();
@@ -1980,19 +2016,19 @@ unsafe fn main_0(
     define_special(&ctx, b".RECIPEPREFIX\0")?;
     define_special(&ctx, b".WARNINGS\0")?;
     crate::variable::define_named(
-            &ctx,
-            b".SHELLFLAGS\0",
-            b"-c\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+        &ctx,
+        b".SHELLFLAGS\0",
+        b"-c\0" as *const u8 as *const ::core::ffi::c_char,
+        o_default,
+        0,
+    )?;
     crate::variable::define_named(
-            &ctx,
-            b".LOADED\0",
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+        &ctx,
+        b".LOADED\0",
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_default,
+        0,
+    )?;
     let features: *const ::core::ffi::c_char = b"target-specific order-only second-expansion else-if shortest-stem undefine oneshell nocomment grouped-target extra-prereqs notintermediate shell-export archives jobserver jobserver-fifo output-sync check-symlink maintainer\0"
         as *const u8 as *const ::core::ffi::c_char;
     crate::variable::define_named(&ctx, b".FEATURES\0", features, o_default, 0)?;
@@ -2057,8 +2093,7 @@ unsafe fn main_0(
         }
         i = i.wrapping_add(1);
     }
-    if !lookup_named(&ctx, b"GNUMAKEFLAGS\0")?.is_null()
-    {
+    if !lookup_named(&ctx, b"GNUMAKEFLAGS\0")?.is_null() {
         decode_env_switches(
             &ctx,
             options,
@@ -2083,8 +2118,8 @@ unsafe fn main_0(
     )?;
     set_make_sync_syncout(
         &ctx,
-        (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET) as i32
-            as ::core::ffi::c_uint as ::core::ffi::c_uint,
+        (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET)
+            as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
     set_output_context(if make_sync_syncout(&ctx) as i32 != 0 {
         ctx.make_sync.as_ptr()
@@ -2094,7 +2129,10 @@ unsafe fn main_0(
     let env_slots: Option<u32> = options.arg_job_slots.get();
     options.arg_job_slots.set(None);
     let cli_tokens: Vec<::std::ffi::OsString> = {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         (1..argc)
             .map(|i| {
                 let cstr = ::core::ffi::CStr::from_ptr(*argv.offset(i as isize));
@@ -2127,18 +2165,14 @@ unsafe fn main_0(
             *options.shuffle_mode.borrow_mut() = crate::shuffle::get_mode(&ctx);
         }
     }
-    if isatty(libc::STDOUT_FILENO) != 0
-        && lookup_named(&ctx, b"MAKE_TERMOUT\0")?.is_null()
-    {
+    if isatty(libc::STDOUT_FILENO) != 0 && lookup_named(&ctx, b"MAKE_TERMOUT\0")?.is_null() {
         define_tty_var(&ctx, b"MAKE_TERMOUT\0", libc::STDOUT_FILENO)?;
     }
-    if isatty(libc::STDERR_FILENO) != 0
-        && lookup_named(&ctx, b"MAKE_TERMERR\0")?.is_null()
-    {
+    if isatty(libc::STDERR_FILENO) != 0 && lookup_named(&ctx, b"MAKE_TERMERR\0")?.is_null() {
         define_tty_var(&ctx, b"MAKE_TERMERR\0", libc::STDERR_FILENO)?;
     }
-    syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET)
-        as i32 as ::core::ffi::c_uint;
+    syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE
+        || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET) as i32 as ::core::ffi::c_uint;
     if make_sync_syncout(&ctx) as i32 != 0 && syncing == 0 {
         crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
     }
@@ -2346,18 +2380,21 @@ unsafe fn main_0(
         }
     }
     crate::variable::define_named(
-            &ctx,
-            b"CURDIR\0",
-            &raw mut current_directory as *mut ::core::ffi::c_char,
-            o_file,
-            0,
-        )?;
+        &ctx,
+        b"CURDIR\0",
+        &raw mut current_directory as *mut ::core::ffi::c_char,
+        o_file,
+        0,
+    )?;
     {
         let include_dirs = options.include_dirs.borrow();
         let inc_paths: Vec<std::path::PathBuf> = include_dirs
             .iter()
             .map(|s| {
+                #[cfg(unix)]
                 use std::os::unix::ffi::OsStrExt;
+                #[cfg(target_os = "wasi")]
+                use std::os::wasi::ffi::OsStrExt;
                 std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
             })
             .collect();
@@ -2397,19 +2434,19 @@ unsafe fn main_0(
         }
     }
     crate::variable::define_named(
-            &ctx,
-            b"MAKE_COMMAND\0",
-            *argv.offset(0_i32 as isize),
-            o_default,
-            0,
-        )?;
+        &ctx,
+        b"MAKE_COMMAND\0",
+        *argv.offset(0_i32 as isize),
+        o_default,
+        0,
+    )?;
     crate::variable::define_named(
-            &ctx,
-            b"MAKE\0",
-            b"$(MAKE_COMMAND)\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            1,
-        )?;
+        &ctx,
+        b"MAKE\0",
+        b"$(MAKE_COMMAND)\0" as *const u8 as *const ::core::ffi::c_char,
+        o_default,
+        1,
+    )?;
     if !ctx.command_variables.0.get().is_null() {
         let mut cv: *mut CommandVariable;
         let mut v_1: *mut variable;
@@ -2584,12 +2621,12 @@ unsafe fn main_0(
     define_default_variables(&ctx, options)?;
     enter_file(&ctx, b".DEFAULT");
     ctx.default_goal_var.0.set(crate::variable::define_named(
-            &ctx,
-            b".DEFAULT_GOAL\0",
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_file,
-            0,
-        )?);
+        &ctx,
+        b".DEFAULT_GOAL\0",
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_file,
+        0,
+    )?);
     if !options.eval_strings.borrow().is_empty() {
         let eval_strings = options.eval_strings.borrow();
         let mut p_0: *mut ::core::ffi::c_char;
@@ -2676,12 +2713,12 @@ unsafe fn main_0(
         o_env,
     )?;
     crate::variable::define_named(
-            &ctx,
-            b"GNUMAKEFLAGS\0",
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_override,
-            0,
-        )?;
+        &ctx,
+        b"GNUMAKEFLAGS\0",
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_override,
+        0,
+    )?;
     decode_env_switches(
         &ctx,
         options,
@@ -2708,8 +2745,8 @@ unsafe fn main_0(
         }
         reset_jobserver(options);
     }
-    syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET)
-        as i32 as ::core::ffi::c_uint;
+    syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE
+        || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET) as i32 as ::core::ffi::c_uint;
     if make_sync_syncout(&ctx) as i32 != 0 && syncing == 0 {
         crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
     }
@@ -2789,11 +2826,7 @@ unsafe fn main_0(
     if options.jobserver_auth.borrow().is_some() && (0x2_i32 | 0x4_i32) & db_level(&ctx) != 0 {
         let auth = options.jobserver_auth.borrow().clone().unwrap();
         let auth_c = ::std::ffi::CString::new(auth.as_bytes()).unwrap_or_default();
-        crate::output::trace_parts(&[
-            b"Using jobserver controller ",
-            auth_c.to_bytes(),
-            b"\n",
-        ]);
+        crate::output::trace_parts(&[b"Using jobserver controller ", auth_c.to_bytes(), b"\n"]);
     }
     if options.sync_mutex.borrow().is_some() && 0x2_i32 & db_level(&ctx) != 0 {
         let mtx = options.sync_mutex.borrow().clone().unwrap();
@@ -3601,7 +3634,10 @@ pub unsafe fn reset_makeflags(
         let inc_paths: Vec<std::path::PathBuf> = include_dirs
             .iter()
             .map(|s| {
+                #[cfg(unix)]
                 use std::os::unix::ffi::OsStrExt;
+                #[cfg(target_os = "wasi")]
+                use std::os::wasi::ffi::OsStrExt;
                 std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
             })
             .collect();
@@ -3703,7 +3739,10 @@ fn normalize_argv_for_clap(
     switches: &[CommandSwitch],
     tokens: &[::std::ffi::OsString],
 ) -> Vec<::std::ffi::OsString> {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     // Byte-level `"{a}={b}"` concatenation, avoiding any UTF-8 assumption
     // about `a`/`b` (a switch value like `-l`'s can be arbitrary bytes past
     // its first char -- the original hand-rolled lookahead is byte-based,
@@ -3721,8 +3760,12 @@ fn normalize_argv_for_clap(
     while i < tokens.len() {
         let tok = &tokens[i];
         let matched = opt_args.iter().find(|o| {
-            o.short.as_deref().is_some_and(|s| tok.as_os_str() == ::std::ffi::OsStr::new(s))
-                || o.longs.iter().any(|l| tok.as_os_str() == ::std::ffi::OsStr::new(l.as_str()))
+            o.short
+                .as_deref()
+                .is_some_and(|s| tok.as_os_str() == ::std::ffi::OsStr::new(s))
+                || o.longs
+                    .iter()
+                    .any(|l| tok.as_os_str() == ::std::ffi::OsStr::new(l.as_str()))
         });
         let Some(o) = matched else {
             out.push(tok.clone());
@@ -3735,7 +3778,9 @@ fn normalize_argv_for_clap(
                 let consume = if o.c == 'j' as i32 {
                     !bytes.is_empty() && bytes.iter().all(u8::is_ascii_digit)
                 } else {
-                    bytes.first().is_some_and(|&b| b.is_ascii_digit() || b == b'.')
+                    bytes
+                        .first()
+                        .is_some_and(|&b| b.is_ascii_digit() || b == b'.')
                 };
                 if consume {
                     out.push(concat_eq(tok.as_os_str(), bytes));
@@ -3827,7 +3872,10 @@ fn apply_value_switch(
     origin: variable_origin,
     bad: &mut i32,
 ) -> Result<(), crate::build_result::BuildError> {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     if !doit {
         return Ok(());
     }
@@ -3985,10 +4033,14 @@ fn decode_switches(
                 // tolerance: drop the one token clap rejected and retry, so
                 // an unrelated valid switch elsewhere on the same command
                 // line (or MAKEFLAGS-derived token list) still applies.
-                let culprit = e.get(clap::error::ContextKind::InvalidArg).map(|v| v.to_string());
-                if let Some(c) =
-                    culprit.and_then(|c| retry_tokens.iter().position(|t| t.to_str() == Some(c.as_str())))
-                {
+                let culprit = e
+                    .get(clap::error::ContextKind::InvalidArg)
+                    .map(|v| v.to_string());
+                if let Some(c) = culprit.and_then(|c| {
+                    retry_tokens
+                        .iter()
+                        .position(|t| t.to_str() == Some(c.as_str()))
+                }) {
                     retry_tokens.remove(c);
                     continue;
                 }
@@ -4041,7 +4093,11 @@ fn decode_switches(
         // value is later overwritten by the other half of the pair. Mark
         // both if both occurred; only the winner's value actually applies.
         for &c in &[a, b] {
-            let occurred = if c == a { a_last.is_some() } else { b_last.is_some() };
+            let occurred = if c == a {
+                a_last.is_some()
+            } else {
+                b_last.is_some()
+            };
             if !occurred {
                 continue;
             }
@@ -4062,8 +4118,7 @@ fn decode_switches(
                 let cs_origin = opt_origin_cell(options, cs.c);
                 let doit = origin == o_command
                     || (cs.env() != 0
-                        && (cs_origin.is_none()
-                            || origin >= cs_origin.unwrap().get()));
+                        && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
                 if doit {
                     let on = cs.type_0 == flag;
                     opt_set_flag(options, cs.c, on);
@@ -4114,14 +4169,15 @@ fn decode_switches(
         let cs_origin = opt_origin_cell(options, cs.c);
         for raw_value in values {
             let doit = origin == o_command
-                || (cs.env() != 0
-                    && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
+                || (cs.env() != 0 && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
             if doit {
                 options.switches.borrow_mut()
                     [switches_snapshot.iter().position(|s| s.c == cs.c).unwrap()]
                 .set_specified(1);
             }
-            apply_value_switch(ctx, options, cs, raw_value, doit, cs_origin, origin, &mut bad)?;
+            apply_value_switch(
+                ctx, options, cs, raw_value, doit, cs_origin, origin, &mut bad,
+            )?;
         }
     }
 
@@ -4139,8 +4195,7 @@ fn decode_switches(
         let cs_origin = opt_origin_cell(options, cs.c);
         for raw_value in values.by_ref() {
             let doit = origin == o_command
-                || (cs.env() != 0
-                    && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
+                || (cs.env() != 0 && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
             if doit {
                 options.switches.borrow_mut()
                     [switches_snapshot.iter().position(|s| s.c == cs.c).unwrap()]
@@ -4149,7 +4204,10 @@ fn decode_switches(
             if !doit {
                 continue;
             }
+            #[cfg(unix)]
             use std::os::unix::ffi::OsStrExt;
+            #[cfg(target_os = "wasi")]
+            use std::os::wasi::ffi::OsStrExt;
             let is_sentinel = raw_value.as_os_str() == ::std::ffi::OsStr::new(NOARG_SENTINEL);
             if cs.c == 'j' as i32 {
                 if is_sentinel {
@@ -4158,8 +4216,7 @@ fn decode_switches(
                     let n = unsafe { *(cs.noarg_value as *const ::core::ffi::c_uint) };
                     options.arg_job_slots.set(Some(n));
                 } else {
-                    let cstr =
-                        ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
+                    let cstr = ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
                     let n = make_toui(&cstr).unwrap_or(0);
                     if n == 0 {
                         // SAFETY: `error` requires a valid NUL-terminated
@@ -4172,7 +4229,8 @@ fn decode_switches(
                                 NILF,
                                 0,
                                 b"the '-%c' option requires a positive integer argument\0"
-                                    as *const u8 as *const ::core::ffi::c_char,
+                                    as *const u8
+                                    as *const ::core::ffi::c_char,
                                 &[FmtArg::Int(cs.c as i64)],
                             );
                         }
@@ -4187,8 +4245,7 @@ fn decode_switches(
                     // set (to `&default_load_average`), a valid `c_double`.
                     unsafe { *(cs.noarg_value as *const ::core::ffi::c_double) }
                 } else {
-                    let cstr =
-                        ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
+                    let cstr = ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
                     // SAFETY: `atof` requires a valid NUL-terminated C
                     // string; `cstr` is a live `CString`.
                     unsafe { atof(cstr.as_ptr()) }
@@ -4203,7 +4260,10 @@ fn decode_switches(
 
     // Non-switch tokens (targets, `VAR=value`), in original relative order.
     if let Some(rest) = matches.get_many::<::std::ffi::OsString>("__rest") {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         let mut found_wait: ::core::ffi::c_uint = 0;
         for tok in rest {
             let ctok = ::std::ffi::CString::new(tok.as_bytes()).unwrap_or_default();
@@ -4293,8 +4353,12 @@ unsafe fn decode_env_switches(
     len: size_t,
     origin: variable_origin,
 ) -> Result<(), crate::build_result::BuildError> {
-    let value =
-        expand_variable_buf(ctx, ::core::ptr::null_mut::<::core::ffi::c_char>(), envar, len)?;
+    let value = expand_variable_buf(
+        ctx,
+        ::core::ptr::null_mut::<::core::ffi::c_char>(),
+        envar,
+        len,
+    )?;
     let mut bytes = ::core::ffi::CStr::from_ptr(value).to_bytes();
     while !bytes.is_empty() && stopchar_map()[bytes[0] as usize] & (0x2 | 0x4) != 0 {
         bytes = &bytes[1..];
@@ -4302,7 +4366,10 @@ unsafe fn decode_env_switches(
     if bytes.is_empty() {
         return Ok(());
     }
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let words = split_makeflags_value(bytes);
     let mut tokens: Vec<::std::ffi::OsString> = words
         .iter()
@@ -4354,7 +4421,9 @@ unsafe extern "C" fn quote_for_env(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; the global rule/variable tables must be initialized.
-unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) -> Result<(), crate::build_result::BuildError> {
+unsafe fn clear_builtin_rules(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
     if let Some(suffix_file) = crate::file::lookup_file(ctx, b".SUFFIXES") {
         if let Some(node) = ctx.filenodes.get(suffix_file) {
             let mut guard = node.lock().expect("file node poisoned");
@@ -4364,12 +4433,12 @@ unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) -> Result<(), c
         }
     }
     crate::variable::define_named(
-            ctx,
-            b"SUFFIXES\0",
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+        ctx,
+        b"SUFFIXES\0",
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_default,
+        0,
+    )?;
     Ok(())
 }
 
@@ -4906,9 +4975,7 @@ pub unsafe fn print_version(ctx: &crate::execctx::ExecContext) {
     let mut msg = Vec::with_capacity(512);
     msg.extend_from_slice(precede);
     msg.extend_from_slice(b"GNU Make ");
-    msg.extend_from_slice(
-        ::core::ffi::CStr::from_ptr(crate::version::version_string()).to_bytes(),
-    );
+    msg.extend_from_slice(::core::ffi::CStr::from_ptr(crate::version::version_string()).to_bytes());
     msg.extend_from_slice(b"\n");
     msg.extend_from_slice(precede);
     msg.extend_from_slice(b"Built for ");
@@ -5069,7 +5136,10 @@ pub const __SCHAR_MAX__: i32 = 127;
 /// Run make and report the process exit code. The `bin/make.rs` shim is the
 /// only caller and the single `std::process::exit` point (Phase B, #432).
 pub fn main() -> i32 {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let mut args_strings: Vec<Vec<u8>> = ::std::env::args_os()
         .map(|arg| {
             ::std::ffi::CString::new(arg.as_bytes())
@@ -6007,7 +6077,9 @@ mod special_target_latches_tests {
             o.one_shell.set(false);
             o.not_parallel.set(false);
         });
-        assert!(!posix_pedantic(ctx) && !second_expansion(ctx) && !one_shell(ctx) && !not_parallel(ctx));
+        assert!(
+            !posix_pedantic(ctx) && !second_expansion(ctx) && !one_shell(ctx) && !not_parallel(ctx)
+        );
 
         set_posix_pedantic(ctx);
         set_second_expansion(ctx);
@@ -6214,7 +6286,11 @@ mod master_job_slots_tests {
     fn master_job_slots_reads_through_channel() {
         let ctx = install_default_exec_context_for_test();
         with_options(ctx, |o| o.master_job_slots.set(0));
-        assert_eq!(master_job_slots(ctx), 0, "channel reads the installed value");
+        assert_eq!(
+            master_job_slots(ctx),
+            0,
+            "channel reads the installed value"
+        );
 
         with_options(ctx, |o| o.master_job_slots.set(4));
         assert_eq!(master_job_slots(ctx), 4, "count through the channel");
@@ -6252,7 +6328,11 @@ mod command_count_tests {
         let ctx = install_default_exec_context_for_test();
 
         with_options(ctx, |o| o.command_count.set(1));
-        assert_eq!(opt_command_count(ctx), 1, "channel reads the installed value");
+        assert_eq!(
+            opt_command_count(ctx),
+            1,
+            "channel reads the installed value"
+        );
 
         bump_command_count(ctx);
         bump_command_count(ctx);
@@ -6571,7 +6651,9 @@ mod clean_jobserver_tests {
 
         unsafe { clean_jobserver(&ctx, 0) };
 
-        with_options(&ctx, |o| assert!(o.jobserver_auth.borrow().is_none(), "mirror reset"));
+        with_options(&ctx, |o| {
+            assert!(o.jobserver_auth.borrow().is_none(), "mirror reset")
+        });
     }
 
     /// The master-make token accounting: with `master_job_slots` set and no
@@ -6607,9 +6689,7 @@ mod clean_jobserver_tests {
 
 #[cfg(test)]
 mod jobserver_and_stdin_cleanup_tests {
-    use super::{
-        reset_jobserver, temp_stdin_unlink, with_options, Options,
-    };
+    use super::{reset_jobserver, temp_stdin_unlink, with_options, Options};
 
     /// `reset_jobserver` clears the auth field and tears down the (absent)
     /// jobserver. With no jobserver configured, `jobserver_clear` is a no-op,
@@ -6659,7 +6739,9 @@ mod jobserver_and_stdin_cleanup_tests {
 #[cfg(test)]
 mod decode_switches_clap_vs_getopt_tests {
     use super::getopt_oracle_test::decode_switches_oracle;
-    use super::{decode_switches, install_default_exec_context_for_test, o_command, o_env, Options};
+    use super::{
+        decode_switches, install_default_exec_context_for_test, o_command, o_env, Options,
+    };
     use crate::execctx::ExecContext;
     use crate::variable::init_hash_global_variable_set;
     use std::ffi::CString;
@@ -6825,7 +6907,10 @@ mod decode_switches_clap_vs_getopt_tests {
         );
         let snap_new = snapshot(&options_new);
         let snap_oracle = snapshot(&options_oracle);
-        assert_eq!(snap_new, snap_oracle, "mismatch for tokens {tokens:?} (origin {origin})");
+        assert_eq!(
+            snap_new, snap_oracle,
+            "mismatch for tokens {tokens:?} (origin {origin})"
+        );
     }
 
     #[test]
@@ -6874,9 +6959,9 @@ mod decode_switches_clap_vs_getopt_tests {
         check(&["--jobs", "4"], o_command);
         check(&["-j", "target"], o_command); // non-numeric next: -j stays bare, "target" is a target
         check(&["-j4", "-j8"], o_command); // repeats: last wins
-        // o_env, not o_command: an explicit empty value is a real error
-        // (bad=1), and bad=1 with origin==o_command triggers print_usage(),
-        // which exits the whole test process.
+                                           // o_env, not o_command: an explicit empty value is a real error
+                                           // (bad=1), and bad=1 with origin==o_command triggers print_usage(),
+                                           // which exits the whole test process.
         check(&["--jobs="], o_env); // explicit empty value (distinct from bare --jobs): error
     }
 
@@ -6942,7 +7027,10 @@ mod decode_switches_clap_vs_getopt_tests {
     /// tokens) and asserts directly on the stored bytes.
     #[test]
     fn non_utf8_filename_argument_round_trips_exact_bytes() {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
 
         super::initialize_stopchar_map();
         let ctx = ExecContext::default();

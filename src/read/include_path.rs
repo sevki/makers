@@ -25,7 +25,10 @@ use super::*;
 fn expand_tilde_dir(dir: &[u8]) -> Vec<u8> {
     if dir.first() == Some(&b'~') && (dir.len() == 1 || dir[1] == b'/') {
         if let Some(home) = std::env::var_os("HOME") {
+            #[cfg(unix)]
             use std::os::unix::ffi::OsStrExt;
+            #[cfg(target_os = "wasi")]
+            use std::os::wasi::ffi::OsStrExt;
             let home = home.as_bytes();
             if !home.is_empty() {
                 let mut out = home.to_vec();
@@ -41,7 +44,10 @@ fn expand_tilde_dir(dir: &[u8]) -> Vec<u8> {
 /// stripping trailing `/` (keeping at least one byte). Uses `std::fs` for the
 /// existence/type check — no `stat`, no `*const c_char`.
 fn push_include_dir(out: &mut Vec<std::path::PathBuf>, dir: &[u8]) {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let mut len = dir.len();
     while len > 1 && dir[len - 1] == b'/' {
         len -= 1;
@@ -67,7 +73,10 @@ pub fn construct_include_path(
     ctx: &crate::execctx::ExecContext,
     arg_dirs: &[std::path::PathBuf],
 ) -> Result<(), crate::build_result::BuildError> {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let mut dirs: Vec<std::path::PathBuf> = Vec::new();
     let mut disable = false;
     for dir in arg_dirs {
@@ -164,8 +173,11 @@ pub unsafe fn tilde_expand(
         }
         if !home_dir.is_null() {
             let new: *mut ::core::ffi::c_char = xstrdup(
-                concat(&[cstr_bytes_or_empty(home_dir), cstr_bytes_or_empty(name.offset(1_i32 as isize))]).as_ptr()
-                    as *const ::core::ffi::c_char,
+                concat(&[
+                    cstr_bytes_or_empty(home_dir),
+                    cstr_bytes_or_empty(name.offset(1_i32 as isize)),
+                ])
+                .as_ptr() as *const ::core::ffi::c_char,
             );
             if is_variable != 0 {
                 free(home_dir as *mut ::core::ffi::c_void);
@@ -220,7 +232,10 @@ mod tests {
         assert_eq!(expand_tilde_dir(b"~user/x"), b"~user/x");
         // `~`/`~/...` expands against $HOME when it is set and non-empty.
         if let Some(home) = std::env::var_os("HOME") {
+            #[cfg(unix)]
             use std::os::unix::ffi::OsStrExt;
+            #[cfg(target_os = "wasi")]
+            use std::os::wasi::ffi::OsStrExt;
             if !home.as_bytes().is_empty() {
                 let mut expected = home.as_bytes().to_vec();
                 expected.extend_from_slice(b"/sub");
@@ -234,7 +249,10 @@ mod tests {
         let mut out: Vec<std::path::PathBuf> = Vec::new();
         // An existing directory (with a trailing slash to exercise trimming).
         let tmp = std::env::temp_dir();
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         let mut with_slash = tmp.as_os_str().as_bytes().to_vec();
         with_slash.push(b'/');
         push_include_dir(&mut out, &with_slash);

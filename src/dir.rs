@@ -12,13 +12,11 @@ use crate::misc::xrealloc;
 use crate::output::{fatal_err, FmtArg};
 use crate::strcache::strcache_add_len;
 
-use ::core::ffi::{c_char, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void};
+use ::core::ffi::{c_char, c_long, c_uchar, c_uint, c_ushort, c_void};
 use ::core::ptr::{null, null_mut};
 use rustc_hash::FxHashMap;
 
-use libc::{
-    __errno_location, closedir, memcpy, opendir, readdir, strerror, strlen, DIR, EINTR,
-};
+use libc::{__errno_location, closedir, memcpy, opendir, readdir, strerror, strlen, DIR, EINTR};
 
 pub use crate::sys_stat::{stat, timespec};
 
@@ -64,7 +62,7 @@ pub struct directory {
     pub name: *const c_char,
     /// `Options::command_count` when this name was last stat'd (used only when the
     /// directory could not be stat'd, so there is no `contents`).
-    pub counter: c_ulong,
+    pub counter: u64,
     pub contents: *mut DirectoryContents,
 }
 
@@ -88,7 +86,7 @@ pub struct DirectoryContents {
     pub ino: ino_t,
     pub dirfiles: Option<FxHashMap<Box<[u8]>, DirFileEntry>>,
     /// `Options::command_count` when the contents were last read.
-    pub counter: c_ulong,
+    pub counter: u64,
     /// Open stream while the directory is still being read lazily.
     pub dirstream: *mut DIR,
 }
@@ -159,7 +157,9 @@ pub unsafe fn find_directory(
                     b" cache invalidated (count ",
                     ctr.to_string().as_bytes(),
                     b" != command ",
-                    crate::make_main::opt_command_count(ctx).to_string().as_bytes(),
+                    crate::make_main::opt_command_count(ctx)
+                        .to_string()
+                        .as_bytes(),
                     b")\n",
                 ]);
             }
@@ -521,10 +521,7 @@ unsafe fn dir_contents_of(
     ctx: &crate::execctx::ExecContext,
     name: *const c_char,
 ) -> Result<*mut DirectoryContents, crate::build_result::BuildError> {
-    find_directory(ctx, name).map(|d| {
-        d.as_ref()
-            .map_or(::core::ptr::null_mut(), |d| d.contents)
-    })
+    find_directory(ctx, name).map(|d| d.as_ref().map_or(::core::ptr::null_mut(), |d| d.contents))
 }
 
 /// Has `filename` been recorded as impossible?
@@ -583,11 +580,7 @@ pub unsafe fn dir_name(
     ctx: &crate::execctx::ExecContext,
     dir: *const c_char,
 ) -> Result<*const c_char, crate::build_result::BuildError> {
-    find_directory(ctx, dir).map(|d| {
-        d.as_ref()
-            .expect("find_directory never returns null")
-            .name
-    })
+    find_directory(ctx, dir).map(|d| d.as_ref().expect("find_directory never returns null").name)
 }
 
 /// Print `n`, or `word` when `n` is zero (the "No files" / "no
@@ -673,7 +666,7 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
     print_count(impossible, b"no");
     crate::output::trace_parts(&[
         b" impossibilities in ",
-        (table.len() as c_ulong).to_string().as_bytes(),
+        (table.len() as u64).to_string().as_bytes(),
         b" directories.\n",
     ]);
 }

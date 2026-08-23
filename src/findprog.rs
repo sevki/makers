@@ -17,7 +17,11 @@ use ::core::ffi::{c_char, CStr};
 /// True if `path` is executable (`X_OK`) and is not a directory, matching the
 /// gnulib check that skips directories whose search bit happens to be set.
 unsafe fn is_executable_file(path: *const c_char) -> bool {
-    if libc::eaccess(path, libc::X_OK) != 0 {
+    #[cfg(unix)]
+    let eaccess = libc::eaccess;
+    #[cfg(target_family = "wasm")]
+    let eaccess = crate::compat::eaccess;
+    if eaccess(path, libc::X_OK) != 0 {
         return false;
     }
     let mut st: libc::stat = ::core::mem::zeroed();
