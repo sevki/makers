@@ -836,7 +836,7 @@ pub unsafe fn eval(
         (*ebuf).floc.lineno = (*ebuf)
             .floc
             .lineno
-            .wrapping_add(nlines as ::core::ffi::c_ulong);
+            .wrapping_add(nlines as u64);
         nlines = readline(ctx, ebuf);
         if nlines < 0 {
             break;
@@ -944,7 +944,7 @@ pub unsafe fn eval(
                 }
             } else {
                 if filenames.is_some() {
-                    fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                    fi.lineno = tgts_started as u64;
                     fi.offset = 0;
                     record_files(
                         ctx,
@@ -1068,7 +1068,7 @@ pub unsafe fn eval(
                             );
                         }
                         if filenames.is_some() {
-                            fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                            fi.lineno = tgts_started as u64;
                             fi.offset = 0;
                             record_files(
                                 ctx,
@@ -1127,7 +1127,7 @@ pub unsafe fn eval(
                             );
                         }
                         if filenames.is_some() {
-                            fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                            fi.lineno = tgts_started as u64;
                             fi.offset = 0;
                             record_files(
                                 ctx,
@@ -1217,7 +1217,7 @@ pub unsafe fn eval(
                             );
                         }
                         if filenames.is_some() {
-                            fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                            fi.lineno = tgts_started as u64;
                             fi.offset = 0;
                             record_files(
                                 ctx,
@@ -1263,7 +1263,7 @@ pub unsafe fn eval(
                             files = parsed?;
                             save = install_conditionals(ctx);
                             if filenames.is_some() {
-                                fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                                fi.lineno = tgts_started as u64;
                                 fi.offset = 0;
                                 record_files(
                                     ctx,
@@ -1348,7 +1348,7 @@ pub unsafe fn eval(
                             );
                         }
                         if filenames.is_some() {
-                            fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                            fi.lineno = tgts_started as u64;
                             fi.offset = 0;
                             record_files(
                                 ctx,
@@ -1507,7 +1507,7 @@ pub unsafe fn eval(
                         let mut end: *const ::core::ffi::c_char;
                         let mut beg: *const ::core::ffi::c_char;
                         if filenames.is_some() {
-                            fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                            fi.lineno = tgts_started as u64;
                             fi.offset = 0;
                             record_files(
                                 ctx,
@@ -1949,7 +1949,7 @@ pub unsafe fn eval(
         ));
     }
     if filenames.is_some() {
-        fi.lineno = tgts_started as ::core::ffi::c_ulong;
+        fi.lineno = tgts_started as u64;
         fi.offset = 0;
         record_files(
             ctx,
@@ -2096,7 +2096,7 @@ unsafe fn do_define(
         (*ebuf).floc.lineno = (*ebuf)
             .floc
             .lineno
-            .wrapping_add(nlines as ::core::ffi::c_ulong);
+            .wrapping_add(nlines as u64);
         line = (*ebuf).buffer;
         collapse_continuations(ctx, line);
         if *line.offset(0_i32 as isize) as i32 != crate::make_main::opt_cmd_prefix(ctx) as i32 {

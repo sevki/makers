@@ -509,8 +509,8 @@ pub fn show_goal_error(ctx: &crate::execctx::ExecContext) {
                         floc_name.push(0);
                         Floc {
                             filenm: floc_name.as_ptr() as *const ::core::ffi::c_char,
-                            lineno: goal.lineno as ::core::ffi::c_ulong,
-                            offset: goal.offset as ::core::ffi::c_ulong,
+                            lineno: goal.lineno,
+                            offset: goal.offset,
                         }
                     });
                     let floc_ptr = floc

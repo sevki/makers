@@ -438,7 +438,7 @@ fn finfo_of(n: &crate::file::FileNode) -> Floc {
     match &n.recipe {
         Some(r) => Floc {
             filenm: ::core::ptr::null(),
-            lineno: r.defined_lineno as ::core::ffi::c_ulong,
+            lineno: r.defined_lineno,
             offset: 0,
         },
         None => null_floc(),

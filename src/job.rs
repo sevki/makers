@@ -499,11 +499,11 @@ fn recipe_floc(
             *buf = name;
             Floc {
                 filenm: buf.as_ptr() as *const ::core::ffi::c_char,
-                lineno: lineno as ::core::ffi::c_ulong,
+                lineno,
                 // The error reports `lineno + offset`; the offset is the failing
                 // command's 0-based index in the recipe (C: `fileinfo.offset =
                 // child->command_line - 1`).
-                offset: offset as ::core::ffi::c_ulong,
+                offset,
             }
         }
         None => {

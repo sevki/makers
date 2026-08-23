@@ -62,7 +62,13 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
     let flp: *mut Floc;
     if !gfloc.is_null() {
         fl.filenm = (*gfloc).filenm;
-        fl.lineno = (*gfloc).lineno;
+        // `gmk_floc::lineno` is `c_ulong`, which is 32 bits on some targets
+        // (e.g. wasm32) and 64 bits on others (e.g. x86_64) -- this
+        // conversion is a no-op on the latter but required on the former.
+        #[allow(clippy::useless_conversion)]
+        {
+            fl.lineno = u64::from((*gfloc).lineno);
+        }
         fl.offset = 0;
         flp = &raw mut fl;
     } else {
