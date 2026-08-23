@@ -1,5 +1,13 @@
 # Agent Instructions: Translating C to Rust with c2rust
 
+## Available Skills
+
+- **unsafe-rust-review** (`.github/agents/unsafe-rust-review.agent.md`): A
+  mathematically rigorous, proof-obligation-based skill for writing and
+  reviewing unsafe Rust `# Safety` documentation and `// SAFETY:` comments.
+  Sourced from [google/rust-skills](https://github.com/google/rust-skills/tree/main/unsafe_rust_review).
+  Invoke it whenever authoring or reviewing any `unsafe` surface in `src/`.
+
 # C2Rust Porting Rules
 
 ## Issue tracking and project management
