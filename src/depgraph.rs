@@ -974,6 +974,12 @@ fn write_bazel_files(graph: &DepGraph) -> std::io::Result<()> {
         let mut srcs = Vec::new();
         let mut seen_srcs = std::collections::HashSet::new();
         for (dep_file, dep) in graph.prerequisites(id) {
+            // Skip phony prerequisites (e.g. `FORCE`, `.PHONY` targets).
+            // They are not real files, never emitted as genrules, and would
+            // produce unresolvable labels that cause Bazel visibility errors.
+            if graph.file(dep_file).is_some_and(|n| n.phony) {
+                continue;
+            }
             let dep_name = if dep.name.is_empty() {
                 graph.display_name(NodeId::File(dep_file))
             } else {

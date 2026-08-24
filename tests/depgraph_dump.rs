@@ -211,6 +211,13 @@ fn dump_bazel_generates_build_file() {
         build.contains("\"main.o\"") && build.contains("\"util.o\""),
         "prog deps represented as srcs: {build}"
     );
+    // Phony targets (here: `outdir`, order-only prereq of `prog`) must NOT
+    // appear as `srcs` labels — they have no file output and would produce
+    // unresolvable Bazel labels (e.g. `//:FORCE` visibility errors).
+    assert!(
+        !build.contains("\"outdir\""),
+        "phony dep `outdir` must not appear as a srcs label: {build}"
+    );
 }
 
 /// Committed visualization of the fixture's dumps. Fails when stale;
