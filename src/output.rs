@@ -349,7 +349,7 @@ pub unsafe fn pump_from_tmp(ctx: &ExecContext, from: i32, to_stderr: bool) {
             &mut *src,
             &mut *ctx.stderr.borrow_mut(),
             false,
-            |dst, what, e| pump_perror(dst, what, e),
+            pump_perror,
         );
     } else {
         // `dst` is the stdout sink here, so the stderr diagnostic borrows
