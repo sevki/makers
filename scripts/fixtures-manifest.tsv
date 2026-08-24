@@ -136,7 +136,7 @@ dash_i_not_found	ordered	-	notfound			dash_i
 sigint-cleanup	ordered	-	INT			signal
 sigterm-cleanup	ordered	-	TERM			signal
 ar-glob-member-sort	ordered	-	-			ar_glob
-usage_help	ordered	01_basic.mk	all	-h		simple
+usage_help	ordered	01_basic.mk	all	-h	--dump-bazel is a Rust-only extension absent from the C oracle (PR #629)	simple
 file_func	ordered	94_file_func.mk	check			simple
 bad_debug_level	ordered	01_basic.mk	all	--debug=z		simple
 bad_output_sync_type	ordered	01_basic.mk	all	--output-sync=bogus		simple
