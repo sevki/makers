@@ -1755,9 +1755,7 @@ fn dep_name_bytes(d: &DepNode) -> Vec<u8> {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub fn snap_deps(
-    ctx: &crate::execctx::ExecContext,
-) -> Result<(), crate::build_result::BuildError> {
+pub fn snap_deps(ctx: &crate::execctx::ExecContext) -> Result<(), crate::build_result::BuildError> {
     crate::make_main::mark_snapped_deps(ctx);
 
     // `.PRECIOUS`: mark each prereq target precious.
@@ -1823,7 +1821,9 @@ pub fn snap_deps(
                 });
                 if let Some(name) = conflict {
                     // SAFETY: see the `.INTERMEDIATE` conflict call above.
-                    unsafe { fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .SECONDARY") }?;
+                    unsafe {
+                        fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .SECONDARY")
+                    }?;
                 }
             }
         }

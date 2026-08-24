@@ -366,11 +366,7 @@ pub unsafe fn ar_scan(
 }
 /// Does archive member `name` refer to header member `mem`? Thin `&CStr`
 /// wrapper over [`ar_name_equal_bytes`] (which holds the actual comparison).
-pub fn ar_name_equal(
-    name: &::core::ffi::CStr,
-    mem: &::core::ffi::CStr,
-    truncated: bool,
-) -> bool {
+pub fn ar_name_equal(name: &::core::ffi::CStr, mem: &::core::ffi::CStr, truncated: bool) -> bool {
     ar_name_equal_bytes(name.to_bytes(), mem.to_bytes(), truncated)
 }
 

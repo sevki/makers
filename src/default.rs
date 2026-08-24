@@ -300,7 +300,14 @@ unsafe fn install_builtin_suffixes(
 ) -> Result<(), crate::build_result::BuildError> {
     let mut default_suffixes = DEFAULT_SUFFIXES;
     let mut p = default_suffixes.as_mut_ptr() as *mut c_char;
-    let parsed = parse_file_seq(ctx, &mut p, MAP_NUL as size_t, MAP_NUL, null(), PARSEFS_NONE)?;
+    let parsed = parse_file_seq(
+        ctx,
+        &mut p,
+        MAP_NUL as size_t,
+        MAP_NUL,
+        null(),
+        PARSEFS_NONE,
+    )?;
     let deps: Vec<DepNode> = parsed
         .into_iter()
         .map(|pn| {

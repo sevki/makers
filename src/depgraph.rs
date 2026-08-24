@@ -1044,10 +1044,7 @@ fn write_bazel_files(graph: &DepGraph) -> std::io::Result<()> {
                 "    outs = [\"{}\"],\n",
                 bazel_escape(&target.output)
             ));
-            out.push_str(&format!(
-                "    cmd = \"{}\",\n",
-                bazel_escape(&target.cmd)
-            ));
+            out.push_str(&format!("    cmd = \"{}\",\n", bazel_escape(&target.cmd)));
             out.push_str(")\n\n");
         }
 

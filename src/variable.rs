@@ -54,13 +54,12 @@ pub struct VariableSetList {
 
 pub type dep = Dep;
 pub type commands = Commands;
+use crate::execctx::ExecContext;
 use crate::expand::{
     allocated_expand_string_for_file, allocated_expand_variable, install_variable_buffer,
     recursively_expand_for_file, swap_variable_buffer,
 };
-use crate::execctx::ExecContext;
 use crate::floc::Floc;
-use crate::strcache::strcache_add;
 use crate::function::func_shell_base;
 use crate::hash::{
     hash_delete_at, hash_deleted_item, hash_find_item, hash_find_slot, hash_free, hash_init,
@@ -72,6 +71,7 @@ use crate::misc::{concat, cstr_bytes_or_empty};
 use crate::output::fatal_err;
 use crate::output::msg;
 use crate::posixos::jobserver_get_invalid_auth;
+use crate::strcache::strcache_add;
 
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
@@ -145,7 +145,9 @@ pub const MAKELEVEL_NAME: [::core::ffi::c_char; 10] =
 pub const RECIPEPREFIX_DEFAULT: i32 = '\t' as i32;
 /// Current environment-variable expansion recursion depth.
 pub fn env_recursion(ctx: &ExecContext) -> u64 {
-    ctx.env_recursion.0.load(::std::sync::atomic::Ordering::Relaxed)
+    ctx.env_recursion
+        .0
+        .load(::std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Reads the change counter masked to the C `unsigned long` width. The original
@@ -1047,8 +1049,12 @@ pub fn initialize_file_variables(
         name_c.push(0);
         let name_ptr = name_c.as_ptr() as *const ::core::ffi::c_char;
         let targlen: size_t = name.len() as size_t;
-        let mut p: *mut PatternVar =
-            lookup_pattern_var(ctx, ::core::ptr::null_mut::<PatternVar>(), name_ptr, targlen);
+        let mut p: *mut PatternVar = lookup_pattern_var(
+            ctx,
+            ::core::ptr::null_mut::<PatternVar>(),
+            name_ptr,
+            targlen,
+        );
         if !p.is_null() {
             // Expand the matched pattern values inside a throwaway scope so the
             // legacy expanders behave exactly as before, then snapshot each
@@ -1154,9 +1160,7 @@ pub unsafe fn create_new_variable_set(ctx: &crate::execctx::ExecContext) -> *mut
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn push_new_variable_scope(
-    ctx: &crate::execctx::ExecContext,
-) -> *mut variable_set_list {
+pub unsafe fn push_new_variable_scope(ctx: &crate::execctx::ExecContext) -> *mut variable_set_list {
     ctx.variable_globals
         .current_variable_set_list
         .set(create_new_variable_set(ctx));
@@ -1377,7 +1381,8 @@ pub unsafe fn snapshot_set_to_targets(set: *mut variable_set) -> Vec<TargetVaria
     let end = slot.offset(setr.table.ht_size as isize);
     while slot < end {
         let v = *slot;
-        if !(v.is_null() || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
+        if !(v.is_null()
+            || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
         {
             out.push(target_variable_from_c(v));
         }
@@ -1438,7 +1443,9 @@ pub unsafe fn install_file_context_id(
                 lineno,
                 offset: 0,
             });
-            ctx.reading_file.0.set(ctx.recipe_reading_floc.as_ptr() as *const Floc);
+            ctx.reading_file
+                .0
+                .set(ctx.recipe_reading_floc.as_ptr() as *const Floc);
         } else {
             ctx.reading_file.0.set(::core::ptr::null::<Floc>());
         }
@@ -1639,19 +1646,45 @@ pub unsafe fn define_automatic_variables(
         b"%u\0" as *const u8 as *const ::core::ffi::c_char,
         ctx.makelevel(),
     );
-    define_named(ctx, b"MAKELEVEL\0", &raw mut buf as *mut ::core::ffi::c_char, o_env, 0)?;
+    define_named(
+        ctx,
+        b"MAKELEVEL\0",
+        &raw mut buf as *mut ::core::ffi::c_char,
+        o_env,
+        0,
+    )?;
     write_make_version(ctx, &raw mut buf as *mut ::core::ffi::c_char);
-    define_named(ctx, b"MAKE_VERSION\0", &raw mut buf as *mut ::core::ffi::c_char, o_default, 0)?;
-    define_named(ctx, b"MAKE_HOST\0", crate::version::make_host(), o_default, 0)?;
+    define_named(
+        ctx,
+        b"MAKE_VERSION\0",
+        &raw mut buf as *mut ::core::ffi::c_char,
+        o_default,
+        0,
+    )?;
+    define_named(
+        ctx,
+        b"MAKE_HOST\0",
+        crate::version::make_host(),
+        o_default,
+        0,
+    )?;
     seed_shell_and_makefiles(ctx)?;
     // The dir/notdir automatic variables are pure data: same origin, same
     // recursive flag, names and bodies fixed at compile time. Driving them from
     // a table keeps this frame from carrying one decision point per definition
     // now that each can be refused (#442).
-    AUTOMATIC_PATTERN_VARS.iter().try_for_each(|&(name, body)| {
-        define_named(ctx, name, body.as_ptr() as *const ::core::ffi::c_char, o_automatic, 1)
+    AUTOMATIC_PATTERN_VARS
+        .iter()
+        .try_for_each(|&(name, body)| {
+            define_named(
+                ctx,
+                name,
+                body.as_ptr() as *const ::core::ffi::c_char,
+                o_automatic,
+                1,
+            )
             .map(|_| ())
-    })?;
+        })?;
 
     Ok(())
 }
@@ -1718,7 +1751,9 @@ pub unsafe fn target_environment(
         // Plain `?`: the set-list swap below has not happened yet, so a
         // rejection here leaves nothing installed to unwind.
         owned_list = build_file_setlist(ctx, f)?;
-        ctx.variable_globals.current_variable_set_list.set(owned_list);
+        ctx.variable_globals
+            .current_variable_set_list
+            .set(owned_list);
     }
     let mut s: *mut variable_set_list;
     let mut table: HashTable = HashTable {
@@ -1929,7 +1964,11 @@ pub unsafe fn target_environment(
                                 strstr(value, b" -- \0" as *const u8 as *const ::core::ffi::c_char);
                             if vars.is_null() {
                                 mf = xstrdup(
-                                    concat(&[cstr_bytes_or_empty(value), cstr_bytes_or_empty(invalid)]).as_ptr()
+                                    concat(&[
+                                        cstr_bytes_or_empty(value),
+                                        cstr_bytes_or_empty(invalid),
+                                    ])
+                                    .as_ptr()
                                         as *const ::core::ffi::c_char,
                                 );
                             } else {
@@ -1978,7 +2017,8 @@ pub unsafe fn target_environment(
                         .is_null()
                             && !((*v_0).origin() as i32 != o_env as i32)
                         {
-                            let mf_0 = concat(&[cstr_bytes_or_empty(value), cstr_bytes_or_empty(invalid)]);
+                            let mf_0 =
+                                concat(&[cstr_bytes_or_empty(value), cstr_bytes_or_empty(invalid)]);
                             free(cp as *mut ::core::ffi::c_void);
                             cp = xstrdup(mf_0.as_ptr() as *const ::core::ffi::c_char);
                             value = cp;
@@ -1991,8 +2031,12 @@ pub unsafe fn target_environment(
                 let fresh10 = result;
                 result = result.offset(1_i32 as isize);
                 *fresh10 = xstrdup(
-                    concat(&[cstr_bytes_or_empty((*v_0).name), b"=", cstr_bytes_or_empty(value)]).as_ptr()
-                        as *const ::core::ffi::c_char,
+                    concat(&[
+                        cstr_bytes_or_empty((*v_0).name),
+                        b"=",
+                        cstr_bytes_or_empty(value),
+                    ])
+                    .as_ptr() as *const ::core::ffi::c_char,
                 );
                 free(cp as *mut ::core::ffi::c_void);
             }
@@ -2236,8 +2280,11 @@ pub unsafe fn do_variable_definition(
                 } else if flavor as ::core::ffi::c_uint
                     != f_append_value as i32 as ::core::ffi::c_uint
                 {
-                    tp =
-                        allocated_expand_string_for_file(ctx, val, ::core::ptr::null_mut::<file>())?;
+                    tp = allocated_expand_string_for_file(
+                        ctx,
+                        val,
+                        ::core::ptr::null_mut::<file>(),
+                    )?;
                     val = tp;
                 }
                 vallen = strlen(val) as size_t;
@@ -2766,7 +2813,11 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
             b" (from '",
             ::core::ffi::CStr::from_ptr((*v).fileinfo.filenm).to_bytes(),
             b"', line ",
-            (*v).fileinfo.lineno.wrapping_add((*v).fileinfo.offset).to_string().as_bytes(),
+            (*v).fileinfo
+                .lineno
+                .wrapping_add((*v).fileinfo.offset)
+                .to_string()
+                .as_bytes(),
             b")",
         ]);
     }
@@ -3181,11 +3232,7 @@ mod initialize_file_variables_tests {
             crate::function::hash_init_function_table(&ctx);
             crate::variable::init_hash_global_variable_set(&ctx);
             let target = ::std::ffi::CString::new("%.o").unwrap();
-            let pv = super::create_pattern_var(
-                &ctx,
-                target.as_ptr(),
-                target.as_ptr().add(0),
-            );
+            let pv = super::create_pattern_var(&ctx, target.as_ptr(), target.as_ptr().add(0));
             let name = ::std::ffi::CString::new("IFV_BAD").unwrap();
             // `$(word 1)` is a well-formed reference to a builtin called with
             // the wrong number of arguments, so expanding it is refused.
@@ -3226,21 +3273,26 @@ mod initialize_file_variables_tests {
         let ctx = crate::execctx::ExecContext::default();
         let parent = enter_file(&ctx, b"ifv_parent_probe");
         let child = enter_file(&ctx, b"ifv_child_probe");
-        ctx.filenodes
-            .get(child)
-            .unwrap()
-            .lock()
-            .unwrap()
-            .parent = Some(parent);
+        ctx.filenodes.get(child).unwrap().lock().unwrap().parent = Some(parent);
 
         initialize_file_variables(&ctx, child, 0).expect("initialize_file_variables rejected");
 
         assert!(
-            ctx.filenodes.get(parent).unwrap().lock().unwrap().pat_searched,
+            ctx.filenodes
+                .get(parent)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .pat_searched,
             "parent's pattern search ran via recursion"
         );
         assert!(
-            ctx.filenodes.get(child).unwrap().lock().unwrap().pat_searched,
+            ctx.filenodes
+                .get(child)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .pat_searched,
             "child's pattern search ran"
         );
     }
@@ -3403,20 +3455,8 @@ mod variable_cmp_tests {
     }
 
     const SAMPLES: &[&[u8]] = &[
-        b"",
-        b"a",
-        b"b",
-        b"A",
-        b"ab",
-        b"ba",
-        b"abc",
-        b"abd",
-        b"CC",
-        b"CXX",
-        b"foo",
-        b"foobar",
-        b"\xff",
-        b"\x00",
+        b"", b"a", b"b", b"A", b"ab", b"ba", b"abc", b"abd", b"CC", b"CXX", b"foo", b"foobar",
+        b"\xff", b"\x00",
     ];
 
     #[test]

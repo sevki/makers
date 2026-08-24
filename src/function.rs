@@ -124,7 +124,6 @@ use crate::expand::{
 };
 pub use crate::file::nameseq;
 use crate::hash::{hash_find_item, hash_init, hash_insert, hash_load, jhash};
-use rustc_hash::FxHashMap;
 pub use crate::job::ChildBase;
 use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
 use crate::make_main::{db_level, stopchar_map};
@@ -136,6 +135,7 @@ use crate::variable::{
     define_variable_in_set, lookup_variable, pop_variable_scope, push_new_variable_scope,
     target_environment, warn_undefined,
 };
+use rustc_hash::FxHashMap;
 #[derive(Copy, Clone, BitfieldStruct)]
 #[repr(C)]
 pub struct FunctionTableEntry {
@@ -813,8 +813,8 @@ mod func_join_tests {
             (b"a", b""),
             (b"", b"1"),
             (b"a b", b"1 2"),
-            (b"a b", b"1 2 3"),   // list2 longer
-            (b"a b c", b"1 2"),   // list1 longer
+            (b"a b", b"1 2 3"),      // list2 longer
+            (b"a b c", b"1 2"),      // list1 longer
             (b"  a   b  ", b"1\t2"), // irregular whitespace
         ];
         for &(l1, l2) in cases {
@@ -930,7 +930,6 @@ fn func_flavor(
 
 #[cfg(test)]
 mod func_origin_flavor_tests {
-
 
     // Since #442 the raw-ABI handlers return `Result`, while the verbatim-C
     // oracles they are compared against still return the bare output cursor
@@ -1317,10 +1316,7 @@ fn addprefix_addsuffix_result(fix: &[u8], list: &[u8], is_addprefix: bool) -> Ve
     out.pop();
     out
 }
-fn func_addsuffix_addprefix(
-    name: &[u8],
-    args: &[&[u8]],
-) -> Vec<u8> {
+fn func_addsuffix_addprefix(name: &[u8], args: &[&[u8]]) -> Vec<u8> {
     // Classify the affix function (`addprefix`/`addsuffix`) through the typed
     // AST layer instead of switching on the raw fourth byte of the name.
     let is_addprefix = matches!(
@@ -1515,7 +1511,10 @@ mod word_family_tests {
     fn assert_matches(safe: SafeFunc, oracle: Handler, arg: &[u8]) {
         let got = safe(b"f", &[arg]);
         let want = unsafe { emit(oracle, arg) };
-        assert_eq!(got, want, "safe vs unsafe oracle diverged for input {arg:?}");
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for input {arg:?}"
+        );
     }
 
     const CASES: &[&[u8]] = &[b"", b"   ", b"a", b"a b c", b"  a   b  ", b"a\tb\nc"];
@@ -1586,7 +1585,9 @@ mod path_family_tests {
         let mut doneany: i32 = 0;
         let mut len: size_t = 0;
         let is_suffix: i32 = matches!(
-            crate::parser::NotdirSuffix::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+            crate::parser::NotdirSuffix::from_funcname(
+                ::std::ffi::CStr::from_ptr(funcname).to_bytes()
+            ),
             Some(crate::parser::NotdirSuffix::Suffix)
         ) as i32;
         let is_notdir: i32 = (is_suffix == 0) as i32;
@@ -1645,7 +1646,9 @@ mod path_family_tests {
         let mut doneany: i32 = 0;
         let mut len: size_t = 0;
         let is_basename: i32 = matches!(
-            crate::parser::BasenameDir::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+            crate::parser::BasenameDir::from_funcname(
+                ::std::ffi::CStr::from_ptr(funcname).to_bytes()
+            ),
             Some(crate::parser::BasenameDir::Basename)
         ) as i32;
         let is_dir: i32 = (is_basename == 0) as i32;
@@ -1735,21 +1738,50 @@ mod path_family_tests {
     fn func_notdir_suffix_matches_unsafe_oracle() {
         initialize_stopchar_map();
         for &c in CASES {
-            assert_matches(func_notdir_suffix, func_notdir_suffix_unsafe_oracle, b"notdir", c);
-            assert_matches(func_notdir_suffix, func_notdir_suffix_unsafe_oracle, b"suffix", c);
+            assert_matches(
+                func_notdir_suffix,
+                func_notdir_suffix_unsafe_oracle,
+                b"notdir",
+                c,
+            );
+            assert_matches(
+                func_notdir_suffix,
+                func_notdir_suffix_unsafe_oracle,
+                b"suffix",
+                c,
+            );
         }
-        assert_eq!(func_notdir_suffix(b"notdir", &[b"src/foo.c bar"]), b"foo.c bar");
-        assert_eq!(func_notdir_suffix(b"suffix", &[b"src/foo.c bar.h noext"]), b".c .h");
+        assert_eq!(
+            func_notdir_suffix(b"notdir", &[b"src/foo.c bar"]),
+            b"foo.c bar"
+        );
+        assert_eq!(
+            func_notdir_suffix(b"suffix", &[b"src/foo.c bar.h noext"]),
+            b".c .h"
+        );
     }
 
     #[test]
     fn func_basename_dir_matches_unsafe_oracle() {
         initialize_stopchar_map();
         for &c in CASES {
-            assert_matches(func_basename_dir, func_basename_dir_unsafe_oracle, b"basename", c);
-            assert_matches(func_basename_dir, func_basename_dir_unsafe_oracle, b"dir", c);
+            assert_matches(
+                func_basename_dir,
+                func_basename_dir_unsafe_oracle,
+                b"basename",
+                c,
+            );
+            assert_matches(
+                func_basename_dir,
+                func_basename_dir_unsafe_oracle,
+                b"dir",
+                c,
+            );
         }
-        assert_eq!(func_basename_dir(b"basename", &[b"src/foo.c bar"]), b"src/foo bar");
+        assert_eq!(
+            func_basename_dir(b"basename", &[b"src/foo.c bar"]),
+            b"src/foo bar"
+        );
         assert_eq!(func_basename_dir(b"dir", &[b"src/foo.c noext"]), b"src/ ./");
     }
 }
@@ -2124,9 +2156,10 @@ fn func_wordlist(
             return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
-                (badfirst.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
-                ),
+                (badfirst.to_bytes().len() as size_t).wrapping_add(strlen(make_lltoa(
+                    start,
+                    &raw mut buf as *mut ::core::ffi::c_char,
+                )) as size_t),
                 c"%s: '%s'".as_ptr(),
                 &[
                     FmtArg::Str((badfirst.as_ptr()) as *const ::core::ffi::c_char),
@@ -2150,9 +2183,10 @@ fn func_wordlist(
             return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
-                (badsecond.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
-                ),
+                (badsecond.to_bytes().len() as size_t).wrapping_add(strlen(make_lltoa(
+                    stop,
+                    &raw mut buf as *mut ::core::ffi::c_char,
+                )) as size_t),
                 c"%s: '%s'".as_ptr(),
                 &[
                     FmtArg::Str((badsecond.as_ptr()) as *const ::core::ffi::c_char),
@@ -2227,8 +2261,12 @@ mod filter_filterout_tests {
     use rustc_hash::FxHashMap;
     use std::ffi::{c_char, c_void, CString};
 
-    type Handler =
-        unsafe fn(&crate::execctx::ExecContext, *mut c_char, *mut *mut c_char, *const c_char) -> *mut c_char;
+    type Handler = unsafe fn(
+        &crate::execctx::ExecContext,
+        *mut c_char,
+        *mut *mut c_char,
+        *const c_char,
+    ) -> *mut c_char;
 
     #[derive(Default)]
     struct AWord {
@@ -2260,9 +2298,9 @@ mod filter_filterout_tests {
         let mut pat_count: ::core::ffi::c_ulong = 0;
         let mut word_count: ::core::ffi::c_ulong = 0;
         let mut a_word_table: FxHashMap<Box<[u8]>, *mut AWord> = FxHashMap::default();
-        let is_filter: i32 = (*funcname.offset(
-            (::core::mem::size_of::<[c_char; 7]>() as usize).wrapping_sub(1_usize) as isize,
-        ) as i32
+        let is_filter: i32 = (*funcname
+            .offset((::core::mem::size_of::<[c_char; 7]>() as usize).wrapping_sub(1_usize) as isize)
+            as i32
             == 0) as i32;
         let mut cp: *const c_char;
         let mut literals: i32 = 0;
@@ -2331,7 +2369,8 @@ mod filter_filterout_tests {
             (*wp).length = len;
             wp = wp.offset(1_i32 as isize);
         }
-        hashing = (literals > 1 && (literals as ::core::ffi::c_ulong).wrapping_mul(word_count) >= 10)
+        hashing = (literals > 1
+            && (literals as ::core::ffi::c_ulong).wrapping_mul(word_count) >= 10)
             as i32;
         if hashing != 0 {
             a_word_table.reserve(word_count as usize);
@@ -2425,7 +2464,13 @@ mod filter_filterout_tests {
         out
     }
 
-    fn assert_matches(safe: SafeFunc, oracle: Handler, funcname: &[u8], patterns: &[u8], words: &[u8]) {
+    fn assert_matches(
+        safe: SafeFunc,
+        oracle: Handler,
+        funcname: &[u8],
+        patterns: &[u8],
+        words: &[u8],
+    ) {
         let got = safe(funcname, &[patterns, words]);
         let want = unsafe { emit(oracle, funcname, patterns, words) };
         assert_eq!(
@@ -2442,7 +2487,10 @@ mod filter_filterout_tests {
         (b"%.c", b"a.c b.o c.c"),
         (b"%.c %.o", b"a.c b.o c.h"),
         (b"a\\%", b"a% b c"),
-        (b"lit1 lit2 lit3", b"lit1 lit2 lit3 lit4 lit5 lit6 lit7 lit8 lit9 lit10 lit11"),
+        (
+            b"lit1 lit2 lit3",
+            b"lit1 lit2 lit3 lit4 lit5 lit6 lit7 lit8 lit9 lit10 lit11",
+        ),
     ];
 
     #[test]
@@ -2457,7 +2505,10 @@ mod filter_filterout_tests {
                 words,
             );
         }
-        assert_eq!(func_filter_filterout(b"filter", &[b"%.c", b"a.c b.o c.c"]), b"a.c c.c");
+        assert_eq!(
+            func_filter_filterout(b"filter", &[b"%.c", b"a.c b.o c.c"]),
+            b"a.c c.c"
+        );
         assert!(func_filter_filterout(b"filter", &[b"", b"a b c"]).is_empty());
     }
 
@@ -2503,7 +2554,6 @@ mod filter_filterout_tests {
 #[cfg(test)]
 mod selection_tests {
 
-
     //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_findstring`,
     //! `func_word` and `func_wordlist` are preserved verbatim below as
     //! `*_unsafe_oracle` and driven through the real variable-output buffer
@@ -2515,9 +2565,9 @@ mod selection_tests {
         func_findstring, func_word, func_wordlist, make_lltoa, parse_numeric, size_t, strlen,
         strstr, tokens, variable_buffer_output, word_span, FmtArg,
     };
-    use crate::output::fatal;
     use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
     use crate::make_main::initialize_stopchar_map;
+    use crate::output::fatal;
     use std::ffi::{c_char, CString};
 
     // Since #442 the raw-ABI handlers return `Result`, while the verbatim-C
@@ -2622,9 +2672,8 @@ mod selection_tests {
             fatal(
                 ctx,
                 ctx.expanding_var_floc(),
-                (badfirst.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(start, &raw mut buf as *mut c_char)) as size_t,
-                ),
+                (badfirst.to_bytes().len() as size_t)
+                    .wrapping_add(strlen(make_lltoa(start, &raw mut buf as *mut c_char)) as size_t),
                 c"%s: '%s'".as_ptr(),
                 &[
                     FmtArg::Str((badfirst.as_ptr()) as *const c_char),
@@ -2641,9 +2690,8 @@ mod selection_tests {
             fatal(
                 ctx,
                 ctx.expanding_var_floc(),
-                (badsecond.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(stop, &raw mut buf as *mut c_char)) as size_t,
-                ),
+                (badsecond.to_bytes().len() as size_t)
+                    .wrapping_add(strlen(make_lltoa(stop, &raw mut buf as *mut c_char)) as size_t),
                 c"%s: '%s'".as_ptr(),
                 &[
                     FmtArg::Str((badsecond.as_ptr()) as *const c_char),
@@ -2693,7 +2741,10 @@ mod selection_tests {
     fn assert_matches(safe: Handler, oracle: Handler, args: &[&[u8]]) {
         let got = unsafe { emit(safe, args) };
         let want = unsafe { emit(oracle, args) };
-        assert_eq!(got, want, "safe vs unsafe oracle diverged for args {args:?}");
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for args {args:?}"
+        );
     }
 
     #[test]
@@ -2707,7 +2758,10 @@ mod selection_tests {
         for c in cases {
             assert_matches(func_findstring_checked, func_findstring_unsafe_oracle, c);
         }
-        assert_eq!(unsafe { emit(func_findstring_checked, &[b"ab", b"xaby"]) }, b"ab");
+        assert_eq!(
+            unsafe { emit(func_findstring_checked, &[b"ab", b"xaby"]) },
+            b"ab"
+        );
         assert!(unsafe { emit(func_findstring_checked, &[b"z", b"xaby"]) }.is_empty());
     }
 
@@ -2739,7 +2793,10 @@ mod selection_tests {
         for c in cases {
             assert_matches(func_wordlist_checked, func_wordlist_unsafe_oracle, c);
         }
-        assert_eq!(unsafe { emit(func_wordlist_checked, &[b"2", b"3", b"a b c d"]) }, b"b c");
+        assert_eq!(
+            unsafe { emit(func_wordlist_checked, &[b"2", b"3", b"a b c d"]) },
+            b"b c"
+        );
         assert!(unsafe { emit(func_wordlist_checked, &[b"3", b"2", b"a b c d"]) }.is_empty());
     }
 }
@@ -3135,7 +3192,6 @@ fn func_sort(
 #[cfg(test)]
 mod strip_sort_tests {
 
-
     //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_strip`
     //! and `func_sort` are preserved *verbatim* below as `*_unsafe_oracle` and
     //! driven through the real variable-output buffer alongside the converted
@@ -3275,7 +3331,10 @@ mod strip_sort_tests {
     fn assert_matches(safe: Handler, oracle: Handler, arg: &[u8]) {
         let got = unsafe { emit(safe, arg) };
         let want = unsafe { emit(oracle, arg) };
-        assert_eq!(got, want, "safe vs unsafe oracle diverged for input {arg:?}");
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for input {arg:?}"
+        );
     }
 
     #[test]
@@ -3312,7 +3371,10 @@ mod strip_sort_tests {
             assert_matches(func_sort_checked, func_sort_unsafe_oracle, c);
         }
         // Exact bytes: sorted, de-duplicated, single-space-joined.
-        assert_eq!(unsafe { emit(func_sort_checked, b"foo foo bar") }, b"bar foo");
+        assert_eq!(
+            unsafe { emit(func_sort_checked, b"foo foo bar") },
+            b"bar foo"
+        );
         assert!(unsafe { emit(func_sort_checked, b"") }.is_empty());
     }
 }
@@ -4340,8 +4402,7 @@ unsafe fn func_file(
     let fn_0: *mut ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     if *fn_0.offset(0_i32 as isize) as i32 == '>' as i32 {
         let append = *fn_0.offset(1_i32 as isize) as i32 == '>' as i32;
-        let start: *const ::core::ffi::c_char =
-            next_token(fn_0.offset(1 + append as isize));
+        let start: *const ::core::ffi::c_char = next_token(fn_0.offset(1 + append as isize));
         if *start.offset(0_i32 as isize) as i32 == 0 {
             return Err(fatal_err(
                 ctx,
@@ -4370,18 +4431,19 @@ unsafe fn func_file(
             match opts.open(path) {
                 Ok(f) => break f,
                 Err(e) if e.raw_os_error() == Some(EINTR) => continue,
-                Err(e) => return Err(file_io_fatal(
-                    ctx,
-                    b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    &name_c,
-                    &e,
-                )),
+                Err(e) => {
+                    return Err(file_io_fatal(
+                        ctx,
+                        b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                        &name_c,
+                        &e,
+                    ))
+                }
             }
         };
         crate::make_main::bump_command_count(ctx);
         if !(*argv.offset(1_i32 as isize)).is_null() {
-            let text =
-                ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
+            let text = ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
             // The C code appends a newline unless the text already ends in
             // one — including for empty text, which writes just "\n".
             let write_result = file.write_all(text).and_then(|()| {
@@ -4443,20 +4505,21 @@ unsafe fn func_file(
                         let _ = out.write_all(b"file: Failed to open '");
                         let _ = out.write_all(name);
                         let _ = out.write_all(b"': ");
-                        let _ = out.write_all(
-                            ::core::ffi::CStr::from_ptr(strerror(ENOENT)).to_bytes(),
-                        );
+                        let _ =
+                            out.write_all(::core::ffi::CStr::from_ptr(strerror(ENOENT)).to_bytes());
                         let _ = out.write_all(b"\n");
                         let _ = out.flush();
                     }
                     return Ok(o);
                 }
-                Err(e) => return Err(file_io_fatal(
-                    ctx,
-                    b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    &name_c,
-                    &e,
-                )),
+                Err(e) => {
+                    return Err(file_io_fatal(
+                        ctx,
+                        b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                        &name_c,
+                        &e,
+                    ))
+                }
             }
         };
         let mut buf = [0u8; 1024];
@@ -4473,12 +4536,14 @@ unsafe fn func_file(
                     n = n.wrapping_add(l as size_t);
                 }
                 Err(e) if e.kind() == ::std::io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(file_io_fatal(
-                    ctx,
-                    b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    &name_c,
-                    &e,
-                )),
+                Err(e) => {
+                    return Err(file_io_fatal(
+                        ctx,
+                        b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                        &name_c,
+                        &e,
+                    ))
+                }
             }
         }
         drop(file);
@@ -4531,7 +4596,9 @@ fn starting_directory_bytes() -> Vec<u8> {
         } else {
             // SAFETY: a non-null `starting_directory` is a NUL-terminated C
             // string in `main_0`'s frame, live for the whole run.
-            unsafe { ::core::ffi::CStr::from_ptr(p) }.to_bytes().to_vec()
+            unsafe { ::core::ffi::CStr::from_ptr(p) }
+                .to_bytes()
+                .to_vec()
         }
     })
     .unwrap_or_default()
@@ -4631,7 +4698,10 @@ mod func_abspath_tests {
     fn assert_matches(safe: SafeFunc, oracle: Handler, arg: &[u8]) {
         let got = safe(b"abspath", &[arg]);
         let want = unsafe { emit(oracle, arg) };
-        assert_eq!(got, want, "safe vs unsafe oracle diverged for input {arg:?}");
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for input {arg:?}"
+        );
     }
 
     const CASES: &[&[u8]] = &[
@@ -5223,8 +5293,8 @@ pub unsafe fn define_new_function(
             ],
         ));
     }
-    ent = xmalloc(::core::mem::size_of::<FunctionTableEntry>() as size_t)
-        as *mut FunctionTableEntry;
+    ent =
+        xmalloc(::core::mem::size_of::<FunctionTableEntry>() as size_t) as *mut FunctionTableEntry;
     (*ent).name = strcache_add(ctx, name);
     (*ent).len = len as ::core::ffi::c_uchar;
     (*ent).minimum_args = min as ::core::ffi::c_uchar;
@@ -6059,15 +6129,7 @@ mod find_next_argument_tests {
     fn matches_unsafe_oracle() {
         crate::make_main::initialize_stopchar_map();
         let cases: &[&[u8]] = &[
-            b"a,b",
-            b"abc",
-            b"(a,b),c",
-            b"a(,)b,c",
-            b"))",
-            b"(((",
-            b",",
-            b"",
-            b"{a,b},c",
+            b"a,b", b"abc", b"(a,b),c", b"a(,)b,c", b"))", b"(((", b",", b"", b"{a,b},c",
             b"a,b,c,d",
         ];
         for &(sp, ep) in &[(b'(', b')'), (b'{', b'}')] {
@@ -6075,14 +6137,20 @@ mod find_next_argument_tests {
                 let safe = find_next_argument(sp, ep, bytes);
                 let ptr = bytes.as_ptr() as *const c_char;
                 let end = unsafe { ptr.add(bytes.len()) };
-                let oracle =
-                    unsafe { find_next_argument_unsafe_oracle(sp as c_char, ep as c_char, ptr, end) };
+                let oracle = unsafe {
+                    find_next_argument_unsafe_oracle(sp as c_char, ep as c_char, ptr, end)
+                };
                 let oracle_off = if oracle.is_null() {
                     None
                 } else {
                     Some(oracle as usize - ptr as usize)
                 };
-                assert_eq!(safe, oracle_off, "input {:?}", String::from_utf8_lossy(bytes));
+                assert_eq!(
+                    safe,
+                    oracle_off,
+                    "input {:?}",
+                    String::from_utf8_lossy(bytes)
+                );
             }
         }
     }
@@ -6212,8 +6280,7 @@ mod builtin_rejection_tests {
         initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         let cargs: Vec<CString> = args.iter().map(|a| CString::new(*a).unwrap()).collect();
-        let mut argv: Vec<*mut c_char> =
-            cargs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
+        let mut argv: Vec<*mut c_char> = cargs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
         argv.push(::core::ptr::null_mut());
         let name = CString::new(funcname).unwrap();
         let start = initialize_variable_output(&ctx);
@@ -6253,7 +6320,10 @@ mod builtin_rejection_tests {
         let neg = unsafe { drive(func_intcmp, "intcmp", &["-3", "-3"]) }.expect("-3 == -3");
         assert_eq!(neg, b"-3", "a negative operand still compares equal");
         let pad = unsafe { drive(func_intcmp, "intcmp", &[" +4 ", "4"]) }.expect("+4 == 4");
-        assert!(!pad.is_empty(), "sign and padding do not defeat the compare");
+        assert!(
+            !pad.is_empty(),
+            "sign and padding do not defeat the compare"
+        );
     }
 
     #[test]
@@ -6290,10 +6360,12 @@ mod builtin_rejection_tests {
         initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         let arg = CString::new("1").unwrap();
-        let mut argv: [*mut c_char; 2] =
-            [arg.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
+        let mut argv: [*mut c_char; 2] = [arg.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
         let o = initialize_variable_output(&ctx);
         let got = unsafe { expand_builtin_function(&ctx, o, 1, argv.as_mut_ptr(), entry) };
-        assert!(got.is_err(), "one argument is below `word`'s minimum of two");
+        assert!(
+            got.is_err(),
+            "one argument is below `word`'s minimum of two"
+        );
     }
 }

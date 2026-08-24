@@ -1,39 +1,13 @@
 pub use crate::ffi_types::{
-    __blkcnt_t,
-    __blksize_t,
-    __dev_t,
-    __gid_t,
-    __ino_t,
-    __mode_t,
-    __nlink_t,
-    __off64_t,
-    __off_t,
-    __pid_t,
-    __sig_atomic_t,
-    __syscall_slong_t,
-    __time_t,
-    __uid_t,
-    pid_t,
-    sig_atomic_t,
-    size_t,
-    ssize_t,
-    time_t,
-    uintmax_t,
+    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
+    __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
+    ssize_t, time_t, uintmax_t,
 };
 use {
     crate::{
         file::{
-            cs_finished,
-            cs_running,
-            us_failed,
-            us_question,
-            us_success,
-            CommandState,
-            FileId,
-            FileNode,
-            UpdateStatus,
-            VariableSet,
-            VariableSetList,
+            cs_finished, cs_running, us_failed, us_question, us_success, CommandState, FileId,
+            FileNode, UpdateStatus, VariableSet, VariableSetList,
         },
         misc::{xmalloc, xstrdup},
         recipe::RecipeLineFlags,
@@ -41,19 +15,8 @@ use {
     },
     ::c2rust_bitfields,
     libc::{
-        __errno_location,
-        close,
-        free,
-        getenv,
-        getloadavg,
-        open,
-        remove,
-        sprintf,
-        stpcpy,
-        strchr,
-        strcmp,
-        strerror,
-        strsignal,
+        __errno_location, close, free, getenv, getloadavg, open, remove, sprintf, stpcpy, strchr,
+        strcmp, strerror, strsignal,
     },
     std::{
         sync::atomic::Ordering,
@@ -256,28 +219,14 @@ use crate::{
     file::lookup_file,
     findprog::find_in_given_path,
     function::{shell_completed, shell_function_pid},
-    make_main::{
-        db_level, die_cleanup, not_parallel, one_shell, posix_pedantic, stopchar_map,
-    },
+    make_main::{db_level, die_cleanup, not_parallel, one_shell, posix_pedantic, stopchar_map},
     output::{
-        error,
-        fatal_err,
-        message,
-        perror_with_name,
-        pfatal_with_name_err,
-        set_output_context,
+        error, fatal_err, message, perror_with_name, pfatal_with_name_err, set_output_context,
         FmtArg,
     },
     posixos::{
-        fd_noinherit,
-        get_bad_stdin,
-        jobserver_acquire,
-        jobserver_enabled,
-        jobserver_post_child,
-        jobserver_pre_acquire,
-        jobserver_pre_child,
-        jobserver_release,
-        jobserver_signal,
+        fd_noinherit, get_bad_stdin, jobserver_acquire, jobserver_enabled, jobserver_post_child,
+        jobserver_pre_acquire, jobserver_pre_child, jobserver_release, jobserver_signal,
     },
     remake::{notice_finished_file, show_goal_error},
     variable::target_environment,
@@ -506,13 +455,11 @@ fn recipe_floc(
                 offset: offset as ::core::ffi::c_ulong,
             }
         }
-        None => {
-            Floc {
-                filenm: ::core::ptr::null(),
-                lineno: 0,
-                offset: 0,
-            }
-        }
+        None => Floc {
+            filenm: ::core::ptr::null(),
+            lineno: 0,
+            offset: 0,
+        },
     }
 }
 
@@ -781,7 +728,11 @@ pub unsafe fn reap_children(
                         b") PID ",
                         &pid_bytes((*c).pid),
                         b" ",
-                        if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                        if (*c).remote() as i32 != 0 {
+                            b" (remote)"
+                        } else {
+                            b""
+                        },
                         b"\n",
                     ]);
                 }
@@ -887,7 +838,11 @@ pub unsafe fn reap_children(
                         b" PID ",
                         &pid_bytes((*c).pid),
                         b" ",
-                        if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                        if (*c).remote() as i32 != 0 {
+                            b" (remote)"
+                        } else {
+                            b""
+                        },
                         b"\n",
                     ]);
                 }
@@ -1007,12 +962,10 @@ pub unsafe fn reap_children(
             );
             if ctx.delete_on_error.0.load(Ordering::Relaxed) == -1_i32 {
                 let is_target = match lookup_file(ctx, b".DELETE_ON_ERROR") {
-                    Some(fid) => {
-                        match ctx.filenodes.get(fid) {
-                            Some(node) => node.lock().expect("file node poisoned").is_target,
-                            None => false,
-                        }
-                    }
+                    Some(fid) => match ctx.filenodes.get(fid) {
+                        Some(node) => node.lock().expect("file node poisoned").is_target,
+                        None => false,
+                    },
                     None => false,
                 };
                 ctx.delete_on_error
@@ -1035,7 +988,7 @@ pub unsafe fn reap_children(
                         crate::output::output_dump(ctx, &raw mut (*c).output);
                     }
                     (*c).set_remote(
-                        ctx.remote_backend.0.can_start_job(false) as ::core::ffi::c_uint,
+                        ctx.remote_backend.0.can_start_job(false) as ::core::ffi::c_uint
                     );
                     // The signal mask this loop blocked has to come back before
                     // a rejection leaves the reaper.
@@ -1067,7 +1020,11 @@ pub unsafe fn reap_children(
                 &ptr_bytes(c),
                 b" PID ",
                 &pid_bytes((*c).pid),
-                if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                if (*c).remote() as i32 != 0 {
+                    b" (remote)"
+                } else {
+                    b""
+                },
                 b" from chain.\n",
             ]);
         }
@@ -1376,14 +1333,13 @@ pub unsafe fn start_job_command(
                 (*child).set_deleted(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 if (*child).environment.is_null() {
                     let any_recurse = match ctx.filenodes.get((*child).file) {
-                        Some(node) => {
-                            node.lock()
-                                .expect("file node poisoned")
-                                .recipe
-                                .as_ref()
-                                .map(|r| r.any_recurse)
-                                .unwrap_or(false)
-                        }
+                        Some(node) => node
+                            .lock()
+                            .expect("file node poisoned")
+                            .recipe
+                            .as_ref()
+                            .map(|r| r.any_recurse)
+                            .unwrap_or(false),
                         None => false,
                     };
                     (*child).environment =
@@ -1508,7 +1464,11 @@ pub unsafe fn start_waiting_job(
                         &fname[..fname.len() - 1],
                         b") PID ",
                         &pid_bytes((*c).pid),
-                        if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                        if (*c).remote() as i32 != 0 {
+                            b" (remote)"
+                        } else {
+                            b""
+                        },
                         b" on the chain.\n",
                     ]);
                 }
@@ -1799,7 +1759,11 @@ pub unsafe fn new_job(
             if 0x4_i32 & db_level(ctx) != 0 {
                 crate::output::trace_parts(&[
                     b"Need a job token; we ",
-                    if !ctx.children.0.get().is_null() { b"" } else { b"don't ".as_slice() },
+                    if !ctx.children.0.get().is_null() {
+                        b""
+                    } else {
+                        b"don't ".as_slice()
+                    },
                     b"have children\n",
                 ]);
             }
@@ -1826,10 +1790,9 @@ pub unsafe fn new_job(
                     &[],
                 ));
             }
-            let got_token: i32 = jobserver_acquire(
-                ctx,
-                (ctx.waiting_jobs.0.get() != NULL as *mut child) as i32,
-            )? as i32;
+            let got_token: i32 =
+                jobserver_acquire(ctx, (ctx.waiting_jobs.0.get() != NULL as *mut child) as i32)?
+                    as i32;
             if !(got_token == 1) {
                 continue;
             }
@@ -2165,11 +2128,13 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                             b" / make = ",
                             job_slots_used(ctx).to_string().as_bytes(),
                             b" (max requested = ",
-                            format!("{:.6}", crate::make_main::opt_max_load_average(ctx)).as_bytes(),
+                            format!("{:.6}", crate::make_main::opt_max_load_average(ctx))
+                                .as_bytes(),
                             b")\n",
                         ]);
                     }
-                    return (cnt as ::core::ffi::c_double > crate::make_main::opt_max_load_average(ctx))
+                    return (cnt as ::core::ffi::c_double
+                        > crate::make_main::opt_max_load_average(ctx))
                         as i32;
                 }
                 if 0x4_i32 & db_level(ctx) != 0 {

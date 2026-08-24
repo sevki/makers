@@ -7,9 +7,9 @@
 #![cfg(test)]
 
 use super::{
-    CommandSwitch, error, expand_command_line_file, flag, handle_non_switch_argument,
-    make_toui, opt_origin_cell, opt_set_flag, opt_set_str, option, strcache_add, string, strlist,
-    Options, FmtArg, TEMP_STDIN_OPT, WARN_OPT,
+    error, expand_command_line_file, flag, handle_non_switch_argument, make_toui, opt_origin_cell,
+    opt_set_flag, opt_set_str, option, strcache_add, string, strlist, CommandSwitch, FmtArg,
+    Options, TEMP_STDIN_OPT, WARN_OPT,
 };
 use crate::execctx::ExecContext;
 use crate::ffi_types::size_t;
