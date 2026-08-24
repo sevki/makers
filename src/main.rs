@@ -463,6 +463,7 @@ pub struct Options {
     pub ignore_errors: ::core::cell::Cell<bool>,
     pub print_data_base: ::core::cell::Cell<bool>,
     pub print_targets: ::core::cell::Cell<bool>,
+    pub dump_bazel: ::core::cell::Cell<bool>,
     pub question: ::core::cell::Cell<bool>,
     pub no_builtin_rules: ::core::cell::Cell<bool>,
     pub no_builtin_variables: ::core::cell::Cell<bool>,
@@ -639,7 +640,7 @@ pub struct Options {
     /// mutable per-run state: `decode_switches` sets each entry's `specified`
     /// bit as arguments are decoded, and `define_makeflags` reads those bits
     /// back when rebuilding MAKEFLAGS.
-    pub switches: ::core::cell::RefCell<[CommandSwitch; 42]>,
+    pub switches: ::core::cell::RefCell<[CommandSwitch; 43]>,
 }
 
 impl Options {
@@ -658,6 +659,7 @@ impl Options {
             ignore_errors: ::core::cell::Cell::new(false),
             print_data_base: ::core::cell::Cell::new(false),
             print_targets: ::core::cell::Cell::new(false),
+            dump_bazel: ::core::cell::Cell::new(false),
             question: ::core::cell::Cell::new(false),
             no_builtin_rules: ::core::cell::Cell::new(false),
             no_builtin_variables: ::core::cell::Cell::new(false),
@@ -761,6 +763,8 @@ fn opt_set_flag(options: &Options, c: i32, on: bool) {
         options.warn_undefined_variables.set(on);
     } else if c == CHAR_MAX + 14 {
         options.print_targets.set(on);
+    } else if c == DUMP_BAZEL_OPT {
+        options.dump_bazel.set(on);
     }
     // 'b', 'm' (ignore) and the 0 sentinel have no storage.
 }
@@ -831,6 +835,8 @@ fn opt_flag_int(options: &Options, c: i32) -> i32 {
         b(options.warn_undefined_variables.get())
     } else if c == CHAR_MAX + 14 {
         b(options.print_targets.get())
+    } else if c == DUMP_BAZEL_OPT {
+        b(options.dump_bazel.get())
     } else {
         0
     }
@@ -1125,6 +1131,7 @@ pub fn set_ignore_errors_mirror(ctx: &crate::execctx::ExecContext, v: bool) {
 /// into the strcache, which lives for the whole run.
 pub const TEMP_STDIN_OPT: i32 = CHAR_MAX + 10;
 pub const WARN_OPT: i32 = CHAR_MAX + 13;
+pub const DUMP_BAZEL_OPT: i32 = CHAR_MAX + 15;
 const LONG_OPTION_ALIASES: [option; 9] = [
     option {
         name: b"quiet\0" as *const u8 as *const ::core::ffi::c_char,
@@ -1716,7 +1723,7 @@ pub unsafe fn decode_output_sync_flags(
 pub fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i32) {
     use std::io::Write;
     // The usage text, one option per line, in the C table's order.
-    const USAGE: [&str; 35] = [
+    const USAGE: [&str; 36] = [
         "Options:\n",
         "  -b, -m                      Ignored for compatibility.\n",
         "  -B, --always-make           Unconditionally make all targets.\n",
@@ -1752,6 +1759,7 @@ pub fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i3
         "  --no-print-directory        Turn off -w, even if it was turned on implicitly.\n",
         "  -W FILE, --what-if=FILE, --new-file=FILE, --assume-new=FILE\n                              Consider FILE to be infinitely new.\n",
         "  --warn[=CONTROL]            Control warnings for makefile issues.\n",
+        "  --dump-bazel                Write BUILD.bazel files after the update walk.\n",
     ];
     if options.print_version.get() {
         // SAFETY: `print_version` reads the NUL-terminated version/host
@@ -3487,6 +3495,11 @@ unsafe fn main_0(
     // Diagnostics tap (MAKERS_DEPGRAPH_POST): snapshot the resolved graph —
     // implicit rules matched, provenance recorded — now that the walk is done.
     crate::depgraph::dump_graph_post_if_requested(&ctx, &options.goals.borrow());
+    crate::depgraph::dump_bazel_post_if_requested(
+        &ctx,
+        &options.goals.borrow(),
+        options.dump_bazel.get(),
+    );
     if ctx.clock_skew_detected.get() {
         error(
             &ctx,
@@ -5111,7 +5124,7 @@ pub fn main() -> i32 {
 /// process-global `switches` at startup. Each `Options` owns its own
 /// mutable copy (the `specified` bit is set during argument decoding), so two
 /// sessions in one process no longer share switch state.
-fn switches_template() -> [CommandSwitch; 42] {
+fn switches_template() -> [CommandSwitch; 43] {
     [
         {
             let mut init = CommandSwitch {
@@ -5861,6 +5874,24 @@ fn switches_template() -> [CommandSwitch; 42] {
             let mut init = CommandSwitch {
                 env_toenv_no_makefile_specified: [0; 1],
                 c2rust_padding: [0; 7],
+                c: DUMP_BAZEL_OPT,
+                type_0: flag,
+                value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
+                noarg_value: ::core::ptr::null::<::core::ffi::c_void>(),
+                default_value: ::core::ptr::null::<::core::ffi::c_void>(),
+                long_name: b"dump-bazel\0" as *const u8 as *const ::core::ffi::c_char,
+                origin: ::core::ptr::null_mut::<variable_origin>(),
+            };
+            init.set_env(1);
+            init.set_toenv(1);
+            init.set_no_makefile(0);
+            init.set_specified(0);
+            init
+        },
+        {
+            let mut init = CommandSwitch {
+                env_toenv_no_makefile_specified: [0; 1],
+                c2rust_padding: [0; 7],
                 c: 0,
                 type_0: flag,
                 value_ptr: NULL,
@@ -6401,7 +6432,10 @@ mod disable_builtins_latch_tests {
 
 #[cfg(test)]
 mod option_helper_tests {
-    use super::{opt_flag_int, opt_set_flag, opt_set_str, should_print_dir, Options, CHAR_MAX};
+    use super::{
+        opt_flag_int, opt_set_flag, opt_set_str, should_print_dir, Options, CHAR_MAX,
+        DUMP_BAZEL_OPT,
+    };
 
     /// Every `flag`-type switch round-trips through `opt_set_flag` ->
     /// `opt_flag_int`, covering both the letter and `CHAR_MAX`-offset codes.
@@ -6428,6 +6462,7 @@ mod option_helper_tests {
             CHAR_MAX + 5,
             CHAR_MAX + 8,
             CHAR_MAX + 14,
+            DUMP_BAZEL_OPT,
         ];
         for &c in &letters {
             let o = Options::new();
@@ -6680,6 +6715,7 @@ mod decode_switches_clap_vs_getopt_tests {
         ignore_errors: bool,
         print_data_base: bool,
         print_targets: bool,
+        dump_bazel: bool,
         question: bool,
         no_builtin_rules: bool,
         no_builtin_variables: bool,
@@ -6725,6 +6761,7 @@ mod decode_switches_clap_vs_getopt_tests {
             ignore_errors: options.ignore_errors.get(),
             print_data_base: options.print_data_base.get(),
             print_targets: options.print_targets.get(),
+            dump_bazel: options.dump_bazel.get(),
             question: options.question.get(),
             no_builtin_rules: options.no_builtin_rules.get(),
             no_builtin_variables: options.no_builtin_variables.get(),
