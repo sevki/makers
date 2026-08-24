@@ -13,10 +13,10 @@ use std::sync::atomic::Ordering;
 
 use libc::{
     __errno_location, close, fcntl, flock, free, fstat, mkfifo, open, perror, pipe, pselect, read,
-    sigemptyset, sigset_t, sprintf, sscanf, strcmp, strerror, strlen, strncmp,
-    timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET, FD_ZERO,
-    F_GETFD, F_GETFL, F_SETFD, F_SETFL, F_SETLKW, F_UNLCK, F_WRLCK, O_APPEND, O_EXCL, O_NONBLOCK,
-    O_RDONLY, O_RDWR, O_TMPFILE, O_WRONLY, SEEK_SET, S_IFMT, S_IFREG,
+    sigemptyset, sigset_t, sprintf, sscanf, strcmp, strerror, strlen, strncmp, timespec, write,
+    EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET, FD_ZERO, F_GETFD, F_GETFL, F_SETFD, F_SETFL,
+    F_SETLKW, F_UNLCK, F_WRLCK, O_APPEND, O_EXCL, O_NONBLOCK, O_RDONLY, O_RDWR, O_TMPFILE,
+    O_WRONLY, SEEK_SET, S_IFMT, S_IFREG,
 };
 
 use crate::commands::handling_fatal_signal;
@@ -177,8 +177,9 @@ pub unsafe fn jobserver_setup(
 
     if style.is_null() || strcmp(style, c"fifo".as_ptr()) == 0 {
         let tmpdir = get_tmpdir(ctx);
-        let fifo_name = xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
-            as *mut c_char;
+        let fifo_name =
+            xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
+                as *mut c_char;
         sprintf(
             fifo_name,
             c"%s/GmFIFO%03lld".as_ptr(),
@@ -552,9 +553,7 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
     }
 
     if 0x4 & db_level(ctx) != 0 {
-        crate::output::trace_out(
-            format!("Acquired all {} jobserver tokens.\n", tokens).as_bytes(),
-        );
+        crate::output::trace_out(format!("Acquired all {} jobserver tokens.\n", tokens).as_bytes());
     }
 
     jobserver_clear();
@@ -821,7 +820,12 @@ pub unsafe fn osync_acquire(ctx: &crate::execctx::ExecContext) -> c_uint {
         fl.l_whence = SEEK_SET as ::core::ffi::c_short;
         fl.l_start = 0;
         fl.l_len = 1;
-        if fcntl(ctx.osync_handle.0.load(Ordering::Relaxed), F_SETLKW, &mut fl) == -1 {
+        if fcntl(
+            ctx.osync_handle.0.load(Ordering::Relaxed),
+            F_SETLKW,
+            &mut fl,
+        ) == -1
+        {
             perror(c"fcntl()".as_ptr());
             return 0;
         }
@@ -840,7 +844,12 @@ pub unsafe fn osync_release(ctx: &crate::execctx::ExecContext) {
         fl.l_whence = SEEK_SET as ::core::ffi::c_short;
         fl.l_start = 0;
         fl.l_len = 1;
-        if fcntl(ctx.osync_handle.0.load(Ordering::Relaxed), F_SETLKW, &mut fl) == -1 {
+        if fcntl(
+            ctx.osync_handle.0.load(Ordering::Relaxed),
+            F_SETLKW,
+            &mut fl,
+        ) == -1
+        {
             perror(c"fcntl()".as_ptr());
         }
     }
@@ -1391,7 +1400,10 @@ mod tests {
     fn jobserver_parse_auth_reports_unopenable_fifo() {
         let ctx = crate::execctx::ExecContext::default();
         let result = unsafe {
-            jobserver_parse_auth(&ctx, c"fifo:/nonexistent-dir-for-jobserver-test/fifo".as_ptr())
+            jobserver_parse_auth(
+                &ctx,
+                c"fifo:/nonexistent-dir-for-jobserver-test/fifo".as_ptr(),
+            )
         };
         assert_eq!(result, Ok(0));
     }

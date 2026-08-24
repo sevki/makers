@@ -845,7 +845,12 @@ fn job_slots_capped_parallel() {
     // Differential comparison (sorted stdout multiset) now runs at the CI
     // level as the "job_slots_capped_parallel" entry in
     // scripts/fixtures-manifest.tsv.
-    check_unordered("job_slots_capped_parallel", "20_job_slots.mk", "all", &["-j", "3"]);
+    check_unordered(
+        "job_slots_capped_parallel",
+        "20_job_slots.mk",
+        "all",
+        &["-j", "3"],
+    );
 }
 
 #[test]
@@ -1060,7 +1065,12 @@ fn load_limit_high_cap_never_throttles() {
     // `static mut proc_fd`/`lossage`, now on `ExecContext`) without ever
     // throttling, so output is byte-identical to the C oracle. The `b: a`
     // dependency keeps stdout order-stable under `-j2`.
-    check("load_limit", "83_load_limit.mk", "all", &["-j2", "-l", "1000"]);
+    check(
+        "load_limit",
+        "83_load_limit.mk",
+        "all",
+        &["-j2", "-l", "1000"],
+    );
 }
 
 #[test]
@@ -1223,7 +1233,12 @@ fn autovar_dedup_promotes_order_only() {
     // prereq, the order-only duplicate is promoted to normal (its `ignore_mtime`
     // cleared on both nodes), so it lands in `$^` rather than `$|`. Byte-for-byte
     // vs. the C oracle pins the dedup + promotion branch.
-    check("autovar-dedup-promote", "87_autovar_dedup_promote.mk", "all", &[]);
+    check(
+        "autovar-dedup-promote",
+        "87_autovar_dedup_promote.mk",
+        "all",
+        &[],
+    );
 }
 
 #[test]
@@ -1235,7 +1250,12 @@ fn wildcard_long_names_grow_dirent_buffer() {
     // shorter one forces the buffer to grow, exercising the realloc path. The
     // enumerated names ($(sort)ed for order-independence) must match the C oracle
     // (whose buffer was a function-local static) byte-for-byte.
-    check("wildcard-long-names", "85_wildcard_long_names.mk", "all", &[]);
+    check(
+        "wildcard-long-names",
+        "85_wildcard_long_names.mk",
+        "all",
+        &[],
+    );
 }
 
 /// Pins a subtle, easily-misread GNU make behaviour: a static pattern rule's
@@ -1364,7 +1384,11 @@ fn canonical_exit_codes_reach_the_os() {
     let (_, code) = run_make("fail:\n\tfalse\n", &[], &["-q", "fail"]);
     assert_eq!(code, Some(1), "-q with work to do exits MAKE_TROUBLE");
     let (_, code) = run_make("x: ;\n", &[("x", "")], &["-q"]);
-    assert_eq!(code, Some(0), "-q with everything current exits MAKE_SUCCESS");
+    assert_eq!(
+        code,
+        Some(0),
+        "-q with everything current exits MAKE_SUCCESS"
+    );
     let (_, code) = run_make("fail:\n\tfalse\n", &[], &["fail"]);
     assert_eq!(code, Some(2), "a failed recipe exits MAKE_FAILURE");
 }
@@ -1666,9 +1690,7 @@ fn print_data_base_rule_count_lands_before_files_section() {
     let count = stdout
         .find("implicit rules,")
         .expect("-p prints the implicit-rule count line");
-    let files = stdout
-        .find("# Files")
-        .expect("-p prints the files section");
+    let files = stdout.find("# Files").expect("-p prints the files section");
     assert!(
         count < files,
         "rule count line must precede the files section as in the C oracle"
@@ -2199,7 +2221,8 @@ fn check_print_dir(name: &str, args: &[&str], expect_traces: bool) {
         combined.contains("in-sub"),
         "[{name}] sub-make target did not run: {combined}"
     );
-    let has_traces = combined.contains("Entering directory") && combined.contains("Leaving directory");
+    let has_traces =
+        combined.contains("Entering directory") && combined.contains("Leaving directory");
     assert_eq!(
         has_traces, expect_traces,
         "[{name}] expected Entering/Leaving directory traces: {expect_traces}, got:\n{combined}"

@@ -164,8 +164,11 @@ pub unsafe fn tilde_expand(
         }
         if !home_dir.is_null() {
             let new: *mut ::core::ffi::c_char = xstrdup(
-                concat(&[cstr_bytes_or_empty(home_dir), cstr_bytes_or_empty(name.offset(1_i32 as isize))]).as_ptr()
-                    as *const ::core::ffi::c_char,
+                concat(&[
+                    cstr_bytes_or_empty(home_dir),
+                    cstr_bytes_or_empty(name.offset(1_i32 as isize)),
+                ])
+                .as_ptr() as *const ::core::ffi::c_char,
             );
             if is_variable != 0 {
                 free(home_dir as *mut ::core::ffi::c_void);

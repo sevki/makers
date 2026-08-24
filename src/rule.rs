@@ -141,10 +141,7 @@ impl Rule {
 
 /// Run `f` with a shared borrow of the pattern-rule database
 /// ([`crate::execctx::ExecContext::rules`]).
-pub fn with_pattern_rules<R>(
-    ctx: &crate::execctx::ExecContext,
-    f: impl FnOnce(&[Rule]) -> R,
-) -> R {
+pub fn with_pattern_rules<R>(ctx: &crate::execctx::ExecContext, f: impl FnOnce(&[Rule]) -> R) -> R {
     f(&ctx.rules.borrow())
 }
 
@@ -227,15 +224,15 @@ pub fn snap_implicit_rules(
                     dirname.push(0);
                     // SAFETY: `dir_file_exists_p` reads two NUL-terminated C
                     // strings; `dirname` is NUL-terminated and `c""` is empty.
-                    let exists =
-                        match unsafe { dir_file_exists_p(ctx, dirname.as_ptr().cast(), c"".as_ptr()) }
-                        {
-                            Ok(e) => e,
-                            Err(e) => {
-                                rejected = Some(e);
-                                return;
-                            }
-                        };
+                    let exists = match unsafe {
+                        dir_file_exists_p(ctx, dirname.as_ptr().cast(), c"".as_ptr())
+                    } {
+                        Ok(e) => e,
+                        Err(e) => {
+                            rejected = Some(e);
+                            return;
+                        }
+                    };
                     d.changed = exists == 0;
                 } else {
                     d.changed = false;

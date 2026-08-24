@@ -279,6 +279,51 @@ jobs:
                   name: kernel-diff-${{ github.sha }}
                   path: "*.diff"
 
+    kernel-bazel-sha:
+        name: kernel Bazel dump SHA check
+        needs: build
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Download rust make artifact
+              uses: actions/download-artifact@v4
+              with:
+                name: rust-make-${{ github.sha }}
+                path: make-bin
+            - name: Install Bazelisk
+              uses: bazelbuild/setup-bazelisk@v3
+            - name: Put rust make wrapper on PATH (`--dump-bazel`)
+              run: |
+                chmod +x make-bin/make
+                mkdir -p "$HOME/.local/bin"
+                cat >"$HOME/.local/bin/make" <<EOF
+                #!/usr/bin/env bash
+                exec "$PWD/make-bin/make" --dump-bazel "\$@"
+                EOF
+                chmod +x "$HOME/.local/bin/make"
+                echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            - name: Build Linux kernel and emit BUILD.bazel files
+              working-directory: ${{ runner.temp }}
+              run: |
+                mkdir -p bazel-kernel && cd bazel-kernel
+                curl -fsSL \
+                  https://raw.githubusercontent.com/sevki/okLinux/refs/heads/main/build.sh \
+                  -o build.sh
+                chmod +x build.sh
+                ./build.sh
+            - name: Build bzImage with Bazel and compare SHA256
+              working-directory: ${{ runner.temp }}/bazel-kernel/kernel
+              run: |
+                if [ ! -f WORKSPACE ] && [ ! -f WORKSPACE.bazel ] && [ ! -f MODULE.bazel ]; then
+                  printf 'module(name = "oklinux")\n' > MODULE.bazel
+                fi
+                bazel build //arch/x86/boot:bzImage
+                make_sha="$(sha256sum arch/x86/boot/bzImage | awk '{print $1}')"
+                bazel_sha="$(sha256sum bazel-bin/arch/x86/boot/bzImage | awk '{print $1}')"
+                echo "make bzImage sha256:  $make_sha"
+                echo "bazel bzImage sha256: $bazel_sha"
+                test "$make_sha" = "$bazel_sha"
+
     # ─────────────────────────────────────────────────────────────────────
     # Fixture suite, run independently by each make in its own parallel job
     # (rather than in-process inside one `cargo test`), so the Rust make and

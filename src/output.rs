@@ -10,10 +10,7 @@ use ::core::ffi::c_uint;
 use ::core::ptr::null;
 use std::sync::atomic::Ordering;
 
-use libc::{
-    __errno_location, close, ftruncate, lseek, strerror, EINTR, SEEK_END,
-    SEEK_SET,
-};
+use libc::{__errno_location, close, ftruncate, lseek, strerror, EINTR, SEEK_END, SEEK_SET};
 
 use crate::execctx::ExecContext;
 use crate::ffi_types::{size_t, uintmax_t};
@@ -212,7 +209,11 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     // null `program` global. Fall back to the plain name like
     // `msg::program_name` rather than passing null to the formatter.
     let program = ctx.program.0.get();
-    let program = if program.is_null() { c"make".as_ptr() } else { program };
+    let program = if program.is_null() {
+        c"make".as_ptr()
+    } else {
+        program
+    };
     let starting_directory = ctx.starting_directory.0.get();
     let fmt: *const ::core::ffi::c_char;
     if makelevel == 0 {
@@ -275,9 +276,7 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
 fn pump_perror<W: std::io::Write>(w: &mut W, what: &str, err: &std::io::Error) {
     // SAFETY: `strerror` returns a static NUL-terminated message for any
     // errno value.
-    let es = unsafe {
-        ::core::ffi::CStr::from_ptr(strerror(err.raw_os_error().unwrap_or(0)))
-    };
+    let es = unsafe { ::core::ffi::CStr::from_ptr(strerror(err.raw_os_error().unwrap_or(0))) };
     let _ = w.write_all(what.as_bytes());
     let _ = w.write_all(b": ");
     let _ = w.write_all(es.to_bytes());
@@ -346,15 +345,21 @@ pub unsafe fn pump_from_tmp(ctx: &ExecContext, from: i32, to_stderr: bool) {
     if to_stderr {
         // `dst` already *is* the borrowed stderr sink; report through it
         // directly rather than taking a second borrow of `ctx.stderr`.
-        pump_copy(&mut *src, &mut *ctx.stderr.borrow_mut(), false, |dst, what, e| {
-            pump_perror(dst, what, e)
-        });
+        pump_copy(
+            &mut *src,
+            &mut *ctx.stderr.borrow_mut(),
+            false,
+            pump_perror,
+        );
     } else {
         // `dst` is the stdout sink here, so the stderr diagnostic borrows
         // the separate `ctx.stderr` `RefCell` freely.
-        pump_copy(&mut *src, &mut *ctx.stdout.borrow_mut(), true, |_dst, what, e| {
-            pump_perror(&mut *ctx.stderr.borrow_mut(), what, e)
-        });
+        pump_copy(
+            &mut *src,
+            &mut *ctx.stdout.borrow_mut(),
+            true,
+            |_dst, what, e| pump_perror(&mut *ctx.stderr.borrow_mut(), what, e),
+        );
     }
 }
 /// Create an anonymous temp fd in append mode for output sync.
@@ -516,8 +521,14 @@ pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
         if stdio_traced(ctx) {
             log_working_directory(ctx, 0);
         }
-        fd_reset_append(libc::STDOUT_FILENO, ctx.stdout_flags.0.load(Ordering::Relaxed));
-        fd_reset_append(libc::STDERR_FILENO, ctx.stderr_flags.0.load(Ordering::Relaxed));
+        fd_reset_append(
+            libc::STDOUT_FILENO,
+            ctx.stdout_flags.0.load(Ordering::Relaxed),
+        );
+        fd_reset_append(
+            libc::STDERR_FILENO,
+            ctx.stderr_flags.0.load(Ordering::Relaxed),
+        );
         return;
     }
     output_dump(ctx, out);
@@ -734,7 +745,10 @@ unsafe fn push_program_prefix(
     fatal_marker: bool,
 ) {
     let program = ctx.program.0.get();
-    push_cstr(out, (!program.is_null()).then(|| ::core::ffi::CStr::from_ptr(program)));
+    push_cstr(
+        out,
+        (!program.is_null()).then(|| ::core::ffi::CStr::from_ptr(program)),
+    );
     if makelevel == 0 {
         out.extend_from_slice(b": ");
     } else {
@@ -758,12 +772,7 @@ unsafe fn push_error_prefix(
         // `filenm` is non-null in this arm, so it is always `Some`.
         push_cstr(out, Some(::core::ffi::CStr::from_ptr(fl.filenm)));
         out.push(b':');
-        out.extend_from_slice(
-            fl.lineno
-                .wrapping_add(fl.offset)
-                .to_string()
-                .as_bytes(),
-        );
+        out.extend_from_slice(fl.lineno.wrapping_add(fl.offset).to_string().as_bytes());
         out.extend_from_slice(b": ");
         if fatal_marker {
             out.extend_from_slice(b"*** ");
@@ -1129,7 +1138,9 @@ mod log_working_directory_tests {
                 makelevel,
                 ..Default::default()
             });
-            ctx.starting_directory.0.set(dir.as_ptr() as *mut ::core::ffi::c_char);
+            ctx.starting_directory
+                .0
+                .set(dir.as_ptr() as *mut ::core::ffi::c_char);
             for entering in [1, 0] {
                 // SAFETY: single-threaded test; a valid NUL-terminated
                 // `starting_directory` is installed above.
@@ -1277,7 +1288,9 @@ mod outputs_tests {
             sink: Vec::new(),
         };
         let mut errs: Vec<u8> = Vec::new();
-        pump_copy(&mut src, &mut dst, false, |_, what, e| pump_perror(&mut errs, what, e));
+        pump_copy(&mut src, &mut dst, false, |_, what, e| {
+            pump_perror(&mut errs, what, e)
+        });
         assert_eq!(dst.sink.len(), 8192, "first chunk written, then stopped");
         assert!(
             String::from_utf8_lossy(&errs).starts_with("fwrite(): "),
@@ -1303,7 +1316,9 @@ mod outputs_tests {
         }
         let mut dst: Vec<u8> = Vec::new();
         let mut errs: Vec<u8> = Vec::new();
-        pump_copy(&mut BadRead, &mut dst, false, |_, what, e| pump_perror(&mut errs, what, e));
+        pump_copy(&mut BadRead, &mut dst, false, |_, what, e| {
+            pump_perror(&mut errs, what, e)
+        });
         assert!(dst.is_empty(), "nothing pumped from a failing reader");
         // `BadRead` fails both `seek` and `read`, so `report_err` runs for
         // both the doomed rewind and the read itself.
@@ -1318,7 +1333,11 @@ mod outputs_tests {
     #[test]
     fn pump_perror_formats_what_and_strerror() {
         let mut out: Vec<u8> = Vec::new();
-        pump_perror(&mut out, "lseek()", &std::io::Error::from_raw_os_error(libc::ENOENT));
+        pump_perror(
+            &mut out,
+            "lseek()",
+            &std::io::Error::from_raw_os_error(libc::ENOENT),
+        );
         assert_eq!(out, b"lseek(): No such file or directory\n");
     }
 
@@ -1439,8 +1458,13 @@ mod push_cstr_unsafe_oracle {
 
     #[test]
     fn matches_oracle() {
-        let cases: &[Option<&::core::ffi::CStr>] =
-            &[None, Some(c""), Some(c"make"), Some(c"foo.mk:12: "), Some(c"x")];
+        let cases: &[Option<&::core::ffi::CStr>] = &[
+            None,
+            Some(c""),
+            Some(c"make"),
+            Some(c"foo.mk:12: "),
+            Some(c"x"),
+        ];
         for &s in cases {
             // Seed both buffers so a replace-instead-of-append mutant is caught.
             let mut safe = vec![b'<'];

@@ -9,8 +9,8 @@ use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void};
 use ::core::ptr::{null, null_mut};
 
 use libc::{
-    __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, realloc, sleep,
-    sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, EINTR,
+    __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, realloc, sleep, sprintf,
+    stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, EINTR,
 };
 
 use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t};
@@ -453,7 +453,10 @@ pub fn skip_reference(bytes: &[u8]) -> usize {
 pub unsafe fn find_next_token(ptr: *mut *const c_char, lengthptr: *mut size_t) -> *mut c_char {
     assert!(!ptr.is_null(), "find_next_token: ptr must not be null");
     let p: *const c_char = next_token(*ptr);
-    assert!(!p.is_null(), "find_next_token: token address must not be null");
+    assert!(
+        !p.is_null(),
+        "find_next_token: token address must not be null"
+    );
     if *p == 0 {
         return null_mut();
     }
@@ -514,9 +517,8 @@ pub unsafe fn writebuf(fd: i32, buffer: *const c_void, len: size_t) -> ssize_t {
     use std::io::Write;
     let bytes = ::core::slice::from_raw_parts(buffer as *const u8, len);
     // Borrow the fd as a File without taking ownership.
-    let mut f = ::core::mem::ManuallyDrop::new(
-        <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd),
-    );
+    let mut f =
+        ::core::mem::ManuallyDrop::new(<std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd));
     match f.write_all(bytes) {
         Ok(()) => len as ssize_t,
         Err(_) => -1,
@@ -532,9 +534,8 @@ pub unsafe fn readbuf(fd: i32, buffer: *mut c_void, len: size_t) -> ssize_t {
     use std::io::Read;
     let buf = ::core::slice::from_raw_parts_mut(buffer as *mut u8, len);
     // Borrow the fd as a File without taking ownership.
-    let mut f = ::core::mem::ManuallyDrop::new(
-        <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd),
-    );
+    let mut f =
+        ::core::mem::ManuallyDrop::new(<std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd));
     let mut done = 0usize;
     while done < buf.len() {
         match f.read(&mut buf[done..]) {
@@ -885,7 +886,10 @@ mod bufio_tests {
         let mut buf = [0u8; 4];
         unsafe {
             assert_eq!(writebuf(rd.as_raw_fd(), buf.as_ptr().cast(), buf.len()), -1);
-            assert_eq!(readbuf(wr.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()), -1);
+            assert_eq!(
+                readbuf(wr.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()),
+                -1
+            );
         }
     }
 
@@ -914,8 +918,7 @@ mod tmpfile_tests {
         let ctx = crate::execctx::ExecContext::default();
         let mut name: *mut c_char = null_mut();
         unsafe {
-            let mut fp =
-                get_tmpfile(&ctx, &mut name).expect("get_tmpfile returned no file");
+            let mut fp = get_tmpfile(&ctx, &mut name).expect("get_tmpfile returned no file");
             assert!(!name.is_null(), "get_tmpfile left the name unset");
 
             let data = b"crap-coverage-probe\n";
@@ -1092,19 +1095,8 @@ mod alpha_compare_tests {
     #[test]
     fn matches_unsafe_oracle() {
         let samples: &[&[u8]] = &[
-            b"",
-            b"a",
-            b"B",
-            b"ab",
-            b"abc",
-            b"abd",
-            b"abcd",
-            b"\x80",
-            b"\x80a",
-            b"\x01",
-            b"\xff",
-            b"\x7f",
-            b"A\x80",
+            b"", b"a", b"B", b"ab", b"abc", b"abd", b"abcd", b"\x80", b"\x80a", b"\x01", b"\xff",
+            b"\x7f", b"A\x80",
         ];
         for &a in samples {
             for &b in samples {
@@ -1462,7 +1454,8 @@ mod concat_tests {
     fn skips_empty_and_joins_the_rest() {
         // Exercises concat's empty-arg skip and multi-arg join, plus the
         // trailing NUL terminator.
-        let long = b"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
+        let long =
+            b"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
         assert!(long.len() > 60, "long arg exercises a multi-arg join");
         let out = concat(&[b"hello", b"", long]);
         assert!(out.ends_with(&[0]), "buffer is NUL-terminated");
@@ -1526,22 +1519,27 @@ mod concat_unsafe_oracle {
     #[test]
     fn safe_matches_oracle_over_representative_inputs() {
         let buf_cell = ::core::cell::RefCell::new(Vec::new());
-        let long = c"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
+        let long =
+            c"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
         let hello = c"hello";
         let empty = c"";
         let hi = c"hi";
         let bye = c"bye";
         unsafe {
             let cases: [Vec<*const c_char>; 5] = [
-                vec![hello.as_ptr(), ::core::ptr::null(), empty.as_ptr(), long.as_ptr()],
+                vec![
+                    hello.as_ptr(),
+                    ::core::ptr::null(),
+                    empty.as_ptr(),
+                    long.as_ptr(),
+                ],
                 vec![hi.as_ptr()],
                 vec![bye.as_ptr()],
                 vec![::core::ptr::null()],
                 vec![],
             ];
             for case in &cases {
-                let safe_args: Vec<&[u8]> =
-                    case.iter().map(|&p| cstr_bytes_or_empty(p)).collect();
+                let safe_args: Vec<&[u8]> = case.iter().map(|&p| cstr_bytes_or_empty(p)).collect();
                 let safe_result = super::concat(&safe_args);
                 let oracle_ptr = concat(&buf_cell, case);
                 let oracle_bytes = ::core::ffi::CStr::from_ptr(oracle_ptr).to_bytes_with_nul();

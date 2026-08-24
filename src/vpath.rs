@@ -711,11 +711,7 @@ pub unsafe fn print_vpath_data_base(ctx: &crate::execctx::ExecContext) {
     let mut v = vpaths;
     while !v.is_null() {
         nvpaths += 1;
-        crate::output::trace_parts(&[
-            b"vpath ",
-            CStr::from_ptr((*v).pattern).to_bytes(),
-            b" ",
-        ]);
+        crate::output::trace_parts(&[b"vpath ", CStr::from_ptr((*v).pattern).to_bytes(), b" "]);
         print_search_path(v);
         v = (*v).next;
     }
@@ -823,13 +819,17 @@ mod vpath_variable_rejection_tests {
         unsafe {
             define_recursive(&ctx, "VPATH", "   ");
             assert!(
-                vpath_from_variable(&ctx, b"VPATH\0").expect("well-formed").is_none(),
+                vpath_from_variable(&ctx, b"VPATH\0")
+                    .expect("well-formed")
+                    .is_none(),
                 "a whitespace-only value yields no chain"
             );
 
             define_recursive(&ctx, "GPATH", "src:include");
             assert!(
-                vpath_from_variable(&ctx, b"GPATH\0").expect("well-formed").is_some(),
+                vpath_from_variable(&ctx, b"GPATH\0")
+                    .expect("well-formed")
+                    .is_some(),
                 "a real search path yields a chain"
             );
             assert!(build_vpath_lists(&ctx).is_ok());
