@@ -45,18 +45,24 @@ const optional_argument: i32 = super::optional_argument;
 /// verbatim as the oracle's own copy.
 unsafe fn build_getopt_tables_oracle(
     options: &Options,
-) -> ([::core::ffi::c_char; 127], [option; 51]) {
-    let mut getopt_shorts: [::core::ffi::c_char; 127] = [0; 127];
-    let mut long_options: [option; 51] = [option {
+) -> (Vec<::core::ffi::c_char>, Vec<option>) {
+    let mut getopt_shorts: Vec<::core::ffi::c_char>;
+    let mut long_options: Vec<option>;
+    let empty_option = option {
         name: ::core::ptr::null::<::core::ffi::c_char>(),
         has_arg: 0,
         flag: ::core::ptr::null_mut::<i32>(),
         val: 0,
-    }; 51];
+    };
     let switches = options.switches.borrow();
     let mut p: *mut ::core::ffi::c_char;
     let mut c: ::core::ffi::c_uint;
     let mut i: ::core::ffi::c_uint;
+    let switch_count = switches.iter().take_while(|cs| cs.c != 0).count();
+    let long_opts_len = switch_count + super::LONG_OPTION_ALIASES.len() + 1;
+    let short_opts_len = 1 + switch_count * 3 + 1;
+    getopt_shorts = vec![0; short_opts_len];
+    long_options = vec![empty_option; long_opts_len];
     p = getopt_shorts.as_mut_ptr();
     let fresh24 = p;
     p = p.offset(1_i32 as isize);
@@ -102,10 +108,7 @@ unsafe fn build_getopt_tables_oracle(
     }
     *p = 0;
     c = 0;
-    while (c as usize)
-        < (::core::mem::size_of::<[option; 9]>() as usize)
-            .wrapping_div(::core::mem::size_of::<option>() as usize)
-    {
+    while (c as usize) < super::LONG_OPTION_ALIASES.len() {
         let fresh28 = i;
         i = i.wrapping_add(1);
         long_options[fresh28 as usize] = super::LONG_OPTION_ALIASES[c as usize];
