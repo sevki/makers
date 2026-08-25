@@ -415,13 +415,19 @@ fn expand_once(text: &str, lookup: &impl Fn(&str) -> Option<String>) -> String {
             Some(b'{') => (b'{', b'}'),
             Some(_) => {
                 // `$X`: a one-character reference, which in practice is
-                // always an automatic.
-                let name = &text[i + 1..i + 2];
+                // always an automatic. Sized by `char`, not by byte: a
+                // recipe is arbitrary UTF-8 (`echo "$€5"` is a perfectly
+                // ordinary line) and slicing a fixed two bytes here would
+                // split a multi-byte character and panic the plugin, which
+                // in a component means trapping and losing the whole run.
+                let ch = text[i + 1..].chars().next().expect("byte follows");
+                let end = i + 1 + ch.len_utf8();
+                let name = &text[i + 1..end];
                 match lookup(name) {
                     Some(v) => out.push_str(&v),
-                    None => out.push_str(&text[i..i + 2]),
+                    None => out.push_str(&text[i..end]),
                 }
-                i += 2;
+                i = end;
                 continue;
             }
             None => {
@@ -469,4 +475,119 @@ pub fn expand_recipe_line(node: &Node, line: &str) -> String {
         auto.get(name)
             .or_else(|| node.variable(name).map(|v| v.value))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{expand_with, Automatics};
+
+    /// Look `name` up in a small table, so each test says exactly what the
+    /// host would have answered.
+    fn table(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+        move |name| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == name)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    fn expand(text: &str, pairs: &'static [(&'static str, &'static str)]) -> String {
+        expand_with(text, 8, table(pairs))
+    }
+
+    #[test]
+    fn substitutes_both_bracket_styles_and_single_character_names() {
+        let vars = &[("CC", "cc"), ("CFLAGS", "-Wall"), ("@", "main.o")];
+        assert_eq!(expand("$(CC) ${CFLAGS} -o $@", vars), "cc -Wall -o main.o");
+    }
+
+    /// `$$` is make's escape for a literal dollar and must not be read as a
+    /// reference to `$`.
+    #[test]
+    fn a_doubled_dollar_is_a_literal() {
+        assert_eq!(expand("echo $$HOME $(CC)", &[("CC", "cc")]), "echo $HOME cc");
+    }
+
+    /// Anything the lookup cannot answer survives verbatim. This is the
+    /// property `compile-commands` relies on to *detect* that a recipe still
+    /// needs make's real expander, rather than emitting a half-expanded
+    /// command line.
+    #[test]
+    fn unresolved_references_are_left_untouched() {
+        assert_eq!(
+            expand("cc $(UNDEFINED) $(addprefix -l,$(LIBS))", &[]),
+            "cc $(UNDEFINED) $(addprefix -l,$(LIBS))"
+        );
+    }
+
+    /// A nested reference is one unit: `$(strip $(CFLAGS))` is a *function
+    /// call*, and substituting the inner `$(CFLAGS)` inside it would leave
+    /// `$(strip -Wall)`, which looks resolvable but is not.
+    #[test]
+    fn nested_references_are_balanced_not_substituted_piecemeal() {
+        assert_eq!(
+            expand("cc $(strip $(CFLAGS))", &[("CFLAGS", "-Wall")]),
+            "cc $(strip $(CFLAGS))"
+        );
+    }
+
+    /// A value containing another reference expands on the next round, and
+    /// the depth bound stops a self-referential definition from looping.
+    #[test]
+    fn expansion_repeats_but_is_bounded() {
+        assert_eq!(
+            expand("$(A)", &[("A", "$(B)"), ("B", "done")]),
+            "done",
+            "a reference reached through another should resolve"
+        );
+        assert_eq!(
+            expand("$(LOOP)", &[("LOOP", "$(LOOP)")]),
+            "$(LOOP)",
+            "a self-reference must terminate, not hang"
+        );
+    }
+
+    /// Malformed input must come back unchanged rather than panicking or
+    /// truncating: a plugin that traps takes the whole run with it.
+    #[test]
+    fn malformed_references_survive_intact() {
+        for input in ["cc $(unterminated", "trailing $", "$", "${also unterminated"] {
+            assert_eq!(expand(input, &[]), input, "input: {input:?}");
+        }
+    }
+
+    /// A recipe is arbitrary UTF-8. Sizing the one-character `$X` form in
+    /// bytes rather than characters split a multi-byte character and
+    /// panicked — in a component, a trap that loses the whole plugin run.
+    #[test]
+    fn a_dollar_before_a_multibyte_character_does_not_panic() {
+        assert_eq!(expand("echo \"costs $€5\"", &[]), "echo \"costs $€5\"");
+        assert_eq!(
+            expand("$€ $(CC)", &[("CC", "cc")]),
+            "$€ cc",
+            "and expansion continues past it"
+        );
+    }
+
+    /// The automatics are exactly make's, and nothing else resolves through
+    /// them — a plugin must not accidentally shadow a real variable named
+    /// `x` with an automatic lookup.
+    #[test]
+    fn automatics_cover_makes_set_and_no_more() {
+        let auto = Automatics {
+            target: "main.o".to_string(),
+            first_dep: "main.c".to_string(),
+            deps: vec!["main.c".to_string(), "main.h".to_string()],
+            order_only_deps: vec!["build".to_string()],
+            stem: "main".to_string(),
+        };
+        assert_eq!(auto.get("@").as_deref(), Some("main.o"));
+        assert_eq!(auto.get("<").as_deref(), Some("main.c"));
+        assert_eq!(auto.get("^").as_deref(), Some("main.c main.h"));
+        assert_eq!(auto.get("|").as_deref(), Some("build"));
+        assert_eq!(auto.get("*").as_deref(), Some("main"));
+        assert_eq!(auto.get("CC"), None);
+        assert_eq!(auto.get("$"), None);
+    }
 }

@@ -418,6 +418,14 @@ jobs:
             - name: Run the test suite (unit + fixture smoke)
               run: cargo test
 
+            # `cargo test` in the root runs the root *package* only, so the
+            # workspace members are invisible to it. `makers-plugin` is the
+            # plugin SDK: its expander decides what a compile database
+            # actually says, and it builds for the host target fine, so its
+            # tests belong on every PR rather than only in the wasm job.
+            - name: Run the plugin SDK's tests
+              run: cargo test -p makers-plugin
+
     # ─────────────────────────────────────────────────────────────────────
     # The `wasmtime` feature (#633/#636: the `makers:plugin` component host)
     # is optional and off by default, so the plain `test` job above never
