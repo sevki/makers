@@ -3575,6 +3575,10 @@ pub unsafe fn main_0(
     // Diagnostics tap (MAKERS_DEPGRAPH_POST): snapshot the resolved graph —
     // implicit rules matched, provenance recorded — now that the walk is done.
     crate::depgraph::dump_graph_post_if_requested(&ctx, &options.goals.borrow());
+    // Wasm extension tap (MAKERS_WASM_EXTENSION, #633/#636): same point, same
+    // "never fails the build" contract as the depgraph tap above.
+    #[cfg(feature = "wasmtime")]
+    crate::wasm_ext::run_extension_if_requested(&ctx, &options.goals.borrow());
     if ctx.clock_skew_detected.get() {
         error(
             &ctx,

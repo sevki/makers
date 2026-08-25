@@ -1,15 +1,32 @@
 #[allow(warnings)]
 mod bindings;
 
-use bindings::exports::makers::introspection::extension::Guest;
-use bindings::makers::introspection::graph;
+use bindings::exports::makers::introspection::visitor::{Dep, File, Guest};
 
 struct Component;
 
 impl Guest for Component {
-    fn run() -> Result<(), String> {
-        let files = graph::list_files();
-        eprintln!("introspection: {} target(s) in the graph", files.len());
+    fn visit_file(file: File) -> Result<(), String> {
+        eprintln!(
+            "visit {} (deps: {})",
+            file.name,
+            file.deps
+                .iter()
+                .map(|d| d.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        Ok(())
+    }
+
+    fn visiting_child(parent: String, child: Dep) -> Result<(), String> {
+        let parent = if parent.is_empty() { "<root>" } else { &parent };
+        eprintln!("edge {parent} -> {}", child.name);
+        Ok(())
+    }
+
+    fn visit_done() -> Result<(), String> {
+        eprintln!("traversal done");
         Ok(())
     }
 }

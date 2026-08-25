@@ -18,6 +18,7 @@ path = "src/bin/main.rs"
 name = "make"
 
 [dependencies]
+anyhow = { version = "1.0.104", optional = true }
 bitflags = "2.13.0"
 blake3 = "1.8.5"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
@@ -29,9 +30,10 @@ libc = "0.2"
 rustc-hash = "2"
 salsa = "0.28"
 wasmtime = { version = "48.0.1", optional = true }
+wasmtime-wasi = { version = "48.0.1", optional = true }
 
 [dev-dependencies]
 insta = { version = "=1.48.0", default-features = false }
 
 [features]
-wasmtime = ["dep:wasmtime"]
+wasmtime = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:anyhow"]
