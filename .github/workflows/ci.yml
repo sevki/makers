@@ -423,11 +423,12 @@ jobs:
     # host) is optional and off by default, so the plain `test` job above
     # never compiles it — a regression there would only surface once someone
     # happened to build with `--features wasmtime` locally. This job builds
-    # the `wit/introspection` guest component via `cargo component build`
-    # (needs the `wasm32-wasip1` target and the `cargo-component` subcommand,
-    # neither of which the default toolchain/job has) and then runs the full
-    # suite with the feature on, which exercises it end-to-end in
-    # tests/wasm_ext.rs against a real makefile.
+    # the `wit/introspection` guest component and the `plugins/` components
+    # via `cargo component build` (needs the `wasm32-wasip1` target and the
+    # `cargo-component` subcommand, neither of which the default
+    # toolchain/job has) and then runs the full suite with the feature on,
+    # which exercises them end-to-end in tests/wasm_ext.rs and
+    # tests/plugin_*.rs against a real makefile.
     # ─────────────────────────────────────────────────────────────────────
     test-wasm-feature:
         name: test (--features wasmtime)
@@ -462,6 +463,10 @@ jobs:
 
             - name: Build the introspection guest component
               working-directory: wit/introspection
+              run: cargo component build
+
+            - name: Build the graphviz-export plugin component
+              working-directory: plugins/graphviz-export
               run: cargo component build
 
             - name: Run the test suite with the wasmtime feature
