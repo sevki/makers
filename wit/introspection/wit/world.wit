@@ -1,0 +1,75 @@
+package makers:introspection@0.1.0;
+
+/// Read-only view of the build graph, exported by the host (native `make`,
+/// Shape A) or re-exported by the outer runtime on `make`'s behalf (wasm
+/// guest, Shape B). Extensions import this interface; they never get a
+/// mutable handle onto the graph — this is the MVP scope from
+/// docs/wasm-extension-system.md: introspection only, no rule definition,
+/// no recipe execution.
+interface graph {
+    /// Opaque handle to a `FileNode`. Stable for the lifetime of one
+    /// extension call; not valid across calls.
+    type file-id = u64;
+
+    /// A single prerequisite edge, mirroring `DepNode`'s host-visible
+    /// fields. Flags not meaningful to a read-only consumer (e.g.
+    /// `wait-here`, internal scheduling flags) are omitted rather than
+    /// mapped 1:1 to the internal type.
+    record dep {
+        name: string,
+        file: option<file-id>,
+        stem: option<string>,
+        is-explicit: bool,
+    }
+
+    /// A single target/file node, mirroring the host-visible fields of
+    /// `FileNode` (src/file.rs). Raw byte fields (`name`, `hname` in the
+    /// host) are exposed as `string`: WIT strings are Unicode, so
+    /// non-UTF-8 target names round-trip as WTF-8 the same way the host's
+    /// `String::from_utf8_lossy` display path already does; introspection
+    /// is not the byte-exact path (recipe execution, if ever added, would
+    /// need its own byte-accurate interface).
+    record file {
+        id: file-id,
+        name: string,
+        stem: option<string>,
+        deps: list<dep>,
+        also-make: list<dep>,
+        is-target: bool,
+        precious: bool,
+        phony: bool,
+    }
+
+    /// Look up a single target by name. `none` if no such target is known
+    /// to the graph.
+    find-file: func(name: string) -> option<file>;
+
+    /// List every target currently known to the graph. MVP: no pagination
+    /// or filtering — acceptable for introspection-only use, revisit if
+    /// graphs large enough to make this expensive show up.
+    list-files: func() -> list<file>;
+
+    /// Look up a single variable's expanded value in the global scope.
+    /// `none` if undefined. Per-file/pattern-scoped variable lookup is
+    /// out of MVP scope — the host only exposes the global `VariableSet`
+    /// here, not `pat-variables`/file-local overrides.
+    get-variable: func(name: string) -> option<string>;
+}
+
+/// What an introspection extension exports back to the host: a single
+/// entry point, called after the graph is otherwise fully resolved (post
+/// dependency-graph construction, pre build). No arguments beyond the
+/// graph import: extensions read via `graph`, they don't get pushed data.
+interface extension {
+    /// Run the extension. `ok` carries no payload; introspection
+    /// extensions communicate results as a side effect (stdout, an
+    /// exported report file, etc.) since MVP does not define a return
+    /// channel back into the build graph. `error` carries a human-readable
+    /// message for the host to surface.
+    run: func() -> result<_, string>;
+}
+
+world introspection-extension {
+    import graph;
+    export extension;
+}
