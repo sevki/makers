@@ -178,8 +178,10 @@ fn the_output_path_is_configurable_per_instance() {
 
 /// Two runs over an unchanged makefile produce byte-identical output. A
 /// compile database that churns makes every editor re-index and every diff
-/// noisy, and it is the observable half of the `deterministic` claim in the
-/// plugin's manifest.
+/// noisy. Note that this plugin does *not* claim `deterministic` in its
+/// manifest — it requests `expand-variables`, and the host refuses that
+/// combination — so this is the property holding on its own rather than a
+/// promise the host is enforcing.
 #[test]
 fn output_is_byte_stable_across_runs() {
     let plugin = component("compile-commands", "compile_commands");
@@ -191,4 +193,64 @@ fn output_is_byte_stable_across_runs() {
     let second = run_make(&dir, &[("MAKERS_PLUGINS", &spec)]);
     assert_clean(&second);
     assert_eq!(a, second.artifact("compile_commands.json"));
+}
+
+/// A recipe using a makefile *function* cannot be finished by target-scoped
+/// substitution: `$(addprefix -l,$(LIBS))` is not a variable lookup. Without
+/// `expand-variables` the plugin skips the entry and says why, rather than
+/// writing a half-expanded command line — which would make clangd report
+/// phantom errors across the whole translation unit.
+#[test]
+fn recipes_needing_the_expander_are_skipped_when_it_is_withheld() {
+    let plugin = component("compile-commands", "compile_commands");
+    let dir = workdir("plugin_expand.mk", &["lib.c"]);
+    let spec = format!("compdb={}", plugin.display());
+    let run = run_make(&dir, &[("MAKERS_PLUGINS", &spec)]);
+    assert_clean(&run);
+    assert!(
+        run.stderr
+            .contains("withheld capabilities: expand-variables"),
+        "the host reports the capability that would have helped:\n{}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("left unexpanded references"),
+        "and the plugin says what it skipped:\n{}",
+        run.stderr
+    );
+    assert_eq!(run.artifact("compile_commands.json").trim(), "[]");
+}
+
+/// Granted `expand-variables`, the same recipe is finished by make's own
+/// expander and comes out exactly as make would run it.
+///
+/// This is the capability doing real work rather than merely existing: the
+/// plugin cannot reimplement `$(addprefix ...)`, and the host will not hand
+/// out an expander that can also run `$(shell ...)` without being asked.
+#[test]
+fn granting_expand_variables_completes_the_command() {
+    let plugin = component("compile-commands", "compile_commands");
+    let dir = workdir("plugin_expand.mk", &["lib.c"]);
+    let spec = format!("compdb={}", plugin.display());
+    let run = run_make(
+        &dir,
+        &[
+            ("MAKERS_PLUGINS", &spec),
+            ("MAKERS_PLUGIN_ALLOW", "compdb:expand-variables"),
+        ],
+    );
+    assert_clean(&run);
+    assert!(
+        !run.stderr.contains("withheld capabilities"),
+        "nothing is withheld now:\n{}",
+        run.stderr
+    );
+    let db = run.artifact("compile_commands.json");
+    let command = "cc -Wall -c -o lib.o lib.c -lm -lpthread";
+    assert!(db.contains(command), "expected the fully expanded command:\n{db}");
+    assert!(
+        run.stdout.contains(command),
+        "and it should be exactly what make printed:\n{}",
+        run.stdout
+    );
 }

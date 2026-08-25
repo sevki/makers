@@ -299,9 +299,19 @@ analyses already run through salsa, so per-node memoisation of plugin
 results is a natural extension rather than new machinery.
 
 The promise is partially **checked**, not merely trusted: `deterministic`
-together with `wall-clock` or `read-environment` is rejected at load,
-because both are ways to make output depend on something the digest does not
-cover.
+together with `wall-clock`, `read-environment` or `expand-variables` is
+rejected at load, because each is a way to make output depend on something
+the digest does not cover.
+
+The third one is the interesting case, and it is where the capability model
+earns its separation. Expansion can run `$(shell ...)`, so a plugin that
+needs make's own expander cannot promise determinism — it has to choose, in
+its manifest, in public. `plugins/compile-commands` chooses the expander and
+gives up the promise; `plugins/graphviz-export` needs no expansion and keeps
+it. Neither choice is hidden from the operator, and neither is a lie the
+host has to take on faith. Starlark cannot express this trade at all: rules
+are pure by construction, and the code that genuinely needs to reach out has
+to become a `repository_rule` and leave the analysis model entirely.
 
 > *Use case: a no-op rebuild.* `make` with a compile-database plugin on a
 > 10k-target tree should cost nothing when nothing changed. Bazel gets this
@@ -397,6 +407,15 @@ source apart from an order-only `| build/` prerequisite that must *not*
 appear as an input, `node.variable()` so `debug.o: CFLAGS += -O0` comes out
 right for that target, `session.working-directory()` because the schema
 requires it, and one declared, atomically published output.
+
+It also demonstrates an *optional* capability. Target-scoped substitution
+handles `$(CC) $(CFLAGS)` with no extra authority; a recipe using a makefile
+function (`$(addprefix -l,$(LIBS))`) needs make's real expander. The plugin
+requests `expand-variables` so that the host's withheld-capability report
+doubles as the discovery path for switching it on, and skips such recipes —
+saying so — when it is not granted, rather than writing a half-expanded
+command line that would make clangd report phantom errors for the whole
+translation unit.
 
 **`plugins/graphviz-export`** is the #647 plugin rebuilt. It writes a
 declared artifact instead of stderr, draws order-only prerequisites as the

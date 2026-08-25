@@ -118,9 +118,12 @@ interface plugin {
         /// the digest recorded alongside its previous outputs.
         ///
         /// This is a promise the host partially *checks* rather than merely
-        /// trusts: `wall-clock` and `read-environment` are refused in
-        /// combination with `deterministic`, because both are ways to make
-        /// output depend on something the digest does not cover.
+        /// trusts: `wall-clock`, `read-environment` and `expand-variables`
+        /// are all refused in combination with `deterministic`, because each
+        /// is a way to make output depend on something the digest does not
+        /// cover. `expand-variables` is the interesting one — expansion can
+        /// run `$(shell ...)`, so a plugin that needs make's own expander
+        /// cannot promise determinism, and has to choose.
         deterministic: bool,
         failure-policy: failure-policy,
     }

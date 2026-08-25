@@ -20,6 +20,12 @@
 //! * `node.variable()` — `$(CFLAGS)` **for this target**, so that
 //!   `debug.o: CFLAGS += -O0` comes out right. Reading the global value
 //!   instead is the classic compile-database bug.
+//! * `vars.expand()` — optional, and the reason this plugin does not declare
+//!   `deterministic`. Target-scoped substitution handles `$(CC) $(CFLAGS)`
+//!   without any extra authority; a recipe using a *function*
+//!   (`$(addprefix -l,$(LIBS))`) needs make's real expander, which can also
+//!   run `$(shell ...)` and so cannot be part of a determinism promise. The
+//!   plugin works either way and says which mode it is in.
 //! * `session.working-directory()` — the schema requires it.
 //! * `artifacts.open()` — one atomic file. A half-written database makes
 //!   clangd report thousands of phantom errors.
@@ -91,8 +97,12 @@ impl Analyzer for CompileCommands {
             .description("JSON Compilation Database (compile_commands.json) for clangd and friends")
             .capability(Capability::ReadRecipes)
             .capability(Capability::ReadVariables)
+            // Optional: without it, recipes using makefile *functions* are
+            // skipped rather than emitted half-expanded. Requested here so
+            // that the host's withheld-capability report doubles as the
+            // discovery path for turning it on.
+            .capability(Capability::ExpandVariables)
             .capability(Capability::WriteOutputs)
-            .deterministic()
             .output(
                 "database",
                 "compile_commands.json",
@@ -143,13 +153,22 @@ impl Analyzer for CompileCommands {
         else {
             return Ok(Vec::new());
         };
-        if command.contains('$') {
-            // A reference the plugin could not resolve — a `$(shell ...)` or
-            // a user function. Report it rather than writing a
-            // half-expanded command that clangd will choke on.
-            UNRESOLVED.with(|u| u.borrow_mut().push(target.name()));
-            return Ok(Vec::new());
-        }
+        // What is left after target-scoped substitution is a makefile
+        // function or an undefined variable. Finish it with make's own
+        // expander if this instance was granted one; otherwise skip the
+        // entry, because a half-expanded command line makes clangd report
+        // phantom errors for the whole translation unit.
+        let command = if command.contains('$') {
+            match makers_plugin::vars::expand(command) {
+                Ok(expanded) if !expanded.contains('$') => expanded,
+                _ => {
+                    UNRESOLVED.with(|u| u.borrow_mut().push(target.name()));
+                    return Ok(Vec::new());
+                }
+            }
+        } else {
+            command.clone()
+        };
 
         let entry = format!(
             "  {{\n    \"directory\": \"{}\",\n    \"file\": \"{}\",\n    \
@@ -157,7 +176,7 @@ impl Analyzer for CompileCommands {
             json_escape(&makers_plugin::session::working_directory()),
             json_escape(source),
             json_escape(&target.name()),
-            json_escape(command)
+            json_escape(&command)
         );
         ENTRIES.with(|e| e.borrow_mut().push(entry.clone()));
         Ok(vec![Provider {

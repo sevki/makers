@@ -212,9 +212,11 @@ impl Manifest {
     /// plugin reads through the host interfaces, letting the host skip the
     /// run entirely when [`session::input_digest`] is unchanged.
     ///
-    /// Rejected at load time in combination with [`Capability::WallClock`]
-    /// or [`Capability::ReadEnvironment`], both of which are ways to depend
-    /// on something the digest does not cover.
+    /// Rejected at load time in combination with [`Capability::WallClock`],
+    /// [`Capability::ReadEnvironment`] or [`Capability::ExpandVariables`],
+    /// each of which is a way to depend on something the digest does not
+    /// cover — the last because expansion can run `$(shell ...)`, so a
+    /// plugin that needs make's own expander has to give this up.
     pub fn deterministic(mut self) -> Self {
         self.0.deterministic = true;
         self
