@@ -28,7 +28,15 @@ itertools = "0.15"
 jj-lib-proc-macros = { path = "proc-macros" }
 libc = "0.2"
 rustc-hash = "2"
-salsa = "0.28"
+# `rayon` is a salsa default feature; it isn't used explicitly anywhere in
+# this crate (no parallel query APIs are called), and rayon's thread pool
+# has no real-thread support to run on under wasm32-wasip1 (#626). Keep it
+# on native targets where it's a harmless no-op today but may matter later,
+# and drop it under wasm to avoid depending on threading that never works.
+salsa = { version = "0.28", default-features = false, features = ["salsa_unstable", "macros", "inventory", "accumulator"] }
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+salsa = { version = "0.28", features = ["rayon"] }
 
 [dev-dependencies]
 insta = { version = "=1.48.0", default-features = false }
