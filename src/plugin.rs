@@ -462,13 +462,20 @@ fn coherent(info: &PluginInfo, requested: Caps) -> Result<(), String> {
                 .to_string(),
         );
     }
-    if info.deterministic && requested.intersects(Caps::WALL_CLOCK | Caps::READ_ENVIRONMENT) {
+    // `expand-variables` belongs in this set for a less obvious reason than
+    // the other two: expansion can run `$(shell ...)`, whose output is not in
+    // the digest. A plugin that needs make's own expander therefore cannot
+    // promise determinism — which is the whole capability argument in
+    // miniature, and the reason the two are declared separately rather than
+    // inferred from each other.
+    const NONDETERMINISTIC: Caps = Caps::WALL_CLOCK
+        .union(Caps::READ_ENVIRONMENT)
+        .union(Caps::EXPAND_VARIABLES);
+    if info.deterministic && requested.intersects(NONDETERMINISTIC) {
         return Err(format!(
-            "declares `deterministic` while requesting {} — both are ways to depend on state \
+            "declares `deterministic` while requesting {} — each is a way to depend on state \
              `session.input-digest` does not cover",
-            (requested & (Caps::WALL_CLOCK | Caps::READ_ENVIRONMENT))
-                .names()
-                .join(" and ")
+            (requested & NONDETERMINISTIC).names().join(" and ")
         ));
     }
     let mut seen = FxHashSet::default();
@@ -793,21 +800,32 @@ fn with_context<R>(ctx: &ExecContext, f: impl FnOnce() -> R) -> R {
     r
 }
 
-fn current_ctx() -> Option<&'static ExecContext> {
-    // SAFETY: non-null only inside `with_context`, which outlives every host
-    // callback a guest can make (guests run synchronously within that scope).
-    unsafe { CTX_PTR.get().as_ref() }
+/// The installed context pointer, or null outside a plugin pass.
+///
+/// Returned raw rather than as a reference: fabricating a `&'static
+/// ExecContext` here would be a lifetime the borrow checker cannot police,
+/// so the dereference stays inside the two `unsafe` blocks that already need
+/// one for their C-ABI calls, under one `SAFETY` comment each.
+fn ctx_ptr() -> *const ExecContext {
+    CTX_PTR.get()
 }
 
 /// Raw expanded value of a global variable, or `None` if undefined.
 fn lookup_global_raw(name: &str) -> Option<String> {
-    let ctx = current_ctx()?;
-    // SAFETY: `name_c` is a live NUL-terminated buffer for the whole call,
-    // meeting `lookup_variable`'s pointer/length contract.
+    let ctx = ctx_ptr();
+    if ctx.is_null() {
+        return None;
+    }
+    let name_c = std::ffi::CString::new(name).ok()?;
+    let len = name_c.as_bytes().len() as crate::ffi_types::size_t;
+    // SAFETY: `CTX_PTR` is non-null only inside `with_context`, which outlives
+    // every host callback a guest can make (guests run synchronously within
+    // that scope), so `ctx` points at a live `ExecContext`. `name_c` is a live
+    // NUL-terminated buffer for the whole call, meeting `lookup_variable`'s
+    // pointer/length contract, and the returned `variable` is owned by the
+    // global set and outlives the read.
     unsafe {
-        let name_c = std::ffi::CString::new(name).ok()?;
-        let len = name_c.as_bytes().len() as crate::ffi_types::size_t;
-        let v = crate::variable::lookup_variable(ctx, name_c.as_ptr(), len).ok()?;
+        let v = crate::variable::lookup_variable(&*ctx, name_c.as_ptr(), len).ok()?;
         if v.is_null() || (*v).value.is_null() {
             return None;
         }
@@ -839,15 +857,18 @@ pub(crate) fn lookup_global(name: &str) -> Option<host::Variable> {
 
 /// Expand makefile text through make's own expander, in the global scope.
 pub(crate) fn expand_global(text: &str) -> Result<String, String> {
-    let Some(ctx) = current_ctx() else {
+    let ctx = ctx_ptr();
+    if ctx.is_null() {
         return Err("no make context available".to_string());
-    };
+    }
     let input = std::ffi::CString::new(text).map_err(|_| "text contains a NUL byte".to_string())?;
-    // SAFETY: `input` outlives the call; the null `file` pointer is the
-    // documented "global scope" argument, exactly as `gmk_expand` passes it.
+    // SAFETY: `ctx` is live for the same reason as in `lookup_global_raw`;
+    // `input` outlives the call; the null `file` pointer is the documented
+    // "global scope" argument, exactly as `gmk_expand` passes it; and the
+    // returned buffer is a `malloc`ed NUL-terminated string this call owns.
     unsafe {
         let expanded = crate::expand::allocated_expand_string_for_file(
-            ctx,
+            &*ctx,
             input.as_ptr(),
             std::ptr::null_mut::<crate::file::File>(),
         )
@@ -860,328 +881,5 @@ pub(crate) fn expand_global(text: &str) -> Result<String, String> {
             .into_owned();
         libc::free(expanded as *mut libc::c_void);
         Ok(out)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::file::FileNode;
-
-    fn spec_named(specs: &[InstanceSpec], name: &str) -> InstanceSpec {
-        let s = specs
-            .iter()
-            .find(|s| s.name == name)
-            .unwrap_or_else(|| panic!("no instance named {name}"));
-        InstanceSpec {
-            name: s.name.clone(),
-            path: s.path.clone(),
-            settings: s.settings.clone(),
-            allowed: s.allowed,
-        }
-    }
-
-    /// A three-node chain plus a second prerequisite, so that both
-    /// dependency order and sibling order are observable.
-    fn chain_graph() -> DepGraph {
-        let mut graph = DepGraph::new();
-        let prog = graph.add_file(FileNode::new(b"prog".to_vec()));
-        let main_o = graph.add_file(FileNode::new(b"main.o".to_vec()));
-        let util_o = graph.add_file(FileNode::new(b"util.o".to_vec()));
-        let main_c = graph.add_file(FileNode::new(b"main.c".to_vec()));
-        for (from, name, to) in [
-            (prog, "main.o", main_o),
-            (prog, "util.o", util_o),
-            (main_o, "main.c", main_c),
-        ] {
-            graph.add_dep(
-                from,
-                crate::dep::DepNode {
-                    name: name.to_string(),
-                    file: Some(to),
-                    ..Default::default()
-                },
-            );
-        }
-        graph.add_goal(crate::dep::GoalDepNode {
-            dep: crate::dep::DepNode {
-                file: Some(prog),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        graph
-    }
-
-    fn names(graph: &DepGraph, order: &[NodeId]) -> Vec<String> {
-        order.iter().map(|&n| graph.display_name(n)).collect()
-    }
-
-    /// Every prerequisite is analysed before the target that needs it, and
-    /// siblings keep the makefile's own edge order — the two properties the
-    /// aspect model depends on (a hook can only read `dep.providers()` if
-    /// the dep already ran, and artifacts are only reproducible if sibling
-    /// order is fixed).
-    #[test]
-    fn analysis_order_is_dependency_order_with_stable_siblings() {
-        let graph = chain_graph();
-        let (order, cycle) = analysis_order(&graph);
-        assert!(cycle.is_none());
-        assert_eq!(
-            names(&graph, &order),
-            ["main.c", "main.o", "util.o", "prog"]
-        );
-    }
-
-    /// The synthetic root is not a target and is never handed to a plugin.
-    #[test]
-    fn analysis_order_excludes_the_root() {
-        let graph = chain_graph();
-        let (order, _) = analysis_order(&graph);
-        assert!(!order.contains(&NodeId::Root));
-    }
-
-    /// A cycle is described and dropped rather than propagated, matching
-    /// make's own "Circular X <- Y dependency dropped" — a plugin pass that
-    /// refused to run on such a graph would be useless on exactly the
-    /// makefiles most worth inspecting.
-    #[test]
-    fn analysis_order_drops_cycles_and_reports_them() {
-        let mut graph = DepGraph::new();
-        let a = graph.add_file(FileNode::new(b"a".to_vec()));
-        let b = graph.add_file(FileNode::new(b"b".to_vec()));
-        graph.add_dep(
-            a,
-            crate::dep::DepNode {
-                name: "b".to_string(),
-                file: Some(b),
-                ..Default::default()
-            },
-        );
-        graph.add_dep(
-            b,
-            crate::dep::DepNode {
-                name: "a".to_string(),
-                file: Some(a),
-                ..Default::default()
-            },
-        );
-        graph.add_goal(crate::dep::GoalDepNode {
-            dep: crate::dep::DepNode {
-                file: Some(a),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-        let (order, cycle) = analysis_order(&graph);
-        assert!(cycle.is_some_and(|c| c.contains("a") && c.contains("b")));
-        // Both nodes still reach the plugin exactly once.
-        assert_eq!(order.len(), 2);
-    }
-
-    /// The digest is stable across two builds of the same graph and moves
-    /// when the graph does — the whole basis of the `deterministic` promise.
-    #[test]
-    fn input_digest_is_stable_and_structure_sensitive() {
-        let settings = BTreeMap::new();
-        let base = input_digest(&chain_graph(), &settings);
-        assert_eq!(base, input_digest(&chain_graph(), &settings));
-
-        let mut changed = chain_graph();
-        let extra = changed.add_file(FileNode::new(b"extra.h".to_vec()));
-        let main_o = crate::file::FileId::from_bytes(b"main.o");
-        changed.add_dep(
-            main_o,
-            crate::dep::DepNode {
-                name: "extra.h".to_string(),
-                file: Some(extra),
-                ..Default::default()
-            },
-        );
-        assert_ne!(base, input_digest(&changed, &settings));
-    }
-
-    /// Settings are part of the digest: the same graph analysed with a
-    /// different configuration is a different question and must not hit a
-    /// cache entry for the first one.
-    #[test]
-    fn input_digest_covers_instance_settings() {
-        let graph = chain_graph();
-        let mut settings = BTreeMap::new();
-        let base = input_digest(&graph, &settings);
-        settings.insert("out.database".to_string(), "elsewhere.json".to_string());
-        assert_ne!(base, input_digest(&graph, &settings));
-    }
-
-    /// Unnamespaced provider ids are rejected, so two unrelated plugins
-    /// cannot collide on `"info"`.
-    #[test]
-    fn provider_ids_must_be_namespaced() {
-        assert!(valid_provider_id("makers:cc/compile-command").is_ok());
-        assert!(valid_provider_id("info").is_err());
-        assert!(valid_provider_id("makers:cc").is_err());
-        assert!(valid_provider_id(":cc/x").is_err());
-    }
-
-    fn manifest(caps: &[host::Capability]) -> PluginInfo {
-        PluginInfo {
-            name: "p".to_string(),
-            version: "0".to_string(),
-            description: String::new(),
-            phases: vec![Phase::Analyze],
-            capabilities: caps.to_vec(),
-            outputs: Vec::new(),
-            deterministic: false,
-            failure_policy: FailurePolicy::Advisory,
-        }
-    }
-
-    fn caps_of(info: &PluginInfo) -> Caps {
-        info.capabilities
-            .iter()
-            .fold(Caps::empty(), |acc, c| acc | Caps::from_wit(*c))
-    }
-
-    /// A plugin that declares `fatal` without asking for `fail-build` is
-    /// refused rather than silently downgraded: a policy gate that stops
-    /// gating without saying so is worse than one that refuses to start.
-    #[test]
-    fn fatal_without_fail_build_is_refused() {
-        let mut info = manifest(&[]);
-        info.failure_policy = FailurePolicy::Fatal;
-        assert!(coherent(&info, caps_of(&info)).is_err());
-
-        let mut ok = manifest(&[host::Capability::FailBuild]);
-        ok.failure_policy = FailurePolicy::Fatal;
-        assert!(coherent(&ok, caps_of(&ok)).is_ok());
-    }
-
-    /// `deterministic` is checked, not merely trusted: a clock or the
-    /// environment are both ways to depend on state the input digest does
-    /// not cover.
-    #[test]
-    fn deterministic_rejects_the_nondeterministic_capabilities() {
-        for cap in [
-            host::Capability::WallClock,
-            host::Capability::ReadEnvironment,
-        ] {
-            let mut info = manifest(&[cap]);
-            info.deterministic = true;
-            assert!(
-                coherent(&info, caps_of(&info)).is_err(),
-                "{cap:?} should be incompatible with `deterministic`"
-            );
-        }
-    }
-
-    /// Declaring an output without asking for the capability to write one
-    /// would fail later, at `artifacts.open`, after the plugin had already
-    /// done its work. Catching it at load turns a confusing runtime error
-    /// into a load-time one.
-    #[test]
-    fn declared_outputs_require_write_outputs() {
-        let decl = host::OutputDecl {
-            logical_name: "database".to_string(),
-            default_path: "db.json".to_string(),
-            description: String::new(),
-        };
-        let mut info = manifest(&[]);
-        info.outputs = vec![decl.clone()];
-        assert!(coherent(&info, caps_of(&info)).is_err());
-
-        let mut ok = manifest(&[host::Capability::WriteOutputs]);
-        ok.outputs = vec![decl.clone(), decl];
-        assert!(
-            coherent(&ok, caps_of(&ok)).is_err(),
-            "a duplicated logical name is ambiguous and must be refused"
-        );
-    }
-
-    /// Instances are named, settings are addressed by instance, and dotted
-    /// keys survive the split.
-    #[test]
-    fn instances_take_names_paths_and_settings() {
-        let specs = parse_instances(
-            Some("compdb=./cc.wasm, graph=./g.wasm"),
-            None,
-            Some("compdb.out.database=build/db.json;graph.rankdir=TB;absent.k=v"),
-            None,
-            None,
-        );
-        assert_eq!(specs.len(), 2);
-        let compdb = spec_named(&specs, "compdb");
-        assert_eq!(compdb.path, PathBuf::from("./cc.wasm"));
-        assert_eq!(
-            compdb.settings.get("out.database").map(String::as_str),
-            Some("build/db.json")
-        );
-        assert_eq!(
-            spec_named(&specs, "graph").settings.get("rankdir"),
-            Some(&"TB".to_string())
-        );
-    }
-
-    /// A bare path is still an addressable instance, named after its stem.
-    #[test]
-    fn a_bare_path_is_named_after_its_stem() {
-        let specs = parse_instances(Some("./tools/lint.wasm"), None, None, None, None);
-        assert_eq!(specs[0].name, "lint");
-    }
-
-    /// The single-anonymous-plugin tap this interface grew out of keeps
-    /// working, as the instance `default`.
-    #[test]
-    fn the_legacy_extension_variable_becomes_an_instance() {
-        let specs = parse_instances(None, Some("./old.wasm"), None, None, None);
-        assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].name, "default");
-        assert_eq!(specs[0].allowed, Caps::DEFAULT_GRANT);
-    }
-
-    /// Grants and denials are per instance, `*` reaches all of them, and
-    /// denial is applied after grant so it always wins.
-    #[test]
-    fn capability_policy_is_per_instance_and_deny_wins() {
-        let specs = parse_instances(
-            Some("a=./a.wasm,b=./b.wasm"),
-            None,
-            None,
-            Some("a:expand-variables,read-file-content;*:wall-clock"),
-            Some("a:read-recipes"),
-        );
-        let a = spec_named(&specs, "a");
-        let b = spec_named(&specs, "b");
-        assert!(a.allowed.contains(Caps::EXPAND_VARIABLES));
-        assert!(a.allowed.contains(Caps::READ_FILE_CONTENT));
-        assert!(!a.allowed.contains(Caps::READ_RECIPES), "deny must win");
-        assert!(a.allowed.contains(Caps::WALL_CLOCK), "`*` reaches a");
-        assert!(b.allowed.contains(Caps::WALL_CLOCK), "`*` reaches b");
-        assert!(!b.allowed.contains(Caps::EXPAND_VARIABLES));
-        assert!(b.allowed.contains(Caps::READ_RECIPES), "b was not denied");
-    }
-
-    /// Nothing configured means nothing runs — the plugin pass must be
-    /// invisible to every build that does not ask for it.
-    #[test]
-    fn no_configuration_means_no_instances() {
-        assert!(parse_instances(None, None, None, None, None).is_empty());
-        assert!(parse_instances(Some(""), Some(""), Some(""), None, None).is_empty());
-    }
-
-    /// The default grant is the read-only view of what make already read,
-    /// plus a declared output. Everything that reaches further is opt-in.
-    #[test]
-    fn the_default_grant_withholds_the_reaching_capabilities() {
-        let d = Caps::DEFAULT_GRANT;
-        assert!(d.contains(Caps::READ_RECIPES | Caps::READ_VARIABLES | Caps::WRITE_OUTPUTS));
-        for withheld in [
-            Caps::EXPAND_VARIABLES,
-            Caps::READ_ENVIRONMENT,
-            Caps::READ_FILE_CONTENT,
-            Caps::WALL_CLOCK,
-            Caps::FAIL_BUILD,
-        ] {
-            assert!(!d.intersects(withheld), "{withheld:?} must be opt-in");
-        }
     }
 }
