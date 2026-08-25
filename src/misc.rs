@@ -5,22 +5,42 @@
 //! their callers (the makefile reader, the variable expander, the job
 //! runner) are still C-shaped.
 
-use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void};
-use ::core::ptr::{null, null_mut};
-
-use libc::{
-    __errno_location, calloc, free, getenv, getpid, malloc, mkstemp, realloc, sleep,
-    sprintf, stpcpy, strcpy, strdup, strerror, strlen, strndup, umask, EINTR,
+use ::core::{
+    ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void},
+    ptr::{null, null_mut},
 };
 
-use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t};
-use crate::file::nameseq;
-use crate::floc::Floc;
-use crate::make_main::{posix_pedantic, stopchar_map};
-use crate::output::{error, out_of_memory, FmtArg};
-use crate::posixos::os_anontmp;
-use crate::stdio::FILE;
-use crate::sys_stat::stat;
+use libc::{
+    __errno_location,
+    calloc,
+    free,
+    getenv,
+    getpid,
+    malloc,
+    mkstemp,
+    realloc,
+    sleep,
+    sprintf,
+    stpcpy,
+    strcpy,
+    strdup,
+    strerror,
+    strlen,
+    strndup,
+    umask,
+    EINTR,
+};
+
+use crate::{
+    entry::{posix_pedantic, stopchar_map},
+    ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t},
+    file::nameseq,
+    floc::Floc,
+    output::{error, out_of_memory, FmtArg},
+    posixos::os_anontmp,
+    stdio::FILE,
+    sys_stat::stat,
+};
 
 extern "C" {
     fn stat(file: *const c_char, buf: *mut stat) -> i32;
@@ -453,7 +473,10 @@ pub fn skip_reference(bytes: &[u8]) -> usize {
 pub unsafe fn find_next_token(ptr: *mut *const c_char, lengthptr: *mut size_t) -> *mut c_char {
     assert!(!ptr.is_null(), "find_next_token: ptr must not be null");
     let p: *const c_char = next_token(*ptr);
-    assert!(!p.is_null(), "find_next_token: token address must not be null");
+    assert!(
+        !p.is_null(),
+        "find_next_token: token address must not be null"
+    );
     if *p == 0 {
         return null_mut();
     }
@@ -514,9 +537,8 @@ pub unsafe fn writebuf(fd: i32, buffer: *const c_void, len: size_t) -> ssize_t {
     use std::io::Write;
     let bytes = ::core::slice::from_raw_parts(buffer as *const u8, len);
     // Borrow the fd as a File without taking ownership.
-    let mut f = ::core::mem::ManuallyDrop::new(
-        <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd),
-    );
+    let mut f =
+        ::core::mem::ManuallyDrop::new(<std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd));
     match f.write_all(bytes) {
         Ok(()) => len as ssize_t,
         Err(_) => -1,
@@ -532,9 +554,8 @@ pub unsafe fn readbuf(fd: i32, buffer: *mut c_void, len: size_t) -> ssize_t {
     use std::io::Read;
     let buf = ::core::slice::from_raw_parts_mut(buffer as *mut u8, len);
     // Borrow the fd as a File without taking ownership.
-    let mut f = ::core::mem::ManuallyDrop::new(
-        <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd),
-    );
+    let mut f =
+        ::core::mem::ManuallyDrop::new(<std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd));
     let mut done = 0usize;
     while done < buf.len() {
         match f.read(&mut buf[done..]) {
@@ -852,8 +873,10 @@ pub unsafe fn get_tmpfile(
 
 #[cfg(test)]
 mod bufio_tests {
-    use super::{readbuf, writebuf};
-    use std::os::fd::AsRawFd;
+    use {
+        super::{readbuf, writebuf},
+        std::os::fd::AsRawFd,
+    };
 
     /// writebuf writes everything and readbuf reads it back, stopping at
     /// EOF with a short count (the C loops' contract, now write_all/read).
@@ -885,7 +908,10 @@ mod bufio_tests {
         let mut buf = [0u8; 4];
         unsafe {
             assert_eq!(writebuf(rd.as_raw_fd(), buf.as_ptr().cast(), buf.len()), -1);
-            assert_eq!(readbuf(wr.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()), -1);
+            assert_eq!(
+                readbuf(wr.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()),
+                -1
+            );
         }
     }
 
@@ -900,9 +926,10 @@ mod bufio_tests {
 
 #[cfg(test)]
 mod tmpfile_tests {
-    use super::{dbg, get_tmpfile, open_anon_tmpfd, open_named_tmpfd};
-    use ::core::ffi::c_char;
-    use ::core::ptr::null_mut;
+    use {
+        super::{dbg, get_tmpfile, open_anon_tmpfd, open_named_tmpfd},
+        ::core::{ffi::c_char, ptr::null_mut},
+    };
 
     // `get_tmpfile` drives the whole temp-file chain (`open_named_tmpfd` ->
     // `get_tmptemplate` -> `get_tmpdir`): it must hand back a read-write
@@ -914,8 +941,7 @@ mod tmpfile_tests {
         let ctx = crate::execctx::ExecContext::default();
         let mut name: *mut c_char = null_mut();
         unsafe {
-            let mut fp =
-                get_tmpfile(&ctx, &mut name).expect("get_tmpfile returned no file");
+            let mut fp = get_tmpfile(&ctx, &mut name).expect("get_tmpfile returned no file");
             assert!(!name.is_null(), "get_tmpfile left the name unset");
 
             let data = b"crap-coverage-probe\n";
@@ -1038,9 +1064,13 @@ mod make_toui_tests {
 
 #[cfg(test)]
 mod alpha_compare_tests {
-    use super::alpha_cmp;
-    use ::core::cmp::Ordering;
-    use ::core::ffi::{c_char, c_void};
+    use {
+        super::alpha_cmp,
+        ::core::{
+            cmp::Ordering,
+            ffi::{c_char, c_void},
+        },
+    };
 
     /// Verbatim pre-refactor `qsort` comparator, preserved as the behavior
     /// oracle (AGENTS.md: keep the original `unsafe` code as a `#[cfg(test)]`
@@ -1092,19 +1122,8 @@ mod alpha_compare_tests {
     #[test]
     fn matches_unsafe_oracle() {
         let samples: &[&[u8]] = &[
-            b"",
-            b"a",
-            b"B",
-            b"ab",
-            b"abc",
-            b"abd",
-            b"abcd",
-            b"\x80",
-            b"\x80a",
-            b"\x01",
-            b"\xff",
-            b"\x7f",
-            b"A\x80",
+            b"", b"a", b"B", b"ab", b"abc", b"abd", b"abcd", b"\x80", b"\x80a", b"\x01", b"\xff",
+            b"\x7f", b"A\x80",
         ];
         for &a in samples {
             for &b in samples {
@@ -1176,9 +1195,11 @@ mod collapse_continuations_tests {
 
 #[cfg(test)]
 mod next_token_tests {
-    use super::next_token;
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::{c_char, CStr, CString};
+    use {
+        super::next_token,
+        crate::entry::initialize_stopchar_map,
+        std::ffi::{c_char, CStr, CString},
+    };
 
     /// `next_token` advances past leading blanks/newlines and returns the first
     /// non-whitespace character (or the terminating NUL for all-blank input).
@@ -1207,9 +1228,10 @@ mod next_token_tests {
 
 #[cfg(test)]
 mod lindex_unsafe_oracle {
-    use super::lindex;
-    use ::core::ffi::c_char;
-    use ::core::ptr::null_mut;
+    use {
+        super::lindex,
+        ::core::{ffi::c_char, ptr::null_mut},
+    };
 
     /// Verbatim copy of the original c2rust-derived `lindex`, preserved as a
     /// behavioral oracle for the safe slice-based rewrite.
@@ -1270,15 +1292,14 @@ mod lindex_unsafe_oracle {
 
 #[cfg(test)]
 mod skip_reference_unsafe_oracle {
-    use super::skip_reference;
-    use ::core::ffi::c_char;
+    use {super::skip_reference, ::core::ffi::c_char};
 
     // Re-derive the helpers the oracle needs, identical to the module ones.
     const MAP_NUL: i32 = 0x0001;
     const MAP_VARSEP: i32 = 0x0080;
 
     fn stop_set(c: c_char, mask: i32) -> bool {
-        crate::make_main::stopchar_map()[c as u8 as usize] as i32 & mask != 0
+        crate::entry::stopchar_map()[c as u8 as usize] as i32 & mask != 0
     }
 
     /// Verbatim copy of the original c2rust-derived `skip_reference`, preserved
@@ -1330,7 +1351,7 @@ mod skip_reference_unsafe_oracle {
         // The oracle and the safe implementation both read the global stopchar
         // map; initialize it up front so this test passes in isolation rather
         // than relying on another test having seeded the global.
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
 
         // Each case is NUL-terminated; the character at index 0 is the one
         // following the `$`.
@@ -1363,11 +1384,13 @@ mod skip_reference_unsafe_oracle {
 
 #[cfg(test)]
 mod end_of_token_unsafe_oracle {
-    use super::{end_of_token, MAP_NUL, MAP_SPACE};
-    use ::core::ffi::c_char;
+    use {
+        super::{end_of_token, MAP_NUL, MAP_SPACE},
+        ::core::ffi::c_char,
+    };
 
     fn stop_set(c: c_char, mask: i32) -> bool {
-        crate::make_main::stopchar_map()[c as u8 as usize] as i32 & mask != 0
+        crate::entry::stopchar_map()[c as u8 as usize] as i32 & mask != 0
     }
 
     /// Verbatim copy of the original c2rust-derived `end_of_token`, preserved
@@ -1389,7 +1412,7 @@ mod end_of_token_unsafe_oracle {
     /// `s.add(offset)`.
     #[test]
     fn matches_oracle() {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
 
         let cases: &[&[u8]] = &[
             b"\0",            // empty: token end at offset 0
@@ -1443,11 +1466,13 @@ mod eval_tmpdir_var_tests {
         match usable {
             // SAFETY: `Usable` carries the `getenv` value pointer, valid until
             // the next environment mutation; we read it before removing the var.
-            TmpdirCandidate::Usable(p) => assert_eq!(
-                unsafe { ::core::ffi::CStr::from_ptr(p) }.to_bytes(),
-                b"/tmp",
-                "a usable directory returns its value",
-            ),
+            TmpdirCandidate::Usable(p) => {
+                assert_eq!(
+                    unsafe { ::core::ffi::CStr::from_ptr(p) }.to_bytes(),
+                    b"/tmp",
+                    "a usable directory returns its value",
+                )
+            }
             _ => panic!("expected a usable directory"),
         }
         std::env::remove_var("MAKE_PROBE_TMPDIR_DIR");
@@ -1462,7 +1487,8 @@ mod concat_tests {
     fn skips_empty_and_joins_the_rest() {
         // Exercises concat's empty-arg skip and multi-arg join, plus the
         // trailing NUL terminator.
-        let long = b"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
+        let long =
+            b"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
         assert!(long.len() > 60, "long arg exercises a multi-arg join");
         let out = concat(&[b"hello", b"", long]);
         assert!(out.ends_with(&[0]), "buffer is NUL-terminated");
@@ -1493,8 +1519,10 @@ mod concat_tests {
 
 #[cfg(test)]
 mod concat_unsafe_oracle {
-    use super::{cstr_bytes_or_empty, strlen};
-    use ::core::ffi::c_char;
+    use {
+        super::{cstr_bytes_or_empty, strlen},
+        ::core::ffi::c_char,
+    };
 
     /// Verbatim pre-conversion implementation (the last `unsafe fn concat`,
     /// before it became the safe, pure `super::concat`), preserved as a
@@ -1526,22 +1554,27 @@ mod concat_unsafe_oracle {
     #[test]
     fn safe_matches_oracle_over_representative_inputs() {
         let buf_cell = ::core::cell::RefCell::new(Vec::new());
-        let long = c"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
+        let long =
+            c"abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz1234";
         let hello = c"hello";
         let empty = c"";
         let hi = c"hi";
         let bye = c"bye";
         unsafe {
             let cases: [Vec<*const c_char>; 5] = [
-                vec![hello.as_ptr(), ::core::ptr::null(), empty.as_ptr(), long.as_ptr()],
+                vec![
+                    hello.as_ptr(),
+                    ::core::ptr::null(),
+                    empty.as_ptr(),
+                    long.as_ptr(),
+                ],
                 vec![hi.as_ptr()],
                 vec![bye.as_ptr()],
                 vec![::core::ptr::null()],
                 vec![],
             ];
             for case in &cases {
-                let safe_args: Vec<&[u8]> =
-                    case.iter().map(|&p| cstr_bytes_or_empty(p)).collect();
+                let safe_args: Vec<&[u8]> = case.iter().map(|&p| cstr_bytes_or_empty(p)).collect();
                 let safe_result = super::concat(&safe_args);
                 let oracle_ptr = concat(&buf_cell, case);
                 let oracle_bytes = ::core::ffi::CStr::from_ptr(oracle_ptr).to_bytes_with_nul();
@@ -1553,8 +1586,10 @@ mod concat_unsafe_oracle {
 
 #[cfg(test)]
 mod free_ns_tests {
-    use super::{free_ns, free_ns_chain};
-    use crate::file::NameSeq;
+    use {
+        super::{free_ns, free_ns_chain},
+        crate::file::NameSeq,
+    };
 
     /// `free_ns_chain` must walk and free every node in a `next`-linked chain
     /// (which exercises `free_ns` on each), and a single-node chain is the base

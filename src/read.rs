@@ -1,6 +1,19 @@
 pub use crate::ffi_types::{
-    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
-    __size_t, __syscall_slong_t, __time_t, __uid_t, size_t, uintmax_t,
+    __blkcnt_t,
+    __blksize_t,
+    __dev_t,
+    __gid_t,
+    __ino_t,
+    __mode_t,
+    __nlink_t,
+    __off64_t,
+    __off_t,
+    __size_t,
+    __syscall_slong_t,
+    __time_t,
+    __uid_t,
+    size_t,
+    uintmax_t,
 };
 
 /// Include-search-path construction and `~` expansion (split out of this file).
@@ -9,18 +22,36 @@ pub use include_path::{construct_include_path, tilde_expand};
 
 /// Raw makefile line reading from an `EBuffer` (split out of this file).
 mod lines;
-use crate::file::{dep, file, FileId, NameSeq};
-use crate::file::{CommandState, Commands, Dep, File, UpdateStatus, VariableSet, VariableSetList};
-use crate::misc::{
-    collapse_continuations, find_next_token, next_token, xmalloc, xrealloc, xstrdup, xstrndup,
-};
-use crate::output::FmtArg;
-use crate::strcache::{strcache_add, strcache_add_bytes};
-use c2rust_bitfields;
-use libc::{
-    __errno_location, free, getenv, getlogin, strchr, strcpy, strerror, strpbrk,
-};
 pub use lines::{readline, readstring};
+use {
+    crate::{
+        file::{
+            dep,
+            file,
+            CommandState,
+            Commands,
+            Dep,
+            File,
+            FileId,
+            NameSeq,
+            UpdateStatus,
+            VariableSet,
+            VariableSetList,
+        },
+        misc::{
+            collapse_continuations,
+            find_next_token,
+            next_token,
+            xmalloc,
+            xrealloc,
+            xstrdup,
+            xstrndup,
+        },
+        output::FmtArg,
+        strcache::{strcache_add, strcache_add_bytes},
+    },
+    libc::{__errno_location, free, getenv, getlogin, strchr, strcpy, strerror, strpbrk},
+};
 extern "C" {
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
@@ -43,8 +74,7 @@ extern "C" {
     fn globfree(__pglob: *mut glob_t);
     fn getpwnam(__name: *const ::core::ffi::c_char) -> *mut passwd;
 }
-pub use crate::sys_stat::stat;
-pub use crate::sys_stat::timespec;
+pub use crate::sys_stat::{stat, timespec};
 use crate::warning::{self, Action, Type};
 pub type dirent = crate::dir::dirent;
 #[derive(Copy, Clone)]
@@ -67,7 +97,6 @@ pub type HashTable = crate::hash::HashTable;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 use crate::floc::Floc;
-
 
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
@@ -107,32 +136,47 @@ pub struct passwd {
     pub pw_dir: *mut ::core::ffi::c_char,
     pub pw_shell: *mut ::core::ffi::c_char,
 }
-use crate::ar::{ar_glob, ar_name_err, ParsedArName};
-use crate::dir::{dir_setup_glob, file_exists_p};
-use crate::expand::{
-    allocated_expand_string_for_file, allocated_expand_variable, expand_string_buf,
-    variable_buffer_output,
-};
 pub use crate::file::nameseq;
-use crate::file::{enter_file, lookup_file};
-use crate::function::{patsubst_expand_pat, pattern_matches, strip_whitespace};
-use crate::load::load_file;
-use crate::make_main::{
-    db_level, one_shell, opt_snapped_deps, posix_pedantic, second_expansion, stopchar_map,
+use {
+    crate::{
+        ar::{ar_glob, ar_name_err, ParsedArName},
+        dir::{dir_setup_glob, file_exists_p},
+        entry::{
+            db_level,
+            one_shell,
+            opt_snapped_deps,
+            posix_pedantic,
+            second_expansion,
+            stopchar_map,
+        },
+        expand::{
+            allocated_expand_string_for_file,
+            allocated_expand_variable,
+            expand_string_buf,
+            variable_buffer_output,
+        },
+        file::{enter_file, lookup_file},
+        function::{patsubst_expand_pat, pattern_matches, strip_whitespace},
+        load::load_file,
+        misc::{concat, cstr_bytes_or_empty},
+        output::{error, fatal_err, out_of_memory, perror_with_name, pfatal_with_name},
+        posixos::fd_noinherit,
+        rule::create_pattern_rule,
+        variable::{
+            assign_variable_definition,
+            create_pattern_var,
+            define_variable_in_set,
+            do_variable_definition,
+            initialize_file_variables,
+            lookup_variable,
+            parse_variable_definition,
+            try_variable_definition,
+            undefine_variable_in_set,
+        },
+        vpath::construct_vpath_list,
+    },
+    ::core::ffi::CStr,
 };
-use crate::misc::{concat, cstr_bytes_or_empty};
-use crate::output::{
-    error, fatal_err, out_of_memory, perror_with_name, pfatal_with_name,
-};
-use crate::posixos::fd_noinherit;
-use crate::rule::create_pattern_rule;
-use crate::variable::{
-    assign_variable_definition, create_pattern_var, define_variable_in_set,
-    do_variable_definition, initialize_file_variables, lookup_variable,
-    parse_variable_definition, try_variable_definition, undefine_variable_in_set,
-};
-use crate::vpath::construct_vpath_list;
-use ::core::ffi::CStr;
 pub type goaldep = crate::file::GoalDep;
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -144,18 +188,54 @@ pub struct EBuffer {
     pub fp: *mut lines::MakefileReader,
     pub floc: Floc,
 }
-#[derive(Copy, Clone, BitfieldStruct)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct VModifiers {
-    #[bitfield(name = "assign_v", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "define_v", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "undefine_v", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "override_v", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "private_v", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "export_v", ty = "variable_export", bits = "5..=6")]
-    pub assign_v_define_v_undefine_v_override_v_private_v_export_v: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 3],
+    pub(crate) assign_v: ::core::ffi::c_uint,
+    pub(crate) define_v: ::core::ffi::c_uint,
+    pub(crate) undefine_v: ::core::ffi::c_uint,
+    pub(crate) override_v: ::core::ffi::c_uint,
+    pub(crate) private_v: ::core::ffi::c_uint,
+    pub(crate) export_v: variable_export,
+}
+
+impl VModifiers {
+    pub fn assign_v(&self) -> ::core::ffi::c_uint {
+        self.assign_v
+    }
+    pub fn set_assign_v(&mut self, val: ::core::ffi::c_uint) {
+        self.assign_v = val;
+    }
+    pub fn define_v(&self) -> ::core::ffi::c_uint {
+        self.define_v
+    }
+    pub fn set_define_v(&mut self, val: ::core::ffi::c_uint) {
+        self.define_v = val;
+    }
+    pub fn undefine_v(&self) -> ::core::ffi::c_uint {
+        self.undefine_v
+    }
+    pub fn set_undefine_v(&mut self, val: ::core::ffi::c_uint) {
+        self.undefine_v = val;
+    }
+    pub fn override_v(&self) -> ::core::ffi::c_uint {
+        self.override_v
+    }
+    pub fn set_override_v(&mut self, val: ::core::ffi::c_uint) {
+        self.override_v = val;
+    }
+    pub fn private_v(&self) -> ::core::ffi::c_uint {
+        self.private_v
+    }
+    pub fn set_private_v(&mut self, val: ::core::ffi::c_uint) {
+        self.private_v = val;
+    }
+    pub fn export_v(&self) -> variable_export {
+        self.export_v
+    }
+    pub fn set_export_v(&mut self, val: variable_export) {
+        self.export_v = val;
+    }
 }
 pub use crate::variable::PatternVar;
 pub const w_eol: make_word_type = 1;
@@ -247,12 +327,12 @@ pub unsafe fn read_all_makefiles(
 ) -> Result<Vec<crate::dep::GoalDepNode>, crate::build_result::BuildError> {
     let mut num_makefiles: ::core::ffi::c_uint = 0;
     crate::variable::define_named(
-            ctx,
-            b"MAKEFILE_LIST\0",
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_file,
-            0,
-        )?;
+        ctx,
+        b"MAKEFILE_LIST\0",
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_file,
+        0,
+    )?;
     if 0x1_i32 & db_level(ctx) != 0 {
         crate::output::trace_out(b"Reading makefiles...\n");
     }
@@ -498,7 +578,7 @@ unsafe fn eval_makefile(
         // it into a local `Vec` so the `RefCell` borrow is released before the
         // file-open work below (which re-enters the eval engine on success).
         let search_dirs: Vec<std::path::PathBuf> =
-            crate::make_main::with_options(ctx, |o| o.resolved_include_dirs.borrow().clone());
+            crate::entry::with_options(ctx, |o| o.resolved_include_dirs.borrow().clone());
         for dir in &search_dirs {
             // Native path construction: PathBuf::join, not the C `concat` helper.
             let candidate = dir.join(filename_os);
@@ -801,7 +881,7 @@ pub unsafe fn eval(
     let mut depstr: *mut ::core::ffi::c_char = ::core::ptr::null_mut::<::core::ffi::c_char>();
     let mut nlines: ::core::ffi::c_long = 0;
     let mut two_colon: i32 = 0;
-    let mut prefix: ::core::ffi::c_char = crate::make_main::opt_cmd_prefix(ctx);
+    let mut prefix: ::core::ffi::c_char = crate::entry::opt_cmd_prefix(ctx);
     let mut pattern: *const ::core::ffi::c_char = ::core::ptr::null::<::core::ffi::c_char>();
     let mut pattern_percent: *const ::core::ffi::c_char;
     let fstart: *mut Floc;
@@ -830,8 +910,12 @@ pub unsafe fn eval(
         let mut p2: *mut ::core::ffi::c_char;
         let is_rule: ::core::ffi::c_uint;
         let mut vmod: VModifiers = VModifiers {
-            assign_v_define_v_undefine_v_override_v_private_v_export_v: [0; 1],
-            c2rust_padding: [0; 3],
+            assign_v: 0,
+            define_v: 0,
+            undefine_v: 0,
+            override_v: 0,
+            private_v: 0,
+            export_v: 0,
         };
         (*ebuf).floc.lineno = (*ebuf)
             .floc
@@ -867,7 +951,7 @@ pub unsafe fn eval(
         let first_byte = *line.offset(0_i32 as isize) as ::core::ffi::c_uchar;
         let line_kind = crate::parser::LineKind::classify(
             first_byte,
-            crate::make_main::opt_cmd_prefix(ctx) as ::core::ffi::c_uchar,
+            crate::entry::opt_cmd_prefix(ctx) as ::core::ffi::c_uchar,
         );
         if line_kind == crate::parser::LineKind::Blank {
             continue;
@@ -959,8 +1043,7 @@ pub unsafe fn eval(
                         two_colon,
                         prefix,
                         &raw mut fi,
-                    )
-                    ?;
+                    )?;
                     filenames = None;
                 }
                 commands_idx = 0;
@@ -968,12 +1051,10 @@ pub unsafe fn eval(
                 pattern = ::core::ptr::null::<::core::ffi::c_char>();
                 also_make_targets = 0;
                 if vmod.undefine_v() != 0 {
-                    do_undefine(ctx, p, origin, ebuf)
-                        ?;
+                    do_undefine(ctx, p, origin, ebuf)?;
                 } else {
                     if vmod.define_v() != 0 {
-                        v = do_define(ctx, p, origin, ebuf)
-                            ?;
+                        v = do_define(ctx, p, origin, ebuf)?;
                     } else {
                         v = try_variable_definition(ctx, fstart, p, origin, s_global)?;
                     }
@@ -1083,8 +1164,7 @@ pub unsafe fn eval(
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            )
-                            ?;
+                            )?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1092,7 +1172,7 @@ pub unsafe fn eval(
                         pattern = ::core::ptr::null::<::core::ffi::c_char>();
                         also_make_targets = 0;
                         if *p2 as i32 == 0 {
-                            crate::make_main::with_options(ctx, |o| {
+                            crate::entry::with_options(ctx, |o| {
                                 o.export_all_variables.set(exporting != 0)
                             });
                         } else {
@@ -1142,8 +1222,7 @@ pub unsafe fn eval(
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            )
-                            ?;
+                            )?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1232,8 +1311,7 @@ pub unsafe fn eval(
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            )
-                            ?;
+                            )?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1278,8 +1356,7 @@ pub unsafe fn eval(
                                     two_colon,
                                     prefix,
                                     &raw mut fi,
-                                )
-                                ?;
+                                )?;
                                 filenames = None;
                             }
                             commands_idx = 0;
@@ -1363,8 +1440,7 @@ pub unsafe fn eval(
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            )
-                            ?;
+                            )?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1485,7 +1561,7 @@ pub unsafe fn eval(
                         }
                     } else {
                         if *line.offset(0_i32 as isize) as i32
-                            == crate::make_main::opt_cmd_prefix(ctx) as i32
+                            == crate::entry::opt_cmd_prefix(ctx) as i32
                         {
                             return Err(fatal_err(
                                 ctx,
@@ -1522,8 +1598,7 @@ pub unsafe fn eval(
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            )
-                            ?;
+                            )?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1592,7 +1667,8 @@ pub unsafe fn eval(
                                             )?;
                                             lb_next = lb_next.offset(strlen(lb_next) as isize);
                                             p2 = ctx.variable_buffer.ptr().add(p2_off);
-                                            cmdleft = ctx.variable_buffer.ptr().add(cmd_off).offset(1);
+                                            cmdleft =
+                                                ctx.variable_buffer.ptr().add(cmd_off).offset(1);
                                         }
                                     }
                                     colonp = find_char_unquote(p2, ':' as i32);
@@ -1636,7 +1712,7 @@ pub unsafe fn eval(
                                     if *p2 as i32 == 0 {
                                         continue;
                                     }
-                                    if crate::make_main::opt_cmd_prefix(ctx) as i32 == '\t' as i32
+                                    if crate::entry::opt_cmd_prefix(ctx) as i32 == '\t' as i32
                                         && crate::parser::starts_with_eight_spaces(
                                             ::std::ffi::CStr::from_ptr(line).to_bytes(),
                                         )
@@ -1767,12 +1843,11 @@ pub unsafe fn eval(
                                                     as variable_origin,
                                                 &raw mut vmod,
                                                 fstart,
-                                            )
-                                            ?;
+                                            )?;
                                             filenames = None;
                                         } else {
                                             find_char_unquote(lb_next, '=' as i32);
-                                            prefix = crate::make_main::opt_cmd_prefix(ctx);
+                                            prefix = crate::entry::opt_cmd_prefix(ctx);
                                             no_targets = 0;
                                             if *lb_next as i32 != 0 {
                                                 let l_3: size_t = p2
@@ -1964,8 +2039,7 @@ pub unsafe fn eval(
             two_colon,
             prefix,
             &raw mut fi,
-        )
-        ?;
+        )?;
     }
     free(collapsed as *mut ::core::ffi::c_void);
     drop(cmd_buf);
@@ -2032,7 +2106,18 @@ unsafe fn do_define(
             offset: 0,
         },
         length: 0,
-        recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
+        recursive: 0,
+        append: 0,
+        conditional: 0,
+        per_target: 0,
+        special: 0,
+        exportable: 0,
+        expanding: 0,
+        private_var: 0,
+        exp_count: 0,
+        flavor: 0,
+        origin: 0,
+        export: 0,
     };
     let mut defstart: Floc;
     let mut nlevels: i32 = 1;
@@ -2099,7 +2184,7 @@ unsafe fn do_define(
             .wrapping_add(nlines as ::core::ffi::c_ulong);
         line = (*ebuf).buffer;
         collapse_continuations(ctx, line);
-        if *line.offset(0_i32 as isize) as i32 != crate::make_main::opt_cmd_prefix(ctx) as i32 {
+        if *line.offset(0_i32 as isize) as i32 != crate::entry::opt_cmd_prefix(ctx) as i32 {
             p = next_token(line);
             // Classify the leading `define`/`endef` keyword through the typed
             // AST layer (token delimited by a blank or NUL, matching make's
@@ -2577,62 +2662,62 @@ pub unsafe fn check_specials(
         let nm: *const ::core::ffi::c_char = nm_buf.as_ptr() as *const ::core::ffi::c_char;
         let special = crate::parser::SpecialTarget::from_name(&entry.name);
         if !posix_pedantic(ctx) && special == Some(crate::parser::SpecialTarget::Posix) {
-            crate::make_main::set_posix_pedantic(ctx);
+            crate::entry::set_posix_pedantic(ctx);
             crate::variable::define_named(
-            ctx,
-            b".SHELLFLAGS\0",
-            b"-ec\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b".SHELLFLAGS\0",
+                b"-ec\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"CC\0",
-            b"c99\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"CC\0",
+                b"c99\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"CFLAGS\0",
-            b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"CFLAGS\0",
+                b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"FC\0",
-            b"fort77\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"FC\0",
+                b"fort77\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"FFLAGS\0",
-            b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"FFLAGS\0",
+                b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"SCCSGETFLAGS\0",
-            b"-s\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"SCCSGETFLAGS\0",
+                b"-s\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"ARFLAGS\0",
-            b"-rv\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"ARFLAGS\0",
+                b"-rv\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
         } else if !second_expansion(ctx)
             && special == Some(crate::parser::SpecialTarget::SecondExpansion)
         {
-            crate::make_main::set_second_expansion(ctx);
+            crate::entry::set_second_expansion(ctx);
         } else if !one_shell(ctx) && special == Some(crate::parser::SpecialTarget::OneShell) {
-            crate::make_main::set_one_shell(ctx);
+            crate::entry::set_one_shell(ctx);
         } else if set_default != 0 && *(*ctx.default_goal_var.0.get()).value.offset(0) as i32 == 0 {
             let mut reject = false;
             // Pattern targets (containing `%`) are never the default goal.
@@ -2646,16 +2731,19 @@ pub unsafe fn check_specials(
                 // `*mut File` global in the c2rust graph). No guard is held while
                 // we test names.
                 let suffix_deps: Vec<Vec<u8>> = match lookup_file(ctx, b".SUFFIXES") {
-                    Some(sid) => match ctx.filenodes.get(sid) {
-                        Some(node) => node
-                            .lock()
-                            .expect("file node lock poisoned")
-                            .deps
-                            .iter()
-                            .map(dep_name_bytes)
-                            .collect(),
-                        None => Vec::new(),
-                    },
+                    Some(sid) => {
+                        match ctx.filenodes.get(sid) {
+                            Some(node) => {
+                                node.lock()
+                                    .expect("file node lock poisoned")
+                                    .deps
+                                    .iter()
+                                    .map(dep_name_bytes)
+                                    .collect()
+                            }
+                            None => Vec::new(),
+                        }
+                    }
                     None => Vec::new(),
                 };
                 'outer: for dname in &suffix_deps {
@@ -3766,7 +3854,10 @@ pub unsafe fn parse_file_seq(
                                         name
                                     };
                                 let nm_buf = if !prefix.is_null() {
-                                    Some(concat(&[cstr_bytes_or_empty(prefix), cstr_bytes_or_empty(base)]))
+                                    Some(concat(&[
+                                        cstr_bytes_or_empty(prefix),
+                                        cstr_bytes_or_empty(base),
+                                    ]))
                                 } else {
                                     None
                                 };
@@ -3780,8 +3871,10 @@ pub unsafe fn parse_file_seq(
                             crate::file::free_seq_chain(found);
                         }
                     } else {
-                        let __n_1_buf =
-                            concat(&[cstr_bytes_or_empty(prefix), cstr_bytes_or_empty(*nlist.offset(i as isize))]);
+                        let __n_1_buf = concat(&[
+                            cstr_bytes_or_empty(prefix),
+                            cstr_bytes_or_empty(*nlist.offset(i as isize)),
+                        ]);
                         push_name!(__n_1_buf.as_ptr() as *const ::core::ffi::c_char);
                     }
                     i += 1;
@@ -3909,10 +4002,11 @@ mod file_seq_rejection_tests {
     //! `split_prereqs{,_vec}`, `string_glob`, `parse_deps`, `parse_dep_names`
     //! and the `.SUFFIXES`/builtin-rule setup — propagates the same verdict.
 
-    use super::parse_file_seq;
-    use crate::build_result::BuildError;
-    use crate::expand::VARIABLE_BUFFER_TEST_LOCK;
-    use std::ffi::CString;
+    use {
+        super::parse_file_seq,
+        crate::{build_result::BuildError, expand::VARIABLE_BUFFER_TEST_LOCK},
+        std::ffi::CString,
+    };
 
     /// Define `name` as a recursive global variable holding `value`.
     ///
@@ -3935,7 +4029,7 @@ mod file_seq_rejection_tests {
     }
 
     fn fresh_ctx() -> crate::execctx::ExecContext {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: fresh context; each table is initialized once.
         unsafe {

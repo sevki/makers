@@ -3,8 +3,8 @@
 use std::sync::Once;
 
 use libfuzzer_sys::fuzz_target;
+use make_sys::entry::initialize_stopchar_map;
 use make_sys::makedb::MakeDb;
-use make_sys::make_main::initialize_stopchar_map;
 use make_sys::parser::classify_line;
 
 static INIT: Once = Once::new();

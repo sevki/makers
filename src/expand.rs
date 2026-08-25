@@ -5,10 +5,14 @@
 //! Port of `expand.c`.
 
 pub use crate::ffi_types::size_t;
-use crate::file::{File, VariableSet, VariableSetList};
-use crate::misc::{lindex, xstrdup, xstrndup};
-use crate::output::FmtArg;
-use libc::{free, memcpy, strchr, strlen, strncmp};
+use {
+    crate::{
+        file::{File, VariableSet, VariableSetList},
+        misc::{lindex, xstrdup, xstrndup},
+        output::FmtArg,
+    },
+    libc::{free, memcpy, strchr, strlen, strncmp},
+};
 extern "C" {
     static mut environ: *mut *mut ::core::ffi::c_char;
 }
@@ -45,15 +49,24 @@ fn percent_prefixed(s: &[u8]) -> Vec<u8> {
 pub type file = File;
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
-use crate::floc::Floc;
-use crate::function::{handle_function, patsubst_expand_pat};
-use crate::make_main::{db_level, stopchar_map};
-use crate::output::fatal_err;
-use crate::read::find_percent;
 pub use crate::variable::variable;
-use crate::variable::{
-    env_recursion, install_file_context, lookup_variable, lookup_variable_in_set, o_command,
-    o_env_override, o_override, restore_file_context, warn_undefined,
+use crate::{
+    entry::{db_level, stopchar_map},
+    floc::Floc,
+    function::{handle_function, patsubst_expand_pat},
+    output::fatal_err,
+    read::find_percent,
+    variable::{
+        env_recursion,
+        install_file_context,
+        lookup_variable,
+        lookup_variable_in_set,
+        o_command,
+        o_env_override,
+        o_override,
+        restore_file_context,
+        warn_undefined,
+    },
 };
 
 /// "Whole string" length sentinel accepted by [`expand_string_buf`].
@@ -252,7 +265,8 @@ pub unsafe fn recursively_expand_for_file(
     }
     let saved_varp = ctx.expanding_var.get();
     if !(*v).fileinfo.filenm.is_null() {
-        ctx.expanding_var.set(Some(&raw mut (*v).fileinfo as *const Floc));
+        ctx.expanding_var
+            .set(Some(&raw mut (*v).fileinfo as *const Floc));
     }
     if ctx.reading_file.0.get().is_null() {
         set_reading = 1;
@@ -282,7 +296,12 @@ pub unsafe fn recursively_expand_for_file(
         (*v).set_exp_count((*v).exp_count() - 1);
     }
     if !file.is_null() {
-        install_file_context(ctx, file, &raw mut savev, ::core::ptr::null_mut::<*const Floc>());
+        install_file_context(
+            ctx,
+            file,
+            &raw mut savev,
+            ::core::ptr::null_mut::<*const Floc>(),
+        );
     }
     (*v).set_expanding(1 as ::core::ffi::c_uint as ::core::ffi::c_uint);
     // Held rather than `?`-ed on the spot: the four restorations below have to
@@ -866,7 +885,12 @@ unsafe fn variable_append(
         buf = variable_buffer_output(ctx, buf, c" ".as_ptr(), 1);
     }
     if (*v).recursive() == 0 {
-        return Ok(variable_buffer_output(ctx, buf, (*v).value, strlen((*v).value)));
+        return Ok(variable_buffer_output(
+            ctx,
+            buf,
+            (*v).value,
+            strlen((*v).value),
+        ));
     }
     // A malformed reference inside an appended definition — say
     // `FOO += $(word 1)` — now travels out through the recursion and through
@@ -962,8 +986,7 @@ mod no_recursive_expand_msg_tests {
             );
             assert_eq!(
                 no_recursive_expand_msg(::core::ptr::null(), 0, b"PATH"),
-                b"(null):0: not recursively expanding PATH to export to shell function\n"
-                    .to_vec()
+                b"(null):0: not recursively expanding PATH to export to shell function\n".to_vec()
             );
         }
     }
@@ -980,10 +1003,16 @@ mod expander_rejection_tests {
     //! Each rejection is asserted next to a well-formed input, so the success
     //! path stays pinned alongside it.
 
-    use super::{expand_string_buf, initialize_variable_output, SIZE_MAX, VARIABLE_BUFFER_TEST_LOCK};
-    use crate::build_result::BuildError;
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::CString;
+    use {
+        super::{
+            expand_string_buf,
+            initialize_variable_output,
+            SIZE_MAX,
+            VARIABLE_BUFFER_TEST_LOCK,
+        },
+        crate::{build_result::BuildError, entry::initialize_stopchar_map},
+        std::ffi::CString,
+    };
 
     /// Expand `input` in a fresh context and return the expanded bytes, or the
     /// `BuildError` the expander rejected it with.
@@ -1107,7 +1136,10 @@ mod expander_rejection_tests {
     fn expands_literal_text_unchanged() {
         // SAFETY: as above.
         unsafe {
-            assert_eq!(expand("plain text").expect("literal"), b"plain text".to_vec());
+            assert_eq!(
+                expand("plain text").expect("literal"),
+                b"plain text".to_vec()
+            );
             assert_eq!(expand("a$$b").expect("escape"), b"a$b".to_vec());
         }
     }
@@ -1126,11 +1158,20 @@ mod recursive_expansion_tests {
     //! plain `$(NAME)` reference, which goes through `expand_variable_output`
     //! and only started propagating when that cone converted.
 
-    use super::{expand_string_buf, initialize_variable_output, SIZE_MAX, VARIABLE_BUFFER_TEST_LOCK};
-    use crate::build_result::BuildError;
-    use crate::make_main::initialize_stopchar_map;
-    use crate::variable::{define_variable_in_set, o_file};
-    use std::ffi::CString;
+    use {
+        super::{
+            expand_string_buf,
+            initialize_variable_output,
+            SIZE_MAX,
+            VARIABLE_BUFFER_TEST_LOCK,
+        },
+        crate::{
+            build_result::BuildError,
+            entry::initialize_stopchar_map,
+            variable::{define_variable_in_set, o_file},
+        },
+        std::ffi::CString,
+    };
 
     /// Define `name` as a recursive variable holding `value`, then expand
     /// `input` in the same context. `appending` marks the definition `+=`,
@@ -1198,8 +1239,8 @@ mod recursive_expansion_tests {
                         expand_with("SELF", "$(SELF:x=y)", "$(SELF:x=y)", appending),
                         Err(BuildError::Failure)
                     ),
-                    "a self-referencing recursive variable must come back as a \
-                     value (appending = {appending})"
+                    "a self-referencing recursive variable must come back as a value (appending = \
+                     {appending})"
                 );
             }
         }
@@ -1219,8 +1260,7 @@ mod recursive_expansion_tests {
                         expand_with("PSELF", "$(PSELF)", "$(PSELF)", appending),
                         Err(BuildError::Failure)
                     ),
-                    "a plain self-reference must come back as a value \
-                     (appending = {appending})"
+                    "a plain self-reference must come back as a value (appending = {appending})"
                 );
             }
             // A single-character name takes the `$X` arm of `expand_string_buf`,
@@ -1254,7 +1294,6 @@ mod recursive_expansion_tests {
     }
 }
 
-
 #[cfg(test)]
 mod expander_cleanup_path_tests {
     //! Since #442 the three expander entry points — `expand_argument`,
@@ -1264,21 +1303,25 @@ mod expander_cleanup_path_tests {
     //! that has to be undone before the error leaves the frame; these tests
     //! drive that error path and then check the frame was left clean.
 
-    use super::{
-        allocated_expand_string_for_file, expand_argument, expand_string_for_file,
-        expand_string_for_file_c, install_variable_buffer, VARIABLE_BUFFER_TEST_LOCK,
+    use {
+        super::{
+            allocated_expand_string_for_file,
+            expand_argument,
+            expand_string_for_file,
+            expand_string_for_file_c,
+            install_variable_buffer,
+            VARIABLE_BUFFER_TEST_LOCK,
+        },
+        crate::{build_result::BuildError, ffi_types::size_t, file::File},
+        std::ffi::CString,
     };
-    use crate::build_result::BuildError;
-    use crate::ffi_types::size_t;
-    use crate::file::File;
-    use std::ffi::CString;
 
     /// `$(word 1)` is a well-formed reference to a builtin called with the
     /// wrong number of arguments, so expanding it is refused.
     const BAD: &str = "$(word 1)";
 
     fn fresh_ctx() -> crate::execctx::ExecContext {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: fresh context; both tables are initialized once per test.
         unsafe {
@@ -1306,8 +1349,11 @@ mod expander_cleanup_path_tests {
             let outer = ctx.variable_buffer.ptr();
 
             let bad = CString::new(BAD).unwrap();
-            let outcome =
-                allocated_expand_string_for_file(&ctx, bad.as_ptr(), ::core::ptr::null_mut::<File>());
+            let outcome = allocated_expand_string_for_file(
+                &ctx,
+                bad.as_ptr(),
+                ::core::ptr::null_mut::<File>(),
+            );
 
             assert!(matches!(outcome, Err(BuildError::Failure)));
             assert_eq!(
@@ -1318,9 +1364,12 @@ mod expander_cleanup_path_tests {
 
             // The same call on a well-formed source still yields the expansion.
             let good = CString::new("plain").unwrap();
-            let p =
-                allocated_expand_string_for_file(&ctx, good.as_ptr(), ::core::ptr::null_mut::<File>())
-                    .expect("well-formed");
+            let p = allocated_expand_string_for_file(
+                &ctx,
+                good.as_ptr(),
+                ::core::ptr::null_mut::<File>(),
+            )
+            .expect("well-formed");
             assert_eq!(::std::ffi::CStr::from_ptr(p).to_bytes(), b"plain");
             libc::free(p as *mut ::core::ffi::c_void);
         }

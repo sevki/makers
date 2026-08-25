@@ -2,8 +2,10 @@ pub use crate::file::{CommandState, UpdateStatus};
 use libc::free;
 
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{file, VariableSet, VariableSetList};
-use crate::misc::xmalloc;
+use crate::{
+    file::{file, VariableSet, VariableSetList},
+    misc::xmalloc,
+};
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct gmk_floc {
@@ -17,12 +19,12 @@ pub type gmk_func_ptr = Option<
         *mut *mut ::core::ffi::c_char,
     ) -> *mut ::core::ffi::c_char,
 >;
-use crate::expand::{
-    allocated_expand_string_for_file, install_variable_buffer, restore_variable_buffer,
+use crate::{
+    expand::{allocated_expand_string_for_file, install_variable_buffer, restore_variable_buffer},
+    floc::Floc,
+    function::define_new_function,
+    read::eval_buffer,
 };
-use crate::floc::Floc;
-use crate::function::define_new_function;
-use crate::read::eval_buffer;
 
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
@@ -77,7 +79,7 @@ pub unsafe extern "C" fn gmk_eval(buffer: *const ::core::ffi::c_char, gfloc: *co
     // channel (installed for all of `main_0`, which is on the stack whenever a
     // loaded plugin runs). The variable-buffer save/restore now needs that
     // same `ctx`, so it moves inside the closure alongside `eval_buffer`.
-    crate::make_main::with_exec_context(|ctx| unsafe {
+    crate::entry::with_exec_context(|ctx| unsafe {
         install_variable_buffer(ctx, &raw mut pbuf, &raw mut plen);
         // `gmk_eval` is a C-ABI entry point called from a loaded plugin: there
         // is no Rust frame between here and the plugin to carry a `Result`, so
@@ -118,7 +120,7 @@ pub unsafe extern "C" fn gmk_expand(ref_0: *const ::core::ffi::c_char) -> *mut :
 /// context. Fall back to a throwaway default context only when none is
 /// installed (bare unit tests).
 fn with_live_or_default_ctx<R>(f: impl Fn(&crate::execctx::ExecContext) -> R) -> R {
-    match crate::make_main::try_with_exec_context(&f) {
+    match crate::entry::try_with_exec_context(&f) {
         Some(result) => result,
         None => f(&crate::execctx::ExecContext::default()),
     }
@@ -142,7 +144,8 @@ pub unsafe extern "C" fn gmk_add_function(
         // `exit_on_err` rather than propagating (#432 Phase B, #442). The five
         // name/arity validations inside `define_new_function` now hand their
         // diagnostic back as a value; this is the one place it still exits.
-        if let Err(e) = define_new_function(ctx, ctx.reading_file.0.get(), name, min, max, flags, func)
+        if let Err(e) =
+            define_new_function(ctx, ctx.reading_file.0.get(), name, min, max, flags, func)
         {
             crate::output::exit_on_err(e);
         }
@@ -158,7 +161,9 @@ mod gmk_expand_tests {
     unsafe fn expand_to_string(input: &::core::ffi::CStr) -> String {
         let p = super::gmk_expand(input.as_ptr());
         assert!(!p.is_null());
-        let s = ::core::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
+        let s = ::core::ffi::CStr::from_ptr(p)
+            .to_string_lossy()
+            .into_owned();
         super::gmk_free(p);
         s
     }
@@ -168,7 +173,7 @@ mod gmk_expand_tests {
         let _buf_g = crate::expand::VARIABLE_BUFFER_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _ctx = crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::entry::install_default_exec_context_for_test();
         // No context installed on this test thread: the fallback arm runs.
         let s = unsafe { expand_to_string(c"plugin-literal") };
         assert_eq!(s, "plugin-literal");
@@ -179,8 +184,8 @@ mod gmk_expand_tests {
         let _buf_g = crate::expand::VARIABLE_BUFFER_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        let _ctx = crate::make_main::install_default_exec_context_for_test();
-        let _ctx = crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::entry::install_default_exec_context_for_test();
+        let _ctx = crate::entry::install_default_exec_context_for_test();
         let s = unsafe { expand_to_string(c"plugin-live-ctx") };
         assert_eq!(s, "plugin-live-ctx");
     }

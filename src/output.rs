@@ -6,35 +6,47 @@
 //! are called with printf-style argument lists from all over the crate; the
 //! [`msg`] submodule provides native-Rust counterparts.
 
-use ::core::ffi::c_uint;
-use ::core::ptr::null;
-use std::sync::atomic::Ordering;
-
-use libc::{
-    __errno_location, close, ftruncate, lseek, strerror, EINTR, SEEK_END,
-    SEEK_SET,
+use {
+    ::core::{ffi::c_uint, ptr::null},
+    std::sync::atomic::Ordering,
 };
 
-use crate::execctx::ExecContext;
-use crate::ffi_types::{size_t, uintmax_t};
-use crate::floc::Floc;
-use crate::misc::{open_anon_tmpfd, writebuf};
-use crate::posixos::{
-    check_io_state, fd_noinherit, fd_reset_append, fd_set_append, osync_acquire, osync_clear,
-    osync_release,
+use libc::{__errno_location, close, ftruncate, lseek, strerror, EINTR, SEEK_END, SEEK_SET};
+
+use crate::{
+    execctx::ExecContext,
+    ffi_types::{size_t, uintmax_t},
+    floc::Floc,
+    misc::{open_anon_tmpfd, writebuf},
+    posixos::{
+        check_io_state,
+        fd_noinherit,
+        fd_reset_append,
+        fd_set_append,
+        osync_acquire,
+        osync_clear,
+        osync_release,
+    },
 };
 
 /// Per-target output state: temp-file descriptors for stdout/stderr while
 /// output sync is active.
-#[derive(Copy, Clone, BitfieldStruct)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct output {
     pub out: i32,
     pub err: i32,
-    #[bitfield(name = "syncout", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub syncout: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 3],
+    pub(crate) syncout: ::core::ffi::c_uint,
+}
+
+impl output {
+    pub fn syncout(&self) -> ::core::ffi::c_uint {
+        self.syncout
+    }
+
+    pub fn set_syncout(&mut self, val: ::core::ffi::c_uint) {
+        self.syncout = val;
+    }
 }
 
 /// Bytes needed to print an integer of type `uintmax_t`: digits (53/22
@@ -60,7 +72,7 @@ const IO_STDERR_OK: c_uint = 0x0010;
 /// before `main_0` and bare unit tests, where the former global was null
 /// too.
 pub fn output_context() -> *mut output {
-    crate::make_main::try_with_exec_context(|c| c.output_context.0.get())
+    crate::entry::try_with_exec_context(|c| c.output_context.0.get())
         .unwrap_or(::core::ptr::null_mut())
 }
 
@@ -68,7 +80,7 @@ pub fn output_context() -> *mut output {
 /// [`output_context`]). A no-op when no context is installed, mirroring the
 /// null-global steady state outside `main_0`'s extent.
 pub fn set_output_context(value: *mut output) {
-    let _ = crate::make_main::try_with_exec_context(|c| c.output_context.0.set(value));
+    let _ = crate::entry::try_with_exec_context(|c| c.output_context.0.set(value));
 }
 /// Whether the working-directory "Entering directory" trace has been emitted.
 ///
@@ -80,12 +92,12 @@ pub fn set_output_context(value: *mut output) {
 /// `gmk_eval` throwaway-context path, so both ends resolve to `main_0`'s real
 /// run state rather than a throwaway `ExecContext`.
 pub fn stdio_traced(ctx: &ExecContext) -> bool {
-    crate::make_main::with_options(ctx, |o| o.stdio_traced.get())
+    crate::entry::with_options(ctx, |o| o.stdio_traced.get())
 }
 
 /// Record whether the working-directory enter trace has been emitted.
 pub fn set_stdio_traced(ctx: &ExecContext, value: bool) {
-    crate::make_main::with_options(ctx, |o| o.stdio_traced.set(value));
+    crate::entry::with_options(ctx, |o| o.stdio_traced.set(value));
 }
 pub const OUTPUT_NONE: i32 = -1;
 /// errno of the first failed write to Rust stdout, 0 if none — the
@@ -136,7 +148,7 @@ pub fn trace_out_ctx<Out: std::io::Write, Err: std::io::Write>(
 /// default sink only when no context is installed at all (startup, bare unit
 /// tests).
 pub fn trace_out(bytes: &[u8]) {
-    if crate::make_main::try_with_exec_context(|ctx| trace_out_ctx(ctx, bytes)).is_some() {
+    if crate::entry::try_with_exec_context(|ctx| trace_out_ctx(ctx, bytes)).is_some() {
         return;
     }
     use std::io::Write;
@@ -212,7 +224,11 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     // null `program` global. Fall back to the plain name like
     // `msg::program_name` rather than passing null to the formatter.
     let program = ctx.program.0.get();
-    let program = if program.is_null() { c"make".as_ptr() } else { program };
+    let program = if program.is_null() {
+        c"make".as_ptr()
+    } else {
+        program
+    };
     let starting_directory = ctx.starting_directory.0.get();
     let fmt: *const ::core::ffi::c_char;
     if makelevel == 0 {
@@ -242,7 +258,7 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     // `static mut buf`/`len` pair); `_outputs` copies the bytes before
     // returning, so the local's lifetime is enough.
     let mut line: Vec<u8> = Vec::new();
-    if crate::make_main::opt_print_data_base(ctx) {
+    if crate::entry::opt_print_data_base(ctx) {
         line.extend_from_slice(b"# ");
     }
     // The `%u` slot only exists in the `makelevel != 0` formats and the `%s`
@@ -275,9 +291,7 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
 fn pump_perror<W: std::io::Write>(w: &mut W, what: &str, err: &std::io::Error) {
     // SAFETY: `strerror` returns a static NUL-terminated message for any
     // errno value.
-    let es = unsafe {
-        ::core::ffi::CStr::from_ptr(strerror(err.raw_os_error().unwrap_or(0)))
-    };
+    let es = unsafe { ::core::ffi::CStr::from_ptr(strerror(err.raw_os_error().unwrap_or(0))) };
     let _ = w.write_all(what.as_bytes());
     let _ = w.write_all(b": ");
     let _ = w.write_all(es.to_bytes());
@@ -346,15 +360,21 @@ pub unsafe fn pump_from_tmp(ctx: &ExecContext, from: i32, to_stderr: bool) {
     if to_stderr {
         // `dst` already *is* the borrowed stderr sink; report through it
         // directly rather than taking a second borrow of `ctx.stderr`.
-        pump_copy(&mut *src, &mut *ctx.stderr.borrow_mut(), false, |dst, what, e| {
-            pump_perror(dst, what, e)
-        });
+        pump_copy(
+            &mut *src,
+            &mut *ctx.stderr.borrow_mut(),
+            false,
+            |dst, what, e| pump_perror(dst, what, e),
+        );
     } else {
         // `dst` is the stdout sink here, so the stderr diagnostic borrows
         // the separate `ctx.stderr` `RefCell` freely.
-        pump_copy(&mut *src, &mut *ctx.stdout.borrow_mut(), true, |_dst, what, e| {
-            pump_perror(&mut *ctx.stderr.borrow_mut(), what, e)
-        });
+        pump_copy(
+            &mut *src,
+            &mut *ctx.stdout.borrow_mut(),
+            true,
+            |_dst, what, e| pump_perror(&mut *ctx.stderr.borrow_mut(), what, e),
+        );
     }
 }
 /// Create an anonymous temp fd in append mode for output sync.
@@ -420,7 +440,7 @@ pub unsafe fn setup_tmpfile(ctx: &ExecContext, out: *mut output) {
         &[],
     );
     output_close(ctx, out);
-    crate::make_main::with_options(ctx, |o| o.output_sync.set(OUTPUT_SYNC_NONE));
+    crate::entry::with_options(ctx, |o| o.output_sync.set(OUTPUT_SYNC_NONE));
     osync_clear();
     ctx.output_in_setup.0.store(false, Ordering::Relaxed);
 }
@@ -446,8 +466,8 @@ pub unsafe fn output_dump(ctx: &ExecContext, out: *mut output) {
             );
             osync_clear();
         }
-        if crate::make_main::opt_output_sync(ctx) != OUTPUT_SYNC_RECURSE
-            && crate::make_main::should_print_dir_mirror(ctx) != 0
+        if crate::entry::opt_output_sync(ctx) != OUTPUT_SYNC_RECURSE
+            && crate::entry::should_print_dir_mirror(ctx) != 0
         {
             traced = log_working_directory(ctx, 1);
         }
@@ -493,7 +513,7 @@ pub unsafe fn output_init(ctx: &ExecContext, out: *mut output) {
         (*out).err = OUTPUT_NONE;
         (*out).out = (*out).err;
         (*out).set_syncout(
-            (crate::make_main::opt_output_sync(ctx) != 0) as i32 as ::core::ffi::c_uint
+            (crate::entry::opt_output_sync(ctx) != 0) as i32 as ::core::ffi::c_uint
                 as ::core::ffi::c_uint,
         );
         return;
@@ -516,8 +536,14 @@ pub unsafe fn output_close(ctx: &ExecContext, out: *mut output) {
         if stdio_traced(ctx) {
             log_working_directory(ctx, 0);
         }
-        fd_reset_append(libc::STDOUT_FILENO, ctx.stdout_flags.0.load(Ordering::Relaxed));
-        fd_reset_append(libc::STDERR_FILENO, ctx.stderr_flags.0.load(Ordering::Relaxed));
+        fd_reset_append(
+            libc::STDOUT_FILENO,
+            ctx.stdout_flags.0.load(Ordering::Relaxed),
+        );
+        fd_reset_append(
+            libc::STDERR_FILENO,
+            ctx.stderr_flags.0.load(Ordering::Relaxed),
+        );
         return;
     }
     output_dump(ctx, out);
@@ -542,10 +568,10 @@ pub unsafe fn output_start(ctx: &ExecContext) {
     {
         setup_tmpfile(ctx, osync);
     }
-    if (crate::make_main::opt_output_sync(ctx) == OUTPUT_SYNC_NONE
-        || crate::make_main::opt_output_sync(ctx) == OUTPUT_SYNC_RECURSE)
+    if (crate::entry::opt_output_sync(ctx) == OUTPUT_SYNC_NONE
+        || crate::entry::opt_output_sync(ctx) == OUTPUT_SYNC_RECURSE)
         && !stdio_traced(ctx)
-        && crate::make_main::should_print_dir_mirror(ctx) != 0
+        && crate::entry::should_print_dir_mirror(ctx) != 0
     {
         set_stdio_traced(ctx, log_working_directory(ctx, 1) != 0);
     }
@@ -734,7 +760,10 @@ unsafe fn push_program_prefix(
     fatal_marker: bool,
 ) {
     let program = ctx.program.0.get();
-    push_cstr(out, (!program.is_null()).then(|| ::core::ffi::CStr::from_ptr(program)));
+    push_cstr(
+        out,
+        (!program.is_null()).then(|| ::core::ffi::CStr::from_ptr(program)),
+    );
     if makelevel == 0 {
         out.extend_from_slice(b": ");
     } else {
@@ -758,12 +787,7 @@ unsafe fn push_error_prefix(
         // `filenm` is non-null in this arm, so it is always `Some`.
         push_cstr(out, Some(::core::ffi::CStr::from_ptr(fl.filenm)));
         out.push(b':');
-        out.extend_from_slice(
-            fl.lineno
-                .wrapping_add(fl.offset)
-                .to_string()
-                .as_bytes(),
-        );
+        out.extend_from_slice(fl.lineno.wrapping_add(fl.offset).to_string().as_bytes());
         out.extend_from_slice(b": ");
         if fatal_marker {
             out.extend_from_slice(b"*** ");
@@ -861,7 +885,7 @@ pub unsafe fn fatal_err(
     out.extend_from_slice(b".  Stop.\n");
     out.push(0);
     outputs(ctx, 1, out.as_ptr() as *const ::core::ffi::c_char);
-    crate::make_main::die_cleanup(ctx, MAKE_FAILURE);
+    crate::entry::die_cleanup(ctx, MAKE_FAILURE);
     crate::build_result::BuildError::Failure
 }
 
@@ -929,7 +953,7 @@ pub fn out_of_memory() -> ! {
     // and write through its stdout sink; this can fire before startup
     // installs a context, in which case fall back to the plain program name
     // and the real process stdout — matching `trace_out`'s own fallback.
-    crate::make_main::try_with_exec_context(write_oom_message_from_ctx)
+    crate::entry::try_with_exec_context(write_oom_message_from_ctx)
         .unwrap_or_else(|| write_oom_message(&mut std::io::stdout().lock(), "make"));
     std::process::exit(MAKE_FAILURE)
 }
@@ -951,9 +975,10 @@ fn write_oom_message(out: &mut impl std::io::Write, prog: &str) {
 /// Compatibility note: the variadic extern "C" versions still live above
 /// for legacy call sites; both produce identical output formats.
 pub mod msg {
-    use super::{outputs, MAKE_FAILURE};
-    use crate::execctx::ExecContext;
-    use crate::floc::Floc;
+    use {
+        super::{outputs, MAKE_FAILURE},
+        crate::{execctx::ExecContext, floc::Floc},
+    };
 
     pub(crate) fn program_name(ctx: &ExecContext) -> String {
         let p = ctx.program.0.get();
@@ -1036,7 +1061,7 @@ pub mod msg {
     ) -> crate::build_result::BuildError {
         let line = format!("{}{msg}.  Stop.\n", build_prefix(ctx, loc, true));
         write_line(ctx, line, true);
-        crate::make_main::die_cleanup(ctx, MAKE_FAILURE);
+        crate::entry::die_cleanup(ctx, MAKE_FAILURE);
         crate::build_result::BuildError::Failure
     }
 
@@ -1129,7 +1154,9 @@ mod log_working_directory_tests {
                 makelevel,
                 ..Default::default()
             });
-            ctx.starting_directory.0.set(dir.as_ptr() as *mut ::core::ffi::c_char);
+            ctx.starting_directory
+                .0
+                .set(dir.as_ptr() as *mut ::core::ffi::c_char);
             for entering in [1, 0] {
                 // SAFETY: single-threaded test; a valid NUL-terminated
                 // `starting_directory` is installed above.
@@ -1149,12 +1176,11 @@ mod output_context_tests {
 
     #[test]
     fn accessors_round_trip_through_the_live_context() {
-        let _ctx = crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::entry::install_default_exec_context_for_test();
         let mut record = super::output {
             out: 7,
             err: 8,
-            syncout: [1; 1],
-            c2rust_padding: [0; 3],
+            syncout: 1,
         };
         super::set_output_context(&raw mut record);
         assert_eq!(super::output_context(), &raw mut record);
@@ -1168,10 +1194,18 @@ mod output_context_tests {
 
 #[cfg(test)]
 mod outputs_tests {
-    use super::{
-        _outputs, output, pump_copy, pump_perror, write_oom_message, ExecContext, OUTPUT_NONE,
+    use {
+        super::{
+            _outputs,
+            output,
+            pump_copy,
+            pump_perror,
+            write_oom_message,
+            ExecContext,
+            OUTPUT_NONE,
+        },
+        std::ffi::CString,
     };
-    use std::ffi::CString;
 
     /// `write_oom_message` formats exactly `<prog>: *** virtual memory
     /// exhausted\n` and flushes — the no-alloc body `out_of_memory` uses on
@@ -1277,7 +1311,9 @@ mod outputs_tests {
             sink: Vec::new(),
         };
         let mut errs: Vec<u8> = Vec::new();
-        pump_copy(&mut src, &mut dst, false, |_, what, e| pump_perror(&mut errs, what, e));
+        pump_copy(&mut src, &mut dst, false, |_, what, e| {
+            pump_perror(&mut errs, what, e)
+        });
         assert_eq!(dst.sink.len(), 8192, "first chunk written, then stopped");
         assert!(
             String::from_utf8_lossy(&errs).starts_with("fwrite(): "),
@@ -1303,7 +1339,9 @@ mod outputs_tests {
         }
         let mut dst: Vec<u8> = Vec::new();
         let mut errs: Vec<u8> = Vec::new();
-        pump_copy(&mut BadRead, &mut dst, false, |_, what, e| pump_perror(&mut errs, what, e));
+        pump_copy(&mut BadRead, &mut dst, false, |_, what, e| {
+            pump_perror(&mut errs, what, e)
+        });
         assert!(dst.is_empty(), "nothing pumped from a failing reader");
         // `BadRead` fails both `seek` and `read`, so `report_err` runs for
         // both the doomed rewind and the read itself.
@@ -1318,7 +1356,11 @@ mod outputs_tests {
     #[test]
     fn pump_perror_formats_what_and_strerror() {
         let mut out: Vec<u8> = Vec::new();
-        pump_perror(&mut out, "lseek()", &std::io::Error::from_raw_os_error(libc::ENOENT));
+        pump_perror(
+            &mut out,
+            "lseek()",
+            &std::io::Error::from_raw_os_error(libc::ENOENT),
+        );
         assert_eq!(out, b"lseek(): No such file or directory\n");
     }
 
@@ -1439,8 +1481,13 @@ mod push_cstr_unsafe_oracle {
 
     #[test]
     fn matches_oracle() {
-        let cases: &[Option<&::core::ffi::CStr>] =
-            &[None, Some(c""), Some(c"make"), Some(c"foo.mk:12: "), Some(c"x")];
+        let cases: &[Option<&::core::ffi::CStr>] = &[
+            None,
+            Some(c""),
+            Some(c"make"),
+            Some(c"foo.mk:12: "),
+            Some(c"x"),
+        ];
         for &s in cases {
             // Seed both buffers so a replace-instead-of-append mutant is caught.
             let mut safe = vec![b'<'];

@@ -1,29 +1,55 @@
-use crate::default::{
-    define_default_variables, install_default_implicit_rules, install_default_suffix_rules,
-    set_default_suffixes, undefine_default_variables,
-};
-use crate::dir::print_dir_data_base;
 pub use crate::ffi_types::{
-    __clock_t, __off64_t, __off_t, __pid_t, __sig_atomic_t, __uid_t, pid_t, sig_atomic_t, size_t,
+    __clock_t,
+    __off64_t,
+    __off_t,
+    __pid_t,
+    __sig_atomic_t,
+    __uid_t,
+    pid_t,
+    sig_atomic_t,
+    size_t,
     uintmax_t,
 };
-use crate::file::{file, us_success, NameSeq, UpdateStatus, VariableSet, VariableSetList};
-use crate::floc::Floc;
-use crate::load::unload_all;
-use crate::misc::{get_tmpdir, get_tmpfile, spin};
-use crate::misc::{make_toui, xmalloc, xstrdup};
-use crate::read::construct_include_path;
-use crate::strcache::strcache_add;
-use crate::strcache::{strcache_init, strcache_print_stats};
-use crate::variable::print_variable_data_base;
-use crate::vpath::{build_vpath_lists, print_vpath_data_base};
-use c2rust_bitfields;
-use libc;
-use libc::{
-    __errno_location, _exit, atof, exit, free, isatty, putenv, setlocale,
-    sprintf, stpcpy, strchr, strcmp, strerror, strrchr, tolower, ttyname,
+use {
+    crate::{
+        default::{
+            define_default_variables,
+            install_default_implicit_rules,
+            install_default_suffix_rules,
+            set_default_suffixes,
+            undefine_default_variables,
+        },
+        dir::print_dir_data_base,
+        file::{file, us_success, NameSeq, UpdateStatus, VariableSet, VariableSetList},
+        floc::Floc,
+        load::unload_all,
+        misc::{get_tmpdir, get_tmpfile, make_toui, spin, xmalloc, xstrdup},
+        read::construct_include_path,
+        strcache::{strcache_add, strcache_init, strcache_print_stats},
+        variable::print_variable_data_base,
+        vpath::{build_vpath_lists, print_vpath_data_base},
+    },
+    libc::{
+        self,
+        __errno_location,
+        _exit,
+        atof,
+        exit,
+        free,
+        isatty,
+        putenv,
+        setlocale,
+        sprintf,
+        stpcpy,
+        strchr,
+        strcmp,
+        strerror,
+        strrchr,
+        tolower,
+        ttyname,
+    },
+    std::sync::atomic::Ordering,
 };
-use std::sync::atomic::Ordering;
 
 /// Differential-test oracle for the clap-based `decode_switches`: the
 /// original `getopt_long`-based implementation, preserved verbatim per
@@ -215,23 +241,47 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
-#[derive(Copy, Clone, Debug, BitfieldStruct)]
+#[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct CommandSwitch {
     pub c: i32,
     pub type_0: OptionArgKind,
     pub value_ptr: *mut ::core::ffi::c_void,
-    #[bitfield(name = "env", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "toenv", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "no_makefile", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "specified", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    pub env_toenv_no_makefile_specified: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 7],
+    pub(crate) env: ::core::ffi::c_uint,
+    pub(crate) toenv: ::core::ffi::c_uint,
+    pub(crate) no_makefile: ::core::ffi::c_uint,
+    pub(crate) specified: ::core::ffi::c_uint,
     pub noarg_value: *const ::core::ffi::c_void,
     pub default_value: *const ::core::ffi::c_void,
     pub long_name: *const ::core::ffi::c_char,
     pub origin: *mut variable_origin,
+}
+
+impl CommandSwitch {
+    pub fn env(&self) -> ::core::ffi::c_uint {
+        self.env
+    }
+    pub fn set_env(&mut self, val: ::core::ffi::c_uint) {
+        self.env = val;
+    }
+    pub fn toenv(&self) -> ::core::ffi::c_uint {
+        self.toenv
+    }
+    pub fn set_toenv(&mut self, val: ::core::ffi::c_uint) {
+        self.toenv = val;
+    }
+    pub fn no_makefile(&self) -> ::core::ffi::c_uint {
+        self.no_makefile
+    }
+    pub fn set_no_makefile(&mut self, val: ::core::ffi::c_uint) {
+        self.no_makefile = val;
+    }
+    pub fn specified(&self) -> ::core::ffi::c_uint {
+        self.specified
+    }
+    pub fn set_specified(&mut self, val: ::core::ffi::c_uint) {
+        self.specified = val;
+    }
 }
 pub type OptionArgKind = ::core::ffi::c_uint;
 pub const ignore: OptionArgKind = 7;
@@ -242,40 +292,72 @@ pub const strlist: OptionArgKind = 3;
 pub const string: OptionArgKind = 2;
 pub const flag_off: OptionArgKind = 1;
 pub const flag: OptionArgKind = 0;
-use crate::commands::{fatal_error_signal, handling_fatal_signal};
-use crate::expand::{
-    expand_string_buf, expand_variable_buf, initialize_variable_output, install_variable_buffer,
-    restore_variable_buffer, variable_buffer_output,
+use crate::{
+    commands::{fatal_error_signal, handling_fatal_signal},
+    expand::{
+        expand_string_buf,
+        expand_variable_buf,
+        initialize_variable_output,
+        install_variable_buffer,
+        restore_variable_buffer,
+        variable_buffer_output,
+    },
+    file::{
+        enter_file,
+        file_timestamp_now,
+        file_timestamp_string,
+        lookup_file,
+        print_file_data_base,
+        print_targets,
+        remove_intermediates,
+        snap_deps,
+        verify_file_data_base,
+    },
+    function::hash_init_function_table,
+    guile::guile_gmake_setup,
+    job::{child_handler, exec_command, job_slots_used, jobserver_tokens, reap_children},
+    load::load_file,
+    misc::{concat, cstr_bytes_or_empty},
+    output::{
+        error,
+        fatal_err,
+        output_context,
+        perror_with_name,
+        pfatal_with_name_err,
+        set_output_context,
+        set_stdio_traced,
+        stdio_traced,
+        FmtArg,
+    },
+    posixos::{
+        check_io_state,
+        jobserver_acquire_all,
+        jobserver_clear,
+        jobserver_enabled,
+        jobserver_get_auth,
+        jobserver_parse_auth,
+        jobserver_post_child,
+        jobserver_pre_child,
+        jobserver_release,
+        jobserver_setup,
+        osync_clear,
+        osync_get_mutex,
+        osync_parse_mutex,
+        osync_setup,
+    },
+    read::{eval_buffer, parse_file_seq, read_all_makefiles, tilde_expand},
+    remake::{f_mtime, update_goal_chain},
+    rule::{convert_to_pattern, print_rule_data_base, snap_implicit_rules},
+    variable::{
+        define_automatic_variables,
+        define_variable_in_set,
+        init_hash_global_variable_set,
+        lookup_variable,
+        reset_env_override,
+        try_variable_definition,
+    },
 };
-pub use crate::file::nameseq;
-use crate::file::{
-    enter_file, file_timestamp_now, file_timestamp_string, lookup_file, print_file_data_base,
-    print_targets, remove_intermediates, snap_deps, verify_file_data_base,
-};
-use crate::function::hash_init_function_table;
-use crate::guile::guile_gmake_setup;
-use crate::job::{child_handler, exec_command, job_slots_used, jobserver_tokens, reap_children};
-use crate::load::load_file;
-use crate::misc::{concat, cstr_bytes_or_empty};
-pub use crate::output::output;
-use crate::output::{
-    error, fatal_err, output_context, perror_with_name, pfatal_with_name_err,
-    set_output_context, set_stdio_traced,
-    stdio_traced, FmtArg,
-};
-use crate::posixos::{
-    check_io_state, jobserver_acquire_all, jobserver_clear, jobserver_enabled, jobserver_get_auth,
-    jobserver_parse_auth, jobserver_post_child, jobserver_pre_child, jobserver_release,
-    jobserver_setup, osync_clear, osync_get_mutex, osync_parse_mutex, osync_setup,
-};
-pub use crate::read::goaldep;
-use crate::read::{eval_buffer, parse_file_seq, read_all_makefiles, tilde_expand};
-use crate::remake::{f_mtime, update_goal_chain};
-use crate::rule::{convert_to_pattern, print_rule_data_base, snap_implicit_rules};
-use crate::variable::{
-    define_automatic_variables, define_variable_in_set, init_hash_global_variable_set,
-    lookup_variable, reset_env_override, try_variable_definition,
-};
+pub use crate::{file::nameseq, output::output, read::goaldep};
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct CommandVariable {
@@ -384,8 +466,20 @@ pub fn set_db_level(ctx: &crate::execctx::ExecContext, level: i32) {
 
 #[cfg(test)]
 mod db_level_tests {
-    use super::{db_level, set_db_level, DB_ALL, DB_BASIC, DB_IMPLICIT, DB_JOBS, DB_NONE, DB_PRINT, DB_WHY};
-    use crate::execctx::ExecContext;
+    use {
+        super::{
+            db_level,
+            set_db_level,
+            DB_ALL,
+            DB_BASIC,
+            DB_IMPLICIT,
+            DB_JOBS,
+            DB_NONE,
+            DB_PRINT,
+            DB_WHY,
+        },
+        crate::execctx::ExecContext,
+    };
 
     /// Exercises the accessors: a plain store/load round-trip plus the
     /// `db_level |= ...` read-modify-write that `decode_debug_flags`
@@ -1050,7 +1144,9 @@ pub fn opt_command_count(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_ul
 /// channel so it always reaches `main_0`'s real `Options`, even on the
 /// `gmk_eval` throwaway-context path the `$(shell)`/`$(file)` writers take.
 pub fn bump_command_count(ctx: &crate::execctx::ExecContext) {
-    with_options(ctx, |o| o.command_count.set(o.command_count.get().wrapping_add(1)));
+    with_options(ctx, |o| {
+        o.command_count.set(o.command_count.get().wrapping_add(1))
+    });
 }
 /// Whether `snap_deps` has run for this make (the former `file::SNAPPED_DEPS`
 /// global), read through the `with_options` channel by `record_files` — which
@@ -1330,12 +1426,12 @@ pub fn stopchar_map() -> &'static [::core::ffi::c_ushort; 256] {
 // `crate::execctx::MakeSync`), Boxed so its address survives the build-phase
 // context rebuild for the `output_context` identity uses below.
 fn make_sync_syncout(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_uint {
-    (ctx.make_sync.0.get().syncout[0] & 1) as ::core::ffi::c_uint
+    ctx.make_sync.0.get().syncout()
 }
 
 fn set_make_sync_syncout(ctx: &crate::execctx::ExecContext, value: ::core::ffi::c_uint) {
     let mut ms = ctx.make_sync.0.get();
-    ms.syncout[0] = (ms.syncout[0] & !1) | (value as u8 & 1);
+    ms.set_syncout(value & 1);
     ctx.make_sync.0.set(ms);
 }
 unsafe extern "C" fn bsd_signal(sig: i32, func: bsd_signal_ret_t) -> bsd_signal_ret_t {
@@ -1881,7 +1977,8 @@ pub unsafe fn temp_stdin_unlink(ctx: &crate::execctx::ExecContext) {
         }
     }
 }
-unsafe fn main_0(
+
+pub unsafe fn main_0(
     argc: i32,
     argv: *mut *mut ::core::ffi::c_char,
     envp: *mut *mut ::core::ffi::c_char,
@@ -1980,19 +2077,19 @@ unsafe fn main_0(
     define_special(&ctx, b".RECIPEPREFIX\0")?;
     define_special(&ctx, b".WARNINGS\0")?;
     crate::variable::define_named(
-            &ctx,
-            b".SHELLFLAGS\0",
-            b"-c\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+        &ctx,
+        b".SHELLFLAGS\0",
+        b"-c\0" as *const u8 as *const ::core::ffi::c_char,
+        o_default,
+        0,
+    )?;
     crate::variable::define_named(
-            &ctx,
-            b".LOADED\0",
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+        &ctx,
+        b".LOADED\0",
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_default,
+        0,
+    )?;
     let features: *const ::core::ffi::c_char = b"target-specific order-only second-expansion else-if shortest-stem undefine oneshell nocomment grouped-target extra-prereqs notintermediate shell-export archives jobserver jobserver-fifo output-sync check-symlink maintainer\0"
         as *const u8 as *const ::core::ffi::c_char;
     crate::variable::define_named(&ctx, b".FEATURES\0", features, o_default, 0)?;
@@ -2057,8 +2154,7 @@ unsafe fn main_0(
         }
         i = i.wrapping_add(1);
     }
-    if !lookup_named(&ctx, b"GNUMAKEFLAGS\0")?.is_null()
-    {
+    if !lookup_named(&ctx, b"GNUMAKEFLAGS\0")?.is_null() {
         decode_env_switches(
             &ctx,
             options,
@@ -2083,8 +2179,8 @@ unsafe fn main_0(
     )?;
     set_make_sync_syncout(
         &ctx,
-        (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET) as i32
-            as ::core::ffi::c_uint as ::core::ffi::c_uint,
+        (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET)
+            as i32 as ::core::ffi::c_uint as ::core::ffi::c_uint,
     );
     set_output_context(if make_sync_syncout(&ctx) as i32 != 0 {
         ctx.make_sync.as_ptr()
@@ -2127,18 +2223,14 @@ unsafe fn main_0(
             *options.shuffle_mode.borrow_mut() = crate::shuffle::get_mode(&ctx);
         }
     }
-    if isatty(libc::STDOUT_FILENO) != 0
-        && lookup_named(&ctx, b"MAKE_TERMOUT\0")?.is_null()
-    {
+    if isatty(libc::STDOUT_FILENO) != 0 && lookup_named(&ctx, b"MAKE_TERMOUT\0")?.is_null() {
         define_tty_var(&ctx, b"MAKE_TERMOUT\0", libc::STDOUT_FILENO)?;
     }
-    if isatty(libc::STDERR_FILENO) != 0
-        && lookup_named(&ctx, b"MAKE_TERMERR\0")?.is_null()
-    {
+    if isatty(libc::STDERR_FILENO) != 0 && lookup_named(&ctx, b"MAKE_TERMERR\0")?.is_null() {
         define_tty_var(&ctx, b"MAKE_TERMERR\0", libc::STDERR_FILENO)?;
     }
-    syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET)
-        as i32 as ::core::ffi::c_uint;
+    syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE
+        || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET) as i32 as ::core::ffi::c_uint;
     if make_sync_syncout(&ctx) as i32 != 0 && syncing == 0 {
         crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
     }
@@ -2346,12 +2438,12 @@ unsafe fn main_0(
         }
     }
     crate::variable::define_named(
-            &ctx,
-            b"CURDIR\0",
-            &raw mut current_directory as *mut ::core::ffi::c_char,
-            o_file,
-            0,
-        )?;
+        &ctx,
+        b"CURDIR\0",
+        &raw mut current_directory as *mut ::core::ffi::c_char,
+        o_file,
+        0,
+    )?;
     {
         let include_dirs = options.include_dirs.borrow();
         let inc_paths: Vec<std::path::PathBuf> = include_dirs
@@ -2397,19 +2489,19 @@ unsafe fn main_0(
         }
     }
     crate::variable::define_named(
-            &ctx,
-            b"MAKE_COMMAND\0",
-            *argv.offset(0_i32 as isize),
-            o_default,
-            0,
-        )?;
+        &ctx,
+        b"MAKE_COMMAND\0",
+        *argv.offset(0_i32 as isize),
+        o_default,
+        0,
+    )?;
     crate::variable::define_named(
-            &ctx,
-            b"MAKE\0",
-            b"$(MAKE_COMMAND)\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            1,
-        )?;
+        &ctx,
+        b"MAKE\0",
+        b"$(MAKE_COMMAND)\0" as *const u8 as *const ::core::ffi::c_char,
+        o_default,
+        1,
+    )?;
     if !ctx.command_variables.0.get().is_null() {
         let mut cv: *mut CommandVariable;
         let mut v_1: *mut variable;
@@ -2584,12 +2676,12 @@ unsafe fn main_0(
     define_default_variables(&ctx, options)?;
     enter_file(&ctx, b".DEFAULT");
     ctx.default_goal_var.0.set(crate::variable::define_named(
-            &ctx,
-            b".DEFAULT_GOAL\0",
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_file,
-            0,
-        )?);
+        &ctx,
+        b".DEFAULT_GOAL\0",
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_file,
+        0,
+    )?);
     if !options.eval_strings.borrow().is_empty() {
         let eval_strings = options.eval_strings.borrow();
         let mut p_0: *mut ::core::ffi::c_char;
@@ -2676,12 +2768,12 @@ unsafe fn main_0(
         o_env,
     )?;
     crate::variable::define_named(
-            &ctx,
-            b"GNUMAKEFLAGS\0",
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_override,
-            0,
-        )?;
+        &ctx,
+        b"GNUMAKEFLAGS\0",
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_override,
+        0,
+    )?;
     decode_env_switches(
         &ctx,
         options,
@@ -2708,8 +2800,8 @@ unsafe fn main_0(
         }
         reset_jobserver(options);
     }
-    syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET)
-        as i32 as ::core::ffi::c_uint;
+    syncing = (opt_output_sync(&ctx) == OUTPUT_SYNC_LINE
+        || opt_output_sync(&ctx) == OUTPUT_SYNC_TARGET) as i32 as ::core::ffi::c_uint;
     if make_sync_syncout(&ctx) as i32 != 0 && syncing == 0 {
         crate::output::output_close(&ctx, ctx.make_sync.as_ptr());
     }
@@ -2789,11 +2881,7 @@ unsafe fn main_0(
     if options.jobserver_auth.borrow().is_some() && (0x2_i32 | 0x4_i32) & db_level(&ctx) != 0 {
         let auth = options.jobserver_auth.borrow().clone().unwrap();
         let auth_c = ::std::ffi::CString::new(auth.as_bytes()).unwrap_or_default();
-        crate::output::trace_parts(&[
-            b"Using jobserver controller ",
-            auth_c.to_bytes(),
-            b"\n",
-        ]);
+        crate::output::trace_parts(&[b"Using jobserver controller ", auth_c.to_bytes(), b"\n"]);
     }
     if options.sync_mutex.borrow().is_some() && 0x2_i32 & db_level(&ctx) != 0 {
         let mtx = options.sync_mutex.borrow().clone().unwrap();
@@ -3721,8 +3809,12 @@ fn normalize_argv_for_clap(
     while i < tokens.len() {
         let tok = &tokens[i];
         let matched = opt_args.iter().find(|o| {
-            o.short.as_deref().is_some_and(|s| tok.as_os_str() == ::std::ffi::OsStr::new(s))
-                || o.longs.iter().any(|l| tok.as_os_str() == ::std::ffi::OsStr::new(l.as_str()))
+            o.short
+                .as_deref()
+                .is_some_and(|s| tok.as_os_str() == ::std::ffi::OsStr::new(s))
+                || o.longs
+                    .iter()
+                    .any(|l| tok.as_os_str() == ::std::ffi::OsStr::new(l.as_str()))
         });
         let Some(o) = matched else {
             out.push(tok.clone());
@@ -3735,7 +3827,9 @@ fn normalize_argv_for_clap(
                 let consume = if o.c == 'j' as i32 {
                     !bytes.is_empty() && bytes.iter().all(u8::is_ascii_digit)
                 } else {
-                    bytes.first().is_some_and(|&b| b.is_ascii_digit() || b == b'.')
+                    bytes
+                        .first()
+                        .is_some_and(|&b| b.is_ascii_digit() || b == b'.')
                 };
                 if consume {
                     out.push(concat_eq(tok.as_os_str(), bytes));
@@ -3757,8 +3851,7 @@ fn normalize_argv_for_clap(
 /// `build_getopt_tables`/`getopt_long` pair -- rebuilt fresh on every
 /// `decode_switches` call, same as the table it replaced.
 fn build_clap_command(switches: &[CommandSwitch]) -> clap::Command {
-    use clap::builder::OsStringValueParser;
-    use clap::{Arg, ArgAction, Command};
+    use clap::{builder::OsStringValueParser, Arg, ArgAction, Command};
     let mut cmd = Command::new("make")
         .no_binary_name(true)
         .disable_help_flag(true)
@@ -3783,14 +3876,16 @@ fn build_clap_command(switches: &[CommandSwitch]) -> clap::Command {
         }
         arg = match cs.type_0 {
             t if t == flag || t == flag_off || t == ignore => arg.action(ArgAction::Count),
-            _ if cs.noarg_value.is_null() => arg
-                .action(ArgAction::Append)
-                .num_args(1)
-                .value_parser(OsStringValueParser::new()),
-            _ => arg
-                .action(ArgAction::Append)
-                .num_args(0..=1)
-                .value_parser(OsStringValueParser::new()),
+            _ if cs.noarg_value.is_null() => {
+                arg.action(ArgAction::Append)
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new())
+            }
+            _ => {
+                arg.action(ArgAction::Append)
+                    .num_args(0..=1)
+                    .value_parser(OsStringValueParser::new())
+            }
         };
         cmd = cmd.arg(arg);
     }
@@ -3985,10 +4080,14 @@ fn decode_switches(
                 // tolerance: drop the one token clap rejected and retry, so
                 // an unrelated valid switch elsewhere on the same command
                 // line (or MAKEFLAGS-derived token list) still applies.
-                let culprit = e.get(clap::error::ContextKind::InvalidArg).map(|v| v.to_string());
-                if let Some(c) =
-                    culprit.and_then(|c| retry_tokens.iter().position(|t| t.to_str() == Some(c.as_str())))
-                {
+                let culprit = e
+                    .get(clap::error::ContextKind::InvalidArg)
+                    .map(|v| v.to_string());
+                if let Some(c) = culprit.and_then(|c| {
+                    retry_tokens
+                        .iter()
+                        .position(|t| t.to_str() == Some(c.as_str()))
+                }) {
                     retry_tokens.remove(c);
                     continue;
                 }
@@ -4041,7 +4140,11 @@ fn decode_switches(
         // value is later overwritten by the other half of the pair. Mark
         // both if both occurred; only the winner's value actually applies.
         for &c in &[a, b] {
-            let occurred = if c == a { a_last.is_some() } else { b_last.is_some() };
+            let occurred = if c == a {
+                a_last.is_some()
+            } else {
+                b_last.is_some()
+            };
             if !occurred {
                 continue;
             }
@@ -4062,8 +4165,7 @@ fn decode_switches(
                 let cs_origin = opt_origin_cell(options, cs.c);
                 let doit = origin == o_command
                     || (cs.env() != 0
-                        && (cs_origin.is_none()
-                            || origin >= cs_origin.unwrap().get()));
+                        && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
                 if doit {
                     let on = cs.type_0 == flag;
                     opt_set_flag(options, cs.c, on);
@@ -4114,14 +4216,15 @@ fn decode_switches(
         let cs_origin = opt_origin_cell(options, cs.c);
         for raw_value in values {
             let doit = origin == o_command
-                || (cs.env() != 0
-                    && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
+                || (cs.env() != 0 && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
             if doit {
                 options.switches.borrow_mut()
                     [switches_snapshot.iter().position(|s| s.c == cs.c).unwrap()]
                 .set_specified(1);
             }
-            apply_value_switch(ctx, options, cs, raw_value, doit, cs_origin, origin, &mut bad)?;
+            apply_value_switch(
+                ctx, options, cs, raw_value, doit, cs_origin, origin, &mut bad,
+            )?;
         }
     }
 
@@ -4139,8 +4242,7 @@ fn decode_switches(
         let cs_origin = opt_origin_cell(options, cs.c);
         for raw_value in values.by_ref() {
             let doit = origin == o_command
-                || (cs.env() != 0
-                    && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
+                || (cs.env() != 0 && (cs_origin.is_none() || origin >= cs_origin.unwrap().get()));
             if doit {
                 options.switches.borrow_mut()
                     [switches_snapshot.iter().position(|s| s.c == cs.c).unwrap()]
@@ -4158,8 +4260,7 @@ fn decode_switches(
                     let n = unsafe { *(cs.noarg_value as *const ::core::ffi::c_uint) };
                     options.arg_job_slots.set(Some(n));
                 } else {
-                    let cstr =
-                        ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
+                    let cstr = ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
                     let n = make_toui(&cstr).unwrap_or(0);
                     if n == 0 {
                         // SAFETY: `error` requires a valid NUL-terminated
@@ -4172,7 +4273,8 @@ fn decode_switches(
                                 NILF,
                                 0,
                                 b"the '-%c' option requires a positive integer argument\0"
-                                    as *const u8 as *const ::core::ffi::c_char,
+                                    as *const u8
+                                    as *const ::core::ffi::c_char,
                                 &[FmtArg::Int(cs.c as i64)],
                             );
                         }
@@ -4187,8 +4289,7 @@ fn decode_switches(
                     // set (to `&default_load_average`), a valid `c_double`.
                     unsafe { *(cs.noarg_value as *const ::core::ffi::c_double) }
                 } else {
-                    let cstr =
-                        ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
+                    let cstr = ::std::ffi::CString::new(raw_value.as_bytes()).unwrap_or_default();
                     // SAFETY: `atof` requires a valid NUL-terminated C
                     // string; `cstr` is a live `CString`.
                     unsafe { atof(cstr.as_ptr()) }
@@ -4293,8 +4394,12 @@ unsafe fn decode_env_switches(
     len: size_t,
     origin: variable_origin,
 ) -> Result<(), crate::build_result::BuildError> {
-    let value =
-        expand_variable_buf(ctx, ::core::ptr::null_mut::<::core::ffi::c_char>(), envar, len)?;
+    let value = expand_variable_buf(
+        ctx,
+        ::core::ptr::null_mut::<::core::ffi::c_char>(),
+        envar,
+        len,
+    )?;
     let mut bytes = ::core::ffi::CStr::from_ptr(value).to_bytes();
     while !bytes.is_empty() && stopchar_map()[bytes[0] as usize] & (0x2 | 0x4) != 0 {
         bytes = &bytes[1..];
@@ -4354,7 +4459,9 @@ unsafe extern "C" fn quote_for_env(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; the global rule/variable tables must be initialized.
-unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) -> Result<(), crate::build_result::BuildError> {
+unsafe fn clear_builtin_rules(
+    ctx: &crate::execctx::ExecContext,
+) -> Result<(), crate::build_result::BuildError> {
     if let Some(suffix_file) = crate::file::lookup_file(ctx, b".SUFFIXES") {
         if let Some(node) = ctx.filenodes.get(suffix_file) {
             let mut guard = node.lock().expect("file node poisoned");
@@ -4364,12 +4471,12 @@ unsafe fn clear_builtin_rules(ctx: &crate::execctx::ExecContext) -> Result<(), c
         }
     }
     crate::variable::define_named(
-            ctx,
-            b"SUFFIXES\0",
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+        ctx,
+        b"SUFFIXES\0",
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_default,
+        0,
+    )?;
     Ok(())
 }
 
@@ -4906,9 +5013,7 @@ pub unsafe fn print_version(ctx: &crate::execctx::ExecContext) {
     let mut msg = Vec::with_capacity(512);
     msg.extend_from_slice(precede);
     msg.extend_from_slice(b"GNU Make ");
-    msg.extend_from_slice(
-        ::core::ffi::CStr::from_ptr(crate::version::version_string()).to_bytes(),
-    );
+    msg.extend_from_slice(::core::ffi::CStr::from_ptr(crate::version::version_string()).to_bytes());
     msg.extend_from_slice(b"\n");
     msg.extend_from_slice(precede);
     msg.extend_from_slice(b"Built for ");
@@ -5066,46 +5171,7 @@ unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
 }
 pub const __CHAR_BIT__: i32 = 8;
 pub const __SCHAR_MAX__: i32 = 127;
-/// Run make and report the process exit code. The `bin/make.rs` shim is the
-/// only caller and the single `std::process::exit` point (Phase B, #432).
-pub fn main() -> i32 {
-    use std::os::unix::ffi::OsStrExt;
-    let mut args_strings: Vec<Vec<u8>> = ::std::env::args_os()
-        .map(|arg| {
-            ::std::ffi::CString::new(arg.as_bytes())
-                .expect("Failed to convert argument into CString.")
-                .into_bytes_with_nul()
-        })
-        .collect();
-    let mut args_ptrs: Vec<*mut ::core::ffi::c_char> = args_strings
-        .iter_mut()
-        .map(|arg| arg.as_mut_ptr() as *mut ::core::ffi::c_char)
-        .chain(::core::iter::once(::core::ptr::null_mut()))
-        .collect();
-    // Own the env strings like the args above so they are reclaimed when this
-    // function returns — `main_0` copies what it keeps (`xstrndup`/`xstrdup`
-    // in `define_variable_in_set`), and libc `environ` never aliases these.
-    let mut vars_strings: Vec<Vec<u8>> = ::std::env::vars()
-        .map(|(var_name, var_value)| {
-            ::std::ffi::CString::new(format!("{}={}", var_name, var_value))
-                .expect("Failed to convert environment variable into CString.")
-                .into_bytes_with_nul()
-        })
-        .collect();
-    let mut vars: Vec<*mut ::core::ffi::c_char> = vars_strings
-        .iter_mut()
-        .map(|var| var.as_mut_ptr() as *mut ::core::ffi::c_char)
-        .chain(::core::iter::once(::core::ptr::null_mut()))
-        .collect();
-    let result = unsafe {
-        main_0(
-            (args_ptrs.len() - 1) as i32,
-            args_ptrs.as_mut_ptr() as *mut *mut ::core::ffi::c_char,
-            vars.as_mut_ptr() as *mut *mut ::core::ffi::c_char,
-        )
-    };
-    crate::build_result::exit_code(result)
-}
+
 /// The command-line switch table, freshly built with its real contents — the
 /// former `.init_array` `run_static_initializers` body that populated the
 /// process-global `switches` at startup. Each `Options` owns its own
@@ -5115,8 +5181,10 @@ fn switches_template() -> [CommandSwitch; 42] {
     [
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'b' as i32,
                 type_0: ignore,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5133,8 +5201,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'B' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5151,8 +5221,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'd' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5169,8 +5241,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'e' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5187,8 +5261,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'E' as i32,
                 type_0: strlist,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5205,8 +5281,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'h' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5223,8 +5301,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'i' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5241,8 +5321,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'k' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5259,8 +5341,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'L' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5277,8 +5361,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'm' as i32,
                 type_0: ignore,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5295,8 +5381,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'n' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5313,8 +5401,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'p' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5331,8 +5421,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'q' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5349,8 +5441,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'r' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5367,8 +5461,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'R' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5385,8 +5481,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 's' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5403,8 +5501,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'S' as i32,
                 type_0: flag_off,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5421,8 +5521,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 't' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5439,8 +5541,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'v' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5457,8 +5561,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'w' as i32,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5476,8 +5582,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'C' as i32,
                 type_0: filename,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5494,8 +5602,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'f' as i32,
                 type_0: filename,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5512,8 +5622,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'I' as i32,
                 type_0: filename,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5530,8 +5642,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'j' as i32,
                 type_0: positive_int,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5548,8 +5662,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'l' as i32,
                 type_0: floating,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5566,8 +5682,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'o' as i32,
                 type_0: filename,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5584,8 +5702,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'O' as i32,
                 type_0: string,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5603,8 +5723,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 'W' as i32,
                 type_0: filename,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5621,8 +5743,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 1,
                 type_0: strlist,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5640,8 +5764,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 2,
                 type_0: string,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5658,8 +5784,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 3,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5676,8 +5804,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 4,
                 type_0: flag_off,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5695,8 +5825,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 5,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5713,8 +5845,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 7,
                 type_0: string,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5731,8 +5865,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 8,
                 type_0: flag_off,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5749,8 +5885,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 9,
                 type_0: string,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5767,8 +5905,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: TEMP_STDIN_OPT,
                 type_0: filename,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5785,8 +5925,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 11,
                 type_0: string,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5804,8 +5946,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 12,
                 type_0: string,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5822,8 +5966,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: WARN_OPT,
                 type_0: strlist,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5841,8 +5987,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: CHAR_MAX + 14,
                 type_0: flag,
                 value_ptr: ::core::ptr::null_mut::<::core::ffi::c_void>(),
@@ -5859,8 +6007,10 @@ fn switches_template() -> [CommandSwitch; 42] {
         },
         {
             let mut init = CommandSwitch {
-                env_toenv_no_makefile_specified: [0; 1],
-                c2rust_padding: [0; 7],
+                env: 0,
+                toenv: 0,
+                no_makefile: 0,
+                specified: 0,
                 c: 0,
                 type_0: flag,
                 value_ptr: NULL,
@@ -5880,13 +6030,15 @@ fn switches_template() -> [CommandSwitch; 42] {
 
 #[cfg(test)]
 mod default_load_average_tests {
+    use crate::entry;
+
     /// `default_load_average` is the read-only "no load limit" sentinel
     /// (`-1.0`) the option table hands the `-l`/`--load-average` parser as its
     /// `default_value` and no-argument `noarg_value`. It is now an immutable
     /// `static` (was a `static mut`), so this is a plain safe read.
     #[test]
     fn default_load_average_is_no_limit_sentinel() {
-        assert_eq!(super::default_load_average, -1.0f64);
+        assert_eq!(entry::default_load_average, -1.0f64);
     }
 }
 
@@ -5925,8 +6077,15 @@ mod job_slots_tests {
 #[cfg(test)]
 mod output_sync_tests {
     use super::{
-        classify_output_sync, install_default_exec_context_for_test, opt_output_sync, with_options,
-        Options, OUTPUT_SYNC_LINE, OUTPUT_SYNC_NONE, OUTPUT_SYNC_RECURSE, OUTPUT_SYNC_TARGET,
+        classify_output_sync,
+        install_default_exec_context_for_test,
+        opt_output_sync,
+        with_options,
+        Options,
+        OUTPUT_SYNC_LINE,
+        OUTPUT_SYNC_NONE,
+        OUTPUT_SYNC_RECURSE,
+        OUTPUT_SYNC_TARGET,
     };
 
     #[test]
@@ -5976,9 +6135,17 @@ mod output_sync_tests {
 #[cfg(test)]
 mod special_target_latches_tests {
     use super::{
-        install_default_exec_context_for_test, not_parallel, one_shell, posix_pedantic,
-        second_expansion, set_not_parallel, set_one_shell, set_posix_pedantic,
-        set_second_expansion, with_options, Options,
+        install_default_exec_context_for_test,
+        not_parallel,
+        one_shell,
+        posix_pedantic,
+        second_expansion,
+        set_not_parallel,
+        set_one_shell,
+        set_posix_pedantic,
+        set_second_expansion,
+        with_options,
+        Options,
     };
 
     /// The four special-target feature latches default to false on a fresh
@@ -6007,7 +6174,9 @@ mod special_target_latches_tests {
             o.one_shell.set(false);
             o.not_parallel.set(false);
         });
-        assert!(!posix_pedantic(ctx) && !second_expansion(ctx) && !one_shell(ctx) && !not_parallel(ctx));
+        assert!(
+            !posix_pedantic(ctx) && !second_expansion(ctx) && !one_shell(ctx) && !not_parallel(ctx)
+        );
 
         set_posix_pedantic(ctx);
         set_second_expansion(ctx);
@@ -6085,7 +6254,10 @@ mod run_silent_tests {
 #[cfg(test)]
 mod export_all_variables_tests {
     use super::{
-        install_default_exec_context_for_test, opt_export_all_variables, with_options, Options,
+        install_default_exec_context_for_test,
+        opt_export_all_variables,
+        with_options,
+        Options,
     };
 
     /// `Options::export_all_variables` carries the former
@@ -6155,8 +6327,10 @@ mod cmd_prefix_tests {
 
 #[cfg(test)]
 mod stdio_traced_tests {
-    use super::{install_default_exec_context_for_test, with_options, Options};
-    use crate::output::{set_stdio_traced, stdio_traced};
+    use {
+        super::{install_default_exec_context_for_test, with_options, Options},
+        crate::output::{set_stdio_traced, stdio_traced},
+    };
 
     /// The trace latch defaults to false on a fresh `Options` (the former
     /// `STDIO_TRACED` global).
@@ -6214,7 +6388,11 @@ mod master_job_slots_tests {
     fn master_job_slots_reads_through_channel() {
         let ctx = install_default_exec_context_for_test();
         with_options(ctx, |o| o.master_job_slots.set(0));
-        assert_eq!(master_job_slots(ctx), 0, "channel reads the installed value");
+        assert_eq!(
+            master_job_slots(ctx),
+            0,
+            "channel reads the installed value"
+        );
 
         with_options(ctx, |o| o.master_job_slots.set(4));
         assert_eq!(master_job_slots(ctx), 4, "count through the channel");
@@ -6226,7 +6404,10 @@ mod master_job_slots_tests {
 #[cfg(test)]
 mod command_count_tests {
     use super::{
-        bump_command_count, install_default_exec_context_for_test, opt_command_count, with_options,
+        bump_command_count,
+        install_default_exec_context_for_test,
+        opt_command_count,
+        with_options,
         Options,
     };
 
@@ -6252,7 +6433,11 @@ mod command_count_tests {
         let ctx = install_default_exec_context_for_test();
 
         with_options(ctx, |o| o.command_count.set(1));
-        assert_eq!(opt_command_count(ctx), 1, "channel reads the installed value");
+        assert_eq!(
+            opt_command_count(ctx),
+            1,
+            "channel reads the installed value"
+        );
 
         bump_command_count(ctx);
         bump_command_count(ctx);
@@ -6265,7 +6450,10 @@ mod command_count_tests {
 #[cfg(test)]
 mod snapped_deps_tests {
     use super::{
-        install_default_exec_context_for_test, mark_snapped_deps, opt_snapped_deps, with_options,
+        install_default_exec_context_for_test,
+        mark_snapped_deps,
+        opt_snapped_deps,
+        with_options,
         Options,
     };
 
@@ -6300,7 +6488,10 @@ mod snapped_deps_tests {
 #[cfg(test)]
 mod rebuilding_makefiles_tests {
     use super::{
-        install_default_exec_context_for_test, opt_rebuilding_makefiles, with_options, Options,
+        install_default_exec_context_for_test,
+        opt_rebuilding_makefiles,
+        with_options,
+        Options,
     };
 
     /// `Options::rebuilding_makefiles` carries the former `REBUILDING_MAKEFILES`
@@ -6496,8 +6687,7 @@ mod option_helper_tests {
 /// against the exact C-shaped logic it replaced.
 #[cfg(test)]
 mod should_print_dir_unsafe_oracle {
-    use super::Options;
-    use crate::execctx::ExecContext;
+    use {super::Options, crate::execctx::ExecContext};
 
     pub unsafe fn should_print_dir(ctx: &ExecContext, options: &Options) -> i32 {
         if let Some(v) = options.print_directory.get() {
@@ -6510,9 +6700,11 @@ mod should_print_dir_unsafe_oracle {
 
 #[cfg(test)]
 mod should_print_dir_diff_tests {
-    use super::should_print_dir;
-    use super::should_print_dir_unsafe_oracle::should_print_dir as oracle;
-    use super::Options;
+    use super::{
+        should_print_dir,
+        should_print_dir_unsafe_oracle::should_print_dir as oracle,
+        Options,
+    };
 
     /// Build an `Options` from a tri-state `--print-directory`, the silent
     /// flag, and a `-C` directory count, then assert the safe version and the
@@ -6571,7 +6763,9 @@ mod clean_jobserver_tests {
 
         unsafe { clean_jobserver(&ctx, 0) };
 
-        with_options(&ctx, |o| assert!(o.jobserver_auth.borrow().is_none(), "mirror reset"));
+        with_options(&ctx, |o| {
+            assert!(o.jobserver_auth.borrow().is_none(), "mirror reset")
+        });
     }
 
     /// The master-make token accounting: with `master_job_slots` set and no
@@ -6607,9 +6801,7 @@ mod clean_jobserver_tests {
 
 #[cfg(test)]
 mod jobserver_and_stdin_cleanup_tests {
-    use super::{
-        reset_jobserver, temp_stdin_unlink, with_options, Options,
-    };
+    use super::{reset_jobserver, temp_stdin_unlink, with_options, Options};
 
     /// `reset_jobserver` clears the auth field and tears down the (absent)
     /// jobserver. With no jobserver configured, `jobserver_clear` is a no-op,
@@ -6658,11 +6850,18 @@ mod jobserver_and_stdin_cleanup_tests {
 
 #[cfg(test)]
 mod decode_switches_clap_vs_getopt_tests {
-    use super::getopt_oracle_test::decode_switches_oracle;
-    use super::{decode_switches, install_default_exec_context_for_test, o_command, o_env, Options};
-    use crate::execctx::ExecContext;
-    use crate::variable::init_hash_global_variable_set;
-    use std::ffi::CString;
+    use {
+        super::{
+            decode_switches,
+            getopt_oracle_test::decode_switches_oracle,
+            install_default_exec_context_for_test,
+            o_command,
+            o_env,
+            Options,
+        },
+        crate::{execctx::ExecContext, variable::init_hash_global_variable_set},
+        std::ffi::CString,
+    };
 
     /// Everything `decode_switches` writes, gathered into one comparable
     /// value. `max_load_average` is compared via its bit pattern so `NaN`
@@ -6825,7 +7024,10 @@ mod decode_switches_clap_vs_getopt_tests {
         );
         let snap_new = snapshot(&options_new);
         let snap_oracle = snapshot(&options_oracle);
-        assert_eq!(snap_new, snap_oracle, "mismatch for tokens {tokens:?} (origin {origin})");
+        assert_eq!(
+            snap_new, snap_oracle,
+            "mismatch for tokens {tokens:?} (origin {origin})"
+        );
     }
 
     #[test]
@@ -6874,9 +7076,9 @@ mod decode_switches_clap_vs_getopt_tests {
         check(&["--jobs", "4"], o_command);
         check(&["-j", "target"], o_command); // non-numeric next: -j stays bare, "target" is a target
         check(&["-j4", "-j8"], o_command); // repeats: last wins
-        // o_env, not o_command: an explicit empty value is a real error
-        // (bad=1), and bad=1 with origin==o_command triggers print_usage(),
-        // which exits the whole test process.
+                                           // o_env, not o_command: an explicit empty value is a real error
+                                           // (bad=1), and bad=1 with origin==o_command triggers print_usage(),
+                                           // which exits the whole test process.
         check(&["--jobs="], o_env); // explicit empty value (distinct from bare --jobs): error
     }
 
@@ -7009,12 +7211,18 @@ mod decode_switches_clap_vs_getopt_tests {
 /// an exit — the whole point of the conversion.
 #[cfg(test)]
 mod decode_switches_error_paths {
-    use super::{
-        decode_debug_flags, decode_output_sync_flags, decode_switches, expand_command_line_file,
-        install_default_exec_context_for_test, o_env, Options,
+    use {
+        super::{
+            decode_debug_flags,
+            decode_output_sync_flags,
+            decode_switches,
+            expand_command_line_file,
+            install_default_exec_context_for_test,
+            o_env,
+            Options,
+        },
+        crate::{build_result::BuildError, execctx::ExecContext},
     };
-    use crate::build_result::BuildError;
-    use crate::execctx::ExecContext;
 
     #[test]
     fn unknown_debug_level_is_an_error_not_an_exit() {

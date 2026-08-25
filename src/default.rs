@@ -4,17 +4,21 @@
 //! the consumers (`install_pattern_rule`, `define_variable_in_set`, ...) are
 //! still C-shaped APIs shared across modules.
 
-use ::core::ffi::{c_char, CStr};
-use ::core::ptr::null;
+use ::core::{
+    ffi::{c_char, CStr},
+    ptr::null,
+};
 
-use crate::dep::DepNode;
-use crate::ffi_types::size_t;
-use crate::file::{enter_file, enter_prereqs};
-use crate::floc::Floc;
-use crate::read::{parse_file_seq, MAP_NUL, PARSEFS_NONE};
-use crate::recipe::Recipe;
-use crate::rule::install_pattern_rule;
-use crate::variable::{define_variable_in_set, o_default, undefine_variable_in_set};
+use crate::{
+    dep::DepNode,
+    ffi_types::size_t,
+    file::{enter_file, enter_prereqs},
+    floc::Floc,
+    read::{parse_file_seq, MAP_NUL, PARSEFS_NONE},
+    recipe::Recipe,
+    rule::install_pattern_rule,
+    variable::{define_variable_in_set, o_default, undefine_variable_in_set},
+};
 
 const RECIPEPREFIX_DEFAULT: c_char = b'\t' as c_char;
 
@@ -250,7 +254,7 @@ const DEFAULT_VARIABLES: &[(&CStr, &CStr)] = &[
 /// variable set, and the `suffix_file` global.
 pub unsafe fn set_default_suffixes(
     ctx: &crate::execctx::ExecContext,
-    options: &crate::make_main::Options,
+    options: &crate::entry::Options,
 ) -> Result<(), crate::build_result::BuildError> {
     let suffix_file = enter_file(ctx, b".SUFFIXES");
     if let Some(node) = ctx.filenodes.get(suffix_file) {
@@ -267,7 +271,7 @@ pub unsafe fn set_default_suffixes(
 /// Must run single-threaded: mutates global file/variable state.
 unsafe fn populate_suffixes(
     ctx: &crate::execctx::ExecContext,
-    options: &crate::make_main::Options,
+    options: &crate::entry::Options,
     suffix_file: crate::file::FileId,
 ) -> Result<(), crate::build_result::BuildError> {
     if options.no_builtin_rules.get() {
@@ -300,7 +304,14 @@ unsafe fn install_builtin_suffixes(
 ) -> Result<(), crate::build_result::BuildError> {
     let mut default_suffixes = DEFAULT_SUFFIXES;
     let mut p = default_suffixes.as_mut_ptr() as *mut c_char;
-    let parsed = parse_file_seq(ctx, &mut p, MAP_NUL as size_t, MAP_NUL, null(), PARSEFS_NONE)?;
+    let parsed = parse_file_seq(
+        ctx,
+        &mut p,
+        MAP_NUL as size_t,
+        MAP_NUL,
+        null(),
+        PARSEFS_NONE,
+    )?;
     let deps: Vec<DepNode> = parsed
         .into_iter()
         .map(|pn| {
@@ -357,7 +368,7 @@ fn dep_with_name(name: Vec<u8>) -> DepNode {
 /// Must run single-threaded: it mutates the global file table.
 pub unsafe fn install_default_suffix_rules(
     ctx: &crate::execctx::ExecContext,
-    options: &crate::make_main::Options,
+    options: &crate::entry::Options,
 ) {
     if options.no_builtin_rules.get() {
         return;
@@ -402,7 +413,7 @@ unsafe fn install_one_suffix_rule(
 /// Must run single-threaded: it mutates the global pattern-rule lists.
 pub unsafe fn install_default_implicit_rules(
     ctx: &crate::execctx::ExecContext,
-    options: &crate::make_main::Options,
+    options: &crate::entry::Options,
 ) -> Result<(), crate::build_result::BuildError> {
     if options.no_builtin_rules.get() {
         return Ok(());
@@ -437,7 +448,7 @@ fn install_rule_table(
 /// Must run single-threaded: it mutates the global variable set.
 pub unsafe fn define_default_variables(
     ctx: &crate::execctx::ExecContext,
-    options: &crate::make_main::Options,
+    options: &crate::entry::Options,
 ) -> Result<(), crate::build_result::BuildError> {
     if options.no_builtin_variables.get() {
         return Ok(());

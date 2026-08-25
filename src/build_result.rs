@@ -17,7 +17,7 @@
 
 use core::fmt;
 
-use crate::make_main::{MAKE_SUCCESS, MAKE_TROUBLE};
+use crate::entry::{MAKE_SUCCESS, MAKE_TROUBLE};
 
 /// Success report for a completed run: every goal was brought up to date (or
 /// was already current). Carries no detail yet; later #432 subtasks grow it
@@ -49,7 +49,7 @@ impl BuildError {
     pub fn exit_code(self) -> i32 {
         match self {
             BuildError::Trouble => MAKE_TROUBLE,
-            BuildError::Failure => crate::make_main::MAKE_FAILURE,
+            BuildError::Failure => crate::entry::MAKE_FAILURE,
         }
     }
 }
@@ -88,8 +88,7 @@ pub fn exit_code(result: Result<BuildReport, BuildError>) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::make_main::MAKE_FAILURE;
+    use {super::*, crate::entry::MAKE_FAILURE};
 
     #[test]
     fn exit_codes_mirror_the_canonical_statuses() {
