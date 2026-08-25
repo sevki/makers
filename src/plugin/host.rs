@@ -282,7 +282,12 @@ impl GraphHost for PluginStore {
     }
 
     fn find(&mut self, name: String) -> wasmtime::Result<Option<Resource<NodeHandle>>> {
-        let id = crate::file::FileId::from_bytes(name.as_bytes());
+        // Normalised first, exactly as `file::lookup_file` does: make interns
+        // `./main.c` and `main.c` under one key, so a plugin round-tripping a
+        // prerequisite name through `find` must land on the same node make
+        // would.
+        let key = crate::file::normalize_lookup_name_bytes(name.as_bytes());
+        let id = crate::file::FileId::from_bytes(key);
         match self.graph.file(id) {
             Some(_) => self.push_node(NodeId::File(id)).map(Some),
             None => Ok(None),
