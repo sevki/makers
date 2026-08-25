@@ -5,8 +5,12 @@
 //!
 //! Only compiled under `--features wasmtime`, matching the feature the
 //! `MAKERS_WASM_EXTENSION` hook itself is gated behind (`src/wasm_ext.rs`).
-//! Requires the plugin to already be built:
-//! `cargo component build --manifest-path plugins/graphviz-export/Cargo.toml`.
+//! Requires the plugin to already be built. `plugins/graphviz-export` is its
+//! own standalone workspace (see its `Cargo.toml`), so build it from within
+//! that directory rather than via `--manifest-path` -- the latter would
+//! silently write to `plugins/graphviz-export/target/` instead of the
+//! repo-root `target/` this test looks in (see `.cargo/config.toml` there):
+//! `(cd plugins/graphviz-export && cargo component build)`.
 
 #![cfg(feature = "wasmtime")]
 
@@ -40,8 +44,8 @@ fn real_makefile_is_exported_as_a_dot_graph() {
     let component = plugin_component();
     assert!(
         component.exists(),
-        "build the plugin first: cargo component build --manifest-path \
-         plugins/graphviz-export/Cargo.toml (looked for {})",
+        "build the plugin first: (cd plugins/graphviz-export && cargo component build) \
+         (looked for {})",
         component.display()
     );
 

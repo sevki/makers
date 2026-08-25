@@ -1895,9 +1895,7 @@ pub unsafe fn target_environment(
         // Plain `?`: the set-list swap below has not happened yet, so a
         // rejection here leaves nothing installed to unwind.
         owned_list = build_file_setlist(ctx, f)?;
-        ctx.variable_globals
-            .current_variable_set_list
-            .set(owned_list);
+        ctx.variable_globals.current_variable_set_list.set(owned_list);
     }
     let mut s: *mut variable_set_list;
     let mut table: HashTable = HashTable {
@@ -2107,11 +2105,7 @@ pub unsafe fn target_environment(
                                 strstr(value, b" -- \0" as *const u8 as *const ::core::ffi::c_char);
                             if vars.is_null() {
                                 mf = xstrdup(
-                                    concat(&[
-                                        cstr_bytes_or_empty(value),
-                                        cstr_bytes_or_empty(invalid),
-                                    ])
-                                    .as_ptr()
+                                    concat(&[cstr_bytes_or_empty(value), cstr_bytes_or_empty(invalid)]).as_ptr()
                                         as *const ::core::ffi::c_char,
                                 );
                             } else {
@@ -2160,8 +2154,7 @@ pub unsafe fn target_environment(
                         .is_null()
                             && !((*v_0).origin() as i32 != o_env as i32)
                         {
-                            let mf_0 =
-                                concat(&[cstr_bytes_or_empty(value), cstr_bytes_or_empty(invalid)]);
+                            let mf_0 = concat(&[cstr_bytes_or_empty(value), cstr_bytes_or_empty(invalid)]);
                             free(cp as *mut ::core::ffi::c_void);
                             cp = xstrdup(mf_0.as_ptr() as *const ::core::ffi::c_char);
                             value = cp;
@@ -2174,12 +2167,8 @@ pub unsafe fn target_environment(
                 let fresh10 = result;
                 result = result.offset(1_i32 as isize);
                 *fresh10 = xstrdup(
-                    concat(&[
-                        cstr_bytes_or_empty((*v_0).name),
-                        b"=",
-                        cstr_bytes_or_empty(value),
-                    ])
-                    .as_ptr() as *const ::core::ffi::c_char,
+                    concat(&[cstr_bytes_or_empty((*v_0).name), b"=", cstr_bytes_or_empty(value)]).as_ptr()
+                        as *const ::core::ffi::c_char,
                 );
                 free(cp as *mut ::core::ffi::c_void);
             }
