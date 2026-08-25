@@ -384,13 +384,17 @@ pub unsafe fn hash_free(ht: *mut HashTable, free_items: i32) {
 /// `ht` must be initialized and `map` non-null.
 pub unsafe fn hash_map(ht: *mut HashTable, map: hash_map_func_t) {
     let map = map.expect("hash_map without callback");
-    ht.as_mut().expect("hash table pointer is null").set_ht_in_map(1);
+    ht.as_mut()
+        .expect("hash table pointer is null")
+        .set_ht_in_map(1);
     for &item in table_slots(ht) {
         if is_real_item(item) {
             map(item);
         }
     }
-    ht.as_mut().expect("hash table pointer is null").set_ht_in_map(0);
+    ht.as_mut()
+        .expect("hash table pointer is null")
+        .set_ht_in_map(0);
 }
 
 /// Call `map(item, arg)` on every item. The table must not be modified

@@ -142,7 +142,8 @@ pub unsafe extern "C" fn gmk_add_function(
         // `exit_on_err` rather than propagating (#432 Phase B, #442). The five
         // name/arity validations inside `define_new_function` now hand their
         // diagnostic back as a value; this is the one place it still exits.
-        if let Err(e) = define_new_function(ctx, ctx.reading_file.0.get(), name, min, max, flags, func)
+        if let Err(e) =
+            define_new_function(ctx, ctx.reading_file.0.get(), name, min, max, flags, func)
         {
             crate::output::exit_on_err(e);
         }
@@ -158,7 +159,9 @@ mod gmk_expand_tests {
     unsafe fn expand_to_string(input: &::core::ffi::CStr) -> String {
         let p = super::gmk_expand(input.as_ptr());
         assert!(!p.is_null());
-        let s = ::core::ffi::CStr::from_ptr(p).to_string_lossy().into_owned();
+        let s = ::core::ffi::CStr::from_ptr(p)
+            .to_string_lossy()
+            .into_owned();
         super::gmk_free(p);
         s
     }

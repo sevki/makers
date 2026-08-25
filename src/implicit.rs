@@ -10,10 +10,10 @@
 //! [`FileNode`], and candidate rules are referenced by index into the database
 //! rather than by `*mut Rule`. No `*mut File`/`*mut Dep`/`*mut Commands`.
 
-pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::ar::ar_name_err;
 use crate::dep::{DepFlags, DepNode};
 use crate::dir::{file_exists_p, file_impossible, file_impossible_p};
+pub use crate::ffi_types::{size_t, uintmax_t};
 use crate::file::{enter_file, lookup_file, FileId};
 use crate::make_main::{db_level, stopchar_map};
 use crate::misc::{print_spaces, skip_reference};
@@ -871,7 +871,8 @@ pub fn pattern_search(
     }
 
     // Inherit .PRECIOUS / .NOTINTERMEDIATE from the target pattern file.
-    let found_target = with_pattern_rules(ctx, |r| r[found].targets[found_tr.matches as usize].clone());
+    let found_target =
+        with_pattern_rules(ctx, |r| r[found].targets[found_tr.matches as usize].clone());
     let (pat_precious, pat_notint) = lookup_flags(ctx, &found_target);
     if let Some(node) = ctx.filenodes.get(file) {
         let mut n = node.lock().expect("file node lock poisoned");

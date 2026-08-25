@@ -29,9 +29,9 @@ macro_rules! id_wireformat {
     // ------------------------------------------------------------------ //
     ($ident:ident[$size:expr]) => {
         #[doc = concat!(
-                            "`", stringify!($ident), "` — a ", stringify!($size),
-                            "-byte stable content-addressed identifier."
-                        )]
+                                    "`", stringify!($ident), "` — a ", stringify!($size),
+                                    "-byte stable content-addressed identifier."
+                                )]
         #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $ident(pub [u8; $size]);
 
@@ -62,11 +62,11 @@ macro_rules! id_wireformat {
 
         impl $ident {
             #[doc = concat!(
-                "Derive a `", stringify!($ident),
-                "` from raw bytes: the first ", stringify!($size),
-                " bytes of their BLAKE3 hash. Byte-exact, so inputs that are \
+                        "Derive a `", stringify!($ident),
+                        "` from raw bytes: the first ", stringify!($size),
+                        " bytes of their BLAKE3 hash. Byte-exact, so inputs that are \
                  not valid UTF-8 stay distinct."
-            )]
+                    )]
             pub fn from_bytes(bytes: &[u8]) -> Self {
                 let hash = $crate::content_hash::blake3_hash(bytes);
                 let mut out = [0u8; $size];

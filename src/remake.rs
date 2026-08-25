@@ -9,10 +9,7 @@ use crate::file::{
 use crate::misc::{find_next_token, print_spaces};
 use crate::output::FmtArg;
 use crate::strcache::strcache_add;
-use libc::{
-    __errno_location, close, free, open, sprintf, strcmp, strcpy, strerror,
-    strrchr,
-};
+use libc::{__errno_location, close, free, open, sprintf, strcmp, strcpy, strerror, strrchr};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
     fn fstat(__fd: i32, __buf: *mut stat) -> i32;
@@ -161,7 +158,13 @@ fn ordinary_mtime_max() -> uintmax_t {
         >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })
         << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
     .wrapping_add(ORDINARY_MTIME_MIN as uintmax_t)
-    .wrapping_add((if FILE_TIMESTAMP_HI_RES != 0 { 1000000000_i32 } else { 1 }) as uintmax_t)
+    .wrapping_add(
+        (if FILE_TIMESTAMP_HI_RES != 0 {
+            1000000000_i32
+        } else {
+            1
+        }) as uintmax_t,
+    )
     .wrapping_sub(1 as uintmax_t)
 }
 
@@ -234,7 +237,13 @@ pub fn check_also_make(ctx: &crate::execctx::ExecContext, file: FileId) {
             .iter()
             .filter_map(|d| d.file.map(|f| (d.name.clone().into_bytes(), f)))
             .collect();
-        (n.last_mtime, n.mtime_before_update, n.name.clone(), floc, peers)
+        (
+            n.last_mtime,
+            n.mtime_before_update,
+            n.name.clone(),
+            floc,
+            peers,
+        )
     };
     // lock: guard dropped before name_mtime / peer locks.
     if mtime == UNKNOWN_MTIME as uintmax_t {
@@ -369,7 +378,16 @@ pub fn update_goal_chain(
             let fail = update_file(ctx, head, depth)?;
             let head = follow_renamed(ctx, head);
             // Copy out the post-update state under a brief guard.
-            let (cs, updated, ustatus, last_mtime, mtime_before_update, dontcare, phony, has_recipe) = {
+            let (
+                cs,
+                updated,
+                ustatus,
+                last_mtime,
+                mtime_before_update,
+                dontcare,
+                phony,
+                has_recipe,
+            ) = {
                 let node = match ctx.filenodes.get(head) {
                     Some(node) => node,
                     None => {
@@ -513,9 +531,9 @@ pub fn show_goal_error(ctx: &crate::execctx::ExecContext) {
                             offset: goal.offset as ::core::ffi::c_ulong,
                         }
                     });
-                    let floc_ptr = floc
-                        .as_ref()
-                        .map_or(::core::ptr::null_mut::<Floc>(), |f| f as *const Floc as *mut Floc);
+                    let floc_ptr = floc.as_ref().map_or(::core::ptr::null_mut::<Floc>(), |f| {
+                        f as *const Floc as *mut Floc
+                    });
                     unsafe {
                         let errstr = strerror(goal.error);
                         error(
@@ -568,10 +586,7 @@ pub fn update_file(
         };
         let n = node.lock().expect("file node lock poisoned");
         let pruned = n.considered == ctx.considered.get()
-            && !(n.updated
-                && n.update_status as i32 > us_none as i32
-                && !n.dontcare
-                && n.no_diag)
+            && !(n.updated && n.update_status as i32 > us_none as i32 && !n.dontcare && n.no_diag)
             && !(is_dc
                 && n.command_state as i32 == cs_finished as i32
                 && !n.double_colon.is_empty());
@@ -874,7 +889,12 @@ fn update_file_1(
             }
         }
         this_mtime = this_mtime.wrapping_add(
-            ((if FILE_TIMESTAMP_HI_RES != 0 { 1000000000_i32 } else { 1 }) - 1 - ns) as uintmax_t,
+            ((if FILE_TIMESTAMP_HI_RES != 0 {
+                1000000000_i32
+            } else {
+                1
+            }) - 1
+                - ns) as uintmax_t,
         );
     }
     // also_make grouped-target peers: snapshot their FileIds, then f_mtime each.
@@ -1077,7 +1097,8 @@ fn update_file_1(
                 deps[di].file = Some(dfile2);
                 // running: walk the dep's double-colon chain command_state.
                 running |= dep_chain_running(ctx, dfile2) as i32;
-                if dep_status as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going(ctx) {
+                if dep_status as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going(ctx)
+                {
                     break 'amake;
                 }
                 if running == 0 {
@@ -1166,7 +1187,8 @@ fn update_file_1(
                 let dfile2 = follow_renamed(ctx, dfile);
                 new_deps[di].file = Some(dfile2);
                 running |= dep_chain_running(ctx, dfile2) as i32;
-                if dep_status as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going(ctx) {
+                if dep_status as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going(ctx)
+                {
                     break;
                 }
                 if running == 0 {
@@ -1293,7 +1315,11 @@ fn update_file_1(
         must_make = 1;
         if 0x1_i32 & dbg(ctx) != 0 {
             print_spaces(depth);
-            trace_name(b"Target '", &cn, b"' is double-colon and has no prerequisites.\n");
+            trace_name(
+                b"Target '",
+                &cn,
+                b"' is double-colon and has no prerequisites.\n",
+            );
         }
     } else if noexist == 0
         && file_is_target
@@ -1304,7 +1330,11 @@ fn update_file_1(
         must_make = 0;
         if 0x2_i32 & dbg(ctx) != 0 {
             print_spaces(depth);
-            trace_name(b"No recipe for '", &cn, b"' and no prerequisites actually changed.\n");
+            trace_name(
+                b"No recipe for '",
+                &cn,
+                b"' and no prerequisites actually changed.\n",
+            );
         }
     } else if must_make == 0 && file_has_recipe2 && ctx.always_make_flag.get() {
         must_make = 1;
@@ -1842,9 +1872,18 @@ pub fn touch_file(
             st_size: 0,
             st_blksize: 0,
             st_blocks: 0,
-            st_atim: timespec { tv_sec: 0, tv_nsec: 0 },
-            st_mtim: timespec { tv_sec: 0, tv_nsec: 0 },
-            st_ctim: timespec { tv_sec: 0, tv_nsec: 0 },
+            st_atim: timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            },
+            st_mtim: timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            },
+            st_ctim: timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            },
             __glibc_reserved: [0; 3],
         };
         let mut buf: ::core::ffi::c_char = 'x' as i32 as ::core::ffi::c_char;
@@ -2105,7 +2144,8 @@ pub fn f_mtime(
         if member_date == -1_i32 as time_t
             || memmtime != NONEXISTENT_MTIME as uintmax_t
                 && (memmtime.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
-                    >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) as time_t
+                    >> (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 }))
+                    as time_t
                     > member_date
         {
             mtime = NONEXISTENT_MTIME as uintmax_t;
@@ -2142,9 +2182,13 @@ pub fn f_mtime(
                         node.lock().expect("file node lock poisoned").last_mtime = mtime;
                     }
                 }
-                let name_0_bytes = unsafe { ::core::ffi::CStr::from_ptr(name_0).to_bytes().to_vec() };
+                let name_0_bytes =
+                    unsafe { ::core::ffi::CStr::from_ptr(name_0).to_bytes().to_vec() };
                 // The c2rust "prefix length" used in gpath_search.
-                let name_len = name_0_bytes.len().saturating_sub(name.len()).saturating_sub(1);
+                let name_len = name_0_bytes
+                    .len()
+                    .saturating_sub(name.len())
+                    .saturating_sub(1);
                 if gpath_search(ctx, &name_0_bytes[..name_len.min(name_0_bytes.len())]) {
                     rename_file(ctx, file, &name_0_bytes);
                     let live = follow_renamed(ctx, file);
@@ -2196,7 +2240,8 @@ pub fn f_mtime(
                             as uintmax_t) as i32
                         - (now.wrapping_sub(ORDINARY_MTIME_MIN as uintmax_t)
                             & (((1) << (if FILE_TIMESTAMP_HI_RES != 0 { 30 } else { 0 })) - 1)
-                                as uintmax_t) as i32) as ::core::ffi::c_double
+                                as uintmax_t) as i32)
+                        as ::core::ffi::c_double
                         / 1e9f64;
                 let mut from_now_string: [::core::ffi::c_char; 100] = [0; 100];
                 unsafe {
@@ -2216,9 +2261,9 @@ pub fn f_mtime(
                     error(
                         ctx,
                         ::core::ptr::null_mut::<Floc>(),
-                        (name.len() as size_t).wrapping_add(
-                            strlen(&raw mut from_now_string as *mut ::core::ffi::c_char) as size_t,
-                        ),
+                        (name.len() as size_t).wrapping_add(strlen(
+                            &raw mut from_now_string as *mut ::core::ffi::c_char,
+                        ) as size_t),
                         b"warning: file '%s' has modification time %s s in the future\0"
                             as *const u8 as *const ::core::ffi::c_char,
                         &[
@@ -2286,9 +2331,18 @@ pub unsafe fn name_mtime(
         st_size: 0,
         st_blksize: 0,
         st_blocks: 0,
-        st_atim: timespec { tv_sec: 0, tv_nsec: 0 },
-        st_mtim: timespec { tv_sec: 0, tv_nsec: 0 },
-        st_ctim: timespec { tv_sec: 0, tv_nsec: 0 },
+        st_atim: timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        st_mtim: timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
+        st_ctim: timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        },
         __glibc_reserved: [0; 3],
     };
     let mut e: i32;
@@ -2528,11 +2582,17 @@ unsafe fn library_search(
                         dp = dp.offset(1_i32 as isize);
                     }
                     cache.buflen = strlen(libbuf) as size_t;
-                    let want = cache.libdir_maxlen.wrapping_add(cache.buflen).wrapping_add(2);
+                    let want = cache
+                        .libdir_maxlen
+                        .wrapping_add(cache.buflen)
+                        .wrapping_add(2);
                     cache.buf.resize(want, 0);
                 } else if cache.buflen < strlen(libbuf) {
                     cache.buflen = strlen(libbuf) as size_t;
-                    let want = cache.libdir_maxlen.wrapping_add(cache.buflen).wrapping_add(2);
+                    let want = cache
+                        .libdir_maxlen
+                        .wrapping_add(cache.buflen)
+                        .wrapping_add(2);
                     cache.buf.resize(want, 0);
                 }
                 let buf = cache.buf.as_mut_ptr() as *mut ::core::ffi::c_char;

@@ -17,9 +17,7 @@ use crate::misc::{
 use crate::output::FmtArg;
 use crate::strcache::{strcache_add, strcache_add_bytes};
 use c2rust_bitfields;
-use libc::{
-    __errno_location, free, getenv, getlogin, strchr, strcpy, strerror, strpbrk,
-};
+use libc::{__errno_location, free, getenv, getlogin, strchr, strcpy, strerror, strpbrk};
 pub use lines::{readline, readstring};
 extern "C" {
     fn memcpy(
@@ -67,7 +65,6 @@ pub type HashTable = crate::hash::HashTable;
 pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 use crate::floc::Floc;
-
 
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
@@ -121,15 +118,13 @@ use crate::make_main::{
     db_level, one_shell, opt_snapped_deps, posix_pedantic, second_expansion, stopchar_map,
 };
 use crate::misc::{concat, cstr_bytes_or_empty};
-use crate::output::{
-    error, fatal_err, out_of_memory, perror_with_name, pfatal_with_name,
-};
+use crate::output::{error, fatal_err, out_of_memory, perror_with_name, pfatal_with_name};
 use crate::posixos::fd_noinherit;
 use crate::rule::create_pattern_rule;
 use crate::variable::{
-    assign_variable_definition, create_pattern_var, define_variable_in_set,
-    do_variable_definition, initialize_file_variables, lookup_variable,
-    parse_variable_definition, try_variable_definition, undefine_variable_in_set,
+    assign_variable_definition, create_pattern_var, define_variable_in_set, do_variable_definition,
+    initialize_file_variables, lookup_variable, parse_variable_definition, try_variable_definition,
+    undefine_variable_in_set,
 };
 use crate::vpath::construct_vpath_list;
 use ::core::ffi::CStr;
@@ -247,12 +242,12 @@ pub unsafe fn read_all_makefiles(
 ) -> Result<Vec<crate::dep::GoalDepNode>, crate::build_result::BuildError> {
     let mut num_makefiles: ::core::ffi::c_uint = 0;
     crate::variable::define_named(
-            ctx,
-            b"MAKEFILE_LIST\0",
-            b"\0" as *const u8 as *const ::core::ffi::c_char,
-            o_file,
-            0,
-        )?;
+        ctx,
+        b"MAKEFILE_LIST\0",
+        b"\0" as *const u8 as *const ::core::ffi::c_char,
+        o_file,
+        0,
+    )?;
     if 0x1_i32 & db_level(ctx) != 0 {
         crate::output::trace_out(b"Reading makefiles...\n");
     }
@@ -959,8 +954,7 @@ pub unsafe fn eval(
                         two_colon,
                         prefix,
                         &raw mut fi,
-                    )
-                    ?;
+                    )?;
                     filenames = None;
                 }
                 commands_idx = 0;
@@ -968,12 +962,10 @@ pub unsafe fn eval(
                 pattern = ::core::ptr::null::<::core::ffi::c_char>();
                 also_make_targets = 0;
                 if vmod.undefine_v() != 0 {
-                    do_undefine(ctx, p, origin, ebuf)
-                        ?;
+                    do_undefine(ctx, p, origin, ebuf)?;
                 } else {
                     if vmod.define_v() != 0 {
-                        v = do_define(ctx, p, origin, ebuf)
-                            ?;
+                        v = do_define(ctx, p, origin, ebuf)?;
                     } else {
                         v = try_variable_definition(ctx, fstart, p, origin, s_global)?;
                     }
@@ -1083,8 +1075,7 @@ pub unsafe fn eval(
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            )
-                            ?;
+                            )?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1142,8 +1133,7 @@ pub unsafe fn eval(
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            )
-                            ?;
+                            )?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1232,8 +1222,7 @@ pub unsafe fn eval(
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            )
-                            ?;
+                            )?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1278,8 +1267,7 @@ pub unsafe fn eval(
                                     two_colon,
                                     prefix,
                                     &raw mut fi,
-                                )
-                                ?;
+                                )?;
                                 filenames = None;
                             }
                             commands_idx = 0;
@@ -1363,8 +1351,7 @@ pub unsafe fn eval(
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            )
-                            ?;
+                            )?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1522,8 +1509,7 @@ pub unsafe fn eval(
                                 two_colon,
                                 prefix,
                                 &raw mut fi,
-                            )
-                            ?;
+                            )?;
                             filenames = None;
                         }
                         commands_idx = 0;
@@ -1592,7 +1578,8 @@ pub unsafe fn eval(
                                             )?;
                                             lb_next = lb_next.offset(strlen(lb_next) as isize);
                                             p2 = ctx.variable_buffer.ptr().add(p2_off);
-                                            cmdleft = ctx.variable_buffer.ptr().add(cmd_off).offset(1);
+                                            cmdleft =
+                                                ctx.variable_buffer.ptr().add(cmd_off).offset(1);
                                         }
                                     }
                                     colonp = find_char_unquote(p2, ':' as i32);
@@ -1767,8 +1754,7 @@ pub unsafe fn eval(
                                                     as variable_origin,
                                                 &raw mut vmod,
                                                 fstart,
-                                            )
-                                            ?;
+                                            )?;
                                             filenames = None;
                                         } else {
                                             find_char_unquote(lb_next, '=' as i32);
@@ -1964,8 +1950,7 @@ pub unsafe fn eval(
             two_colon,
             prefix,
             &raw mut fi,
-        )
-        ?;
+        )?;
     }
     free(collapsed as *mut ::core::ffi::c_void);
     drop(cmd_buf);
@@ -2579,54 +2564,54 @@ pub unsafe fn check_specials(
         if !posix_pedantic(ctx) && special == Some(crate::parser::SpecialTarget::Posix) {
             crate::make_main::set_posix_pedantic(ctx);
             crate::variable::define_named(
-            ctx,
-            b".SHELLFLAGS\0",
-            b"-ec\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b".SHELLFLAGS\0",
+                b"-ec\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"CC\0",
-            b"c99\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"CC\0",
+                b"c99\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"CFLAGS\0",
-            b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"CFLAGS\0",
+                b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"FC\0",
-            b"fort77\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"FC\0",
+                b"fort77\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"FFLAGS\0",
-            b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"FFLAGS\0",
+                b"-O1\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"SCCSGETFLAGS\0",
-            b"-s\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"SCCSGETFLAGS\0",
+                b"-s\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
             crate::variable::define_named(
-            ctx,
-            b"ARFLAGS\0",
-            b"-rv\0" as *const u8 as *const ::core::ffi::c_char,
-            o_default,
-            0,
-        )?;
+                ctx,
+                b"ARFLAGS\0",
+                b"-rv\0" as *const u8 as *const ::core::ffi::c_char,
+                o_default,
+                0,
+            )?;
         } else if !second_expansion(ctx)
             && special == Some(crate::parser::SpecialTarget::SecondExpansion)
         {
@@ -3766,7 +3751,10 @@ pub unsafe fn parse_file_seq(
                                         name
                                     };
                                 let nm_buf = if !prefix.is_null() {
-                                    Some(concat(&[cstr_bytes_or_empty(prefix), cstr_bytes_or_empty(base)]))
+                                    Some(concat(&[
+                                        cstr_bytes_or_empty(prefix),
+                                        cstr_bytes_or_empty(base),
+                                    ]))
                                 } else {
                                     None
                                 };
@@ -3780,8 +3768,10 @@ pub unsafe fn parse_file_seq(
                             crate::file::free_seq_chain(found);
                         }
                     } else {
-                        let __n_1_buf =
-                            concat(&[cstr_bytes_or_empty(prefix), cstr_bytes_or_empty(*nlist.offset(i as isize))]);
+                        let __n_1_buf = concat(&[
+                            cstr_bytes_or_empty(prefix),
+                            cstr_bytes_or_empty(*nlist.offset(i as isize)),
+                        ]);
                         push_name!(__n_1_buf.as_ptr() as *const ::core::ffi::c_char);
                     }
                     i += 1;
