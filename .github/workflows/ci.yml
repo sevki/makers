@@ -448,6 +448,38 @@ jobs:
               run: cargo check --all-targets
 
     # ─────────────────────────────────────────────────────────────────────
+    # wasm32-wasip1: guards the compilation work from #620/#628 against
+    # regressions. `cargo check` alone isn't enough here — several of the
+    # blockers that work fixed were hand-declared `extern "C"` symbols that
+    # only fail at link time, not at type-check time (see #628) — so this
+    # does a real `cargo build` of the lib and binary, not just a check.
+    # Recipe execution itself is a deliberate, tracked gap on wasm (#623);
+    # this job only proves the crate still compiles and links.
+    # ─────────────────────────────────────────────────────────────────────
+    wasm-build:
+        name: build (wasm32-wasip1)
+        needs: build
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Install wasm32-wasip1 target
+              run: rustup target add wasm32-wasip1
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-
+
+            - name: Build the library and make binary for wasm32-wasip1
+              run: cargo build --target wasm32-wasip1 --bin make
+
+    # ─────────────────────────────────────────────────────────────────────
     # Coverage: the ONE instrumented build+test run. It generates the single
     # lcov.info that both this report and the CRAP gate (below) consume — the
     # old design ran `cargo llvm-cov` twice per PR. Generated the way crap.sh
