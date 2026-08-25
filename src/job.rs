@@ -39,7 +39,6 @@ use {
         recipe::RecipeLineFlags,
         stdio::FILE,
     },
-    ::c2rust_bitfields,
     libc::{
         __errno_location,
         close,
@@ -93,7 +92,7 @@ extern "C" {
     fn wait(__stat_loc: *mut i32) -> __pid_t;
     fn waitpid(__pid: __pid_t, __stat_loc: *mut i32, __options: i32) -> __pid_t;
 }
-pub type sigset_t = crate::make_main::SigsetT;
+pub type sigset_t = crate::entry::SigsetT;
 pub use crate::sys_stat::{stat, timespec};
 pub type C2RustUnnamed = ::core::ffi::c_uint;
 pub const _CS_V7_ENV: C2RustUnnamed = 1149;
@@ -198,16 +197,15 @@ pub struct ChildBase {
     pub environment: *mut *mut ::core::ffi::c_char,
     pub output: output,
 }
-#[derive(BitfieldStruct)]
 #[repr(C)]
-pub struct child {
+pub struct Child {
     // The first three fields mirror `ChildBase` (same order, `#[repr(C)]`) so
     // that `child as *mut ChildBase` stays a valid prefix cast for
     // `child_execute_job`/`free_childbase`.
     pub cmd_name: *mut ::core::ffi::c_char,
     pub environment: *mut *mut ::core::ffi::c_char,
     pub output: output,
-    pub next: *mut child,
+    pub next: *mut Child,
     /// The target this child builds, by arena handle (the former `*mut File`).
     pub file: FileId,
     /// Which inline entry of a (possibly double-colon) target this child runs:
@@ -232,18 +230,60 @@ pub struct child {
     /// long as `command_buf` is not reallocated.
     pub command_ptr: *mut ::core::ffi::c_char,
     pub pid: pid_t,
-    #[bitfield(name = "remote", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "noerror", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "good_stdin", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "deleted", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "jobslot", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "dontcare", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    pub remote_noerror_good_stdin_deleted_recursive_jobslot_dontcare: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 7],
+    pub(crate) remote: ::core::ffi::c_uint,
+    pub(crate) noerror: ::core::ffi::c_uint,
+    pub(crate) good_stdin: ::core::ffi::c_uint,
+    pub(crate) deleted: ::core::ffi::c_uint,
+    pub(crate) recursive: ::core::ffi::c_uint,
+    pub(crate) jobslot: ::core::ffi::c_uint,
+    pub(crate) dontcare: ::core::ffi::c_uint,
 }
-impl crate::file::NextLinked for child {
+
+impl Child {
+    pub fn remote(&self) -> ::core::ffi::c_uint {
+        self.remote
+    }
+    pub fn set_remote(&mut self, val: ::core::ffi::c_uint) {
+        self.remote = val;
+    }
+    pub fn noerror(&self) -> ::core::ffi::c_uint {
+        self.noerror
+    }
+    pub fn set_noerror(&mut self, val: ::core::ffi::c_uint) {
+        self.noerror = val;
+    }
+    pub fn good_stdin(&self) -> ::core::ffi::c_uint {
+        self.good_stdin
+    }
+    pub fn set_good_stdin(&mut self, val: ::core::ffi::c_uint) {
+        self.good_stdin = val;
+    }
+    pub fn deleted(&self) -> ::core::ffi::c_uint {
+        self.deleted
+    }
+    pub fn set_deleted(&mut self, val: ::core::ffi::c_uint) {
+        self.deleted = val;
+    }
+    pub fn recursive(&self) -> ::core::ffi::c_uint {
+        self.recursive
+    }
+    pub fn set_recursive(&mut self, val: ::core::ffi::c_uint) {
+        self.recursive = val;
+    }
+    pub fn jobslot(&self) -> ::core::ffi::c_uint {
+        self.jobslot
+    }
+    pub fn set_jobslot(&mut self, val: ::core::ffi::c_uint) {
+        self.jobslot = val;
+    }
+    pub fn dontcare(&self) -> ::core::ffi::c_uint {
+        self.dontcare
+    }
+    pub fn set_dontcare(&mut self, val: ::core::ffi::c_uint) {
+        self.dontcare = val;
+    }
+}
+impl crate::file::NextLinked for Child {
     unsafe fn next(this: *const Self) -> *mut Self {
         if this.is_null() {
             return ::core::ptr::null_mut::<Self>();
@@ -253,12 +293,10 @@ impl crate::file::NextLinked for child {
 }
 use crate::{
     commands::{chop_commands, delete_child_targets, handling_fatal_signal},
+    entry::{db_level, die_cleanup, not_parallel, one_shell, posix_pedantic, stopchar_map},
     file::lookup_file,
     findprog::find_in_given_path,
     function::{shell_completed, shell_function_pid},
-    make_main::{
-        db_level, die_cleanup, not_parallel, one_shell, posix_pedantic, stopchar_map,
-    },
     output::{
         error,
         fatal_err,
@@ -411,7 +449,7 @@ pub unsafe fn unblock_sigs(ctx: &crate::execctx::ExecContext) {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn unblock_all_sigs() {
-    let mut empty: sigset_t = crate::make_main::SigsetT { __val: [0; 16] };
+    let mut empty: sigset_t = crate::entry::SigsetT { __val: [0; 16] };
     sigemptyset(&raw mut empty);
     sigprocmask(
         SIG_SETMASK,
@@ -611,7 +649,7 @@ fn entry_node(guard: &mut FileNode, entry: usize) -> &mut FileNode {
 
 unsafe fn child_error(
     ctx: &crate::execctx::ExecContext,
-    child: *mut child,
+    child: *mut Child,
     exit_code: i32,
     exit_sig: i32,
     coredump: i32,
@@ -628,7 +666,7 @@ unsafe fn child_error(
     let f_name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
     let mut smode: Option<&::core::ffi::CStr> = None;
     let l: size_t;
-    if ignored != 0 && crate::make_main::opt_run_silent(ctx) {
+    if ignored != 0 && crate::entry::opt_run_silent(ctx) {
         return;
     }
     if exit_sig != 0 && coredump != 0 {
@@ -704,7 +742,7 @@ fn dead_children(ctx: &crate::execctx::ExecContext) -> u32 {
 /// `close`). Reaches `ExecContext` through the `CTX_PTR` borrow channel since
 /// a real signal handler cannot carry an extra parameter.
 pub extern "C" fn child_handler(mut _sig: i32) {
-    crate::make_main::try_with_exec_context(|ctx| {
+    crate::entry::try_with_exec_context(|ctx| {
         ctx.dead_children.0.fetch_add(1, Ordering::Relaxed);
     });
     jobserver_signal();
@@ -728,8 +766,8 @@ pub unsafe fn reap_children(
         let mut exit_code: i32 = 0;
         let mut exit_sig: i32 = 0;
         let mut coredump: i32 = 0;
-        let mut lastc: *mut child;
-        let mut c: *mut child;
+        let mut lastc: *mut Child;
+        let mut c: *mut Child;
         let mut child_failed: i32;
         let mut any_remote: i32;
         let mut any_local: i32;
@@ -753,7 +791,7 @@ pub unsafe fn reap_children(
         }
         any_remote = 0;
         any_local = (shell_function_pid(ctx) != 0) as i32;
-        lastc = ::core::ptr::null_mut::<child>();
+        lastc = ::core::ptr::null_mut::<Child>();
         c = ctx.children.0.get();
         // Set when we find a child that already failed to launch (pid < 0);
         // otherwise we walk to the end of the list and must wait() for one.
@@ -781,7 +819,11 @@ pub unsafe fn reap_children(
                         b") PID ",
                         &pid_bytes((*c).pid),
                         b" ",
-                        if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                        if (*c).remote() as i32 != 0 {
+                            b" (remote)"
+                        } else {
+                            b""
+                        },
                         b"\n",
                     ]);
                 }
@@ -859,12 +901,12 @@ pub unsafe fn reap_children(
                     remote = 1;
                 }
             }
-            crate::make_main::bump_command_count(ctx);
+            crate::entry::bump_command_count(ctx);
             if remote == 0 && pid == shell_function_pid(ctx) {
                 shell_completed(ctx, exit_code, exit_sig)?;
                 break;
             } else {
-                lastc = ::core::ptr::null_mut::<child>();
+                lastc = ::core::ptr::null_mut::<Child>();
                 c = ctx.children.0.get();
                 while !c.is_null() {
                     if (*c).pid == pid && (*c).remote() == remote {
@@ -887,7 +929,11 @@ pub unsafe fn reap_children(
                         b" PID ",
                         &pid_bytes((*c).pid),
                         b" ",
-                        if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                        if (*c).remote() as i32 != 0 {
+                            b" (remote)"
+                        } else {
+                            b""
+                        },
                         b"\n",
                     ]);
                 }
@@ -957,7 +1003,7 @@ pub unsafe fn reap_children(
             child_failed = MAKE_SUCCESS;
         } else if exit_sig == 0
             && exit_code == 1
-            && crate::make_main::opt_question(ctx)
+            && crate::entry::opt_question(ctx)
             && (*c).recursive() as i32 != 0
         {
             child_failed = MAKE_TROUBLE;
@@ -991,7 +1037,7 @@ pub unsafe fn reap_children(
             ctx.good_stdin_used.set(false);
         }
         dontcare = (*c).dontcare() as i32;
-        if child_failed != 0 && (*c).noerror() == 0 && !crate::make_main::opt_ignore_errors(ctx) {
+        if child_failed != 0 && (*c).noerror() == 0 && !crate::entry::opt_ignore_errors(ctx) {
             if dontcare == 0 && child_failed == MAKE_FAILURE {
                 child_error(ctx, c, exit_code, exit_sig, coredump, 0);
             }
@@ -1031,11 +1077,11 @@ pub unsafe fn reap_children(
                 if handling_fatal_signal(ctx) {
                     set_file_update_status_entry(ctx, (*c).file, (*c).entry, us_failed);
                 } else {
-                    if crate::make_main::opt_output_sync(ctx) == OUTPUT_SYNC_LINE {
+                    if crate::entry::opt_output_sync(ctx) == OUTPUT_SYNC_LINE {
                         crate::output::output_dump(ctx, &raw mut (*c).output);
                     }
                     (*c).set_remote(
-                        ctx.remote_backend.0.can_start_job(false) as ::core::ffi::c_uint,
+                        ctx.remote_backend.0.can_start_job(false) as ::core::ffi::c_uint
                     );
                     // The signal mask this loop blocked has to come back before
                     // a rejection leaves the reaper.
@@ -1067,7 +1113,11 @@ pub unsafe fn reap_children(
                 &ptr_bytes(c),
                 b" PID ",
                 &pid_bytes((*c).pid),
-                if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                if (*c).remote() as i32 != 0 {
+                    b" (remote)"
+                } else {
+                    b""
+                },
                 b" from chain.\n",
             ]);
         }
@@ -1091,7 +1141,7 @@ pub unsafe fn reap_children(
         if err == 0
             && child_failed != 0
             && dontcare == 0
-            && !crate::make_main::opt_keep_going(ctx)
+            && !crate::entry::opt_keep_going(ctx)
             && !handling_fatal_signal(ctx)
         {
             // `child_failed` is one of make's canonical statuses (set to
@@ -1132,7 +1182,7 @@ pub unsafe fn free_childbase(child: *mut ChildBase) {
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn free_child(
     ctx: &crate::execctx::ExecContext,
-    child: *mut child,
+    child: *mut Child,
 ) -> Result<(), crate::build_result::BuildError> {
     crate::output::output_close(ctx, &raw mut (*child).output);
     release_jobserver_token(ctx, child)?;
@@ -1162,7 +1212,7 @@ pub unsafe fn free_child(
 /// must be initialized.
 unsafe fn release_jobserver_token(
     ctx: &crate::execctx::ExecContext,
-    child: *mut child,
+    child: *mut Child,
 ) -> Result<(), crate::build_result::BuildError> {
     let name_buf = file_name_cstr(ctx, (*child).file);
     let name = name_buf.as_ptr() as *const ::core::ffi::c_char;
@@ -1201,7 +1251,7 @@ unsafe fn release_jobserver_token(
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn start_job_command(
     ctx: &crate::execctx::ExecContext,
-    child: *mut child,
+    child: *mut Child,
 ) -> Result<(), crate::build_result::BuildError> {
     let mut flags: i32;
     let mut p: *mut ::core::ffi::c_char;
@@ -1297,7 +1347,7 @@ pub unsafe fn start_job_command(
             *end_ref = 0;
             (*child).command_ptr = end.add(1);
         }
-        if !argv.is_null() && crate::make_main::opt_question(ctx) && !(flags & 1 != 0) {
+        if !argv.is_null() && crate::entry::opt_question(ctx) && !(flags & 1 != 0) {
             if !argv.is_null() {
                 free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                 free(argv as *mut ::core::ffi::c_void);
@@ -1306,7 +1356,7 @@ pub unsafe fn start_job_command(
             notice_finished_file(ctx, (*child).file, (*child).entry)?;
             return Ok(());
         }
-        if crate::make_main::opt_touch(ctx) && !(flags & 1 != 0) {
+        if crate::entry::opt_touch(ctx) && !(flags & 1 != 0) {
             if !argv.is_null() {
                 free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
                 free(argv as *mut ::core::ffi::c_void);
@@ -1314,7 +1364,7 @@ pub unsafe fn start_job_command(
             argv = ::core::ptr::null_mut::<*mut ::core::ffi::c_char>();
         }
         if !argv.is_null() {
-            let os = crate::make_main::opt_output_sync(ctx);
+            let os = crate::entry::opt_output_sync(ctx);
             (*child).output.set_syncout(
                 (os != 0 && (os == OUTPUT_SYNC_RECURSE || !(flags & 1 != 0))) as i32
                     as ::core::ffi::c_uint as ::core::ffi::c_uint,
@@ -1327,9 +1377,9 @@ pub unsafe fn start_job_command(
             if (*child).output.syncout() == 0 {
                 crate::output::output_dump(ctx, &raw mut (*child).output);
             }
-            if crate::make_main::opt_just_print(ctx)
+            if crate::entry::opt_just_print(ctx)
                 || 0x10_i32 & db_level(ctx) != 0
-                || !(flags & 2 != 0) && !crate::make_main::opt_run_silent(ctx)
+                || !(flags & 2 != 0) && !crate::entry::opt_run_silent(ctx)
             {
                 message(
                     ctx,
@@ -1357,7 +1407,7 @@ pub unsafe fn start_job_command(
                     && *(*argv.offset(2_i32 as isize)).offset(0_i32 as isize) as i32 == ':' as i32
                     && *(*argv.offset(2_i32 as isize)).offset(1_i32 as isize) as i32 == 0)
                 && (*argv.offset(3_i32 as isize)).is_null()
-                || (crate::make_main::opt_just_print(ctx) && !(flags & 1 != 0))
+                || (crate::entry::opt_just_print(ctx) && !(flags & 1 != 0))
             {
                 if !argv.is_null() {
                     free(*argv.offset(0_i32 as isize) as *mut ::core::ffi::c_void);
@@ -1480,7 +1530,7 @@ pub unsafe fn start_job_command(
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn start_waiting_job(
     ctx: &crate::execctx::ExecContext,
-    c: *mut child,
+    c: *mut Child,
 ) -> Result<i32, crate::build_result::BuildError> {
     let f: FileId = (*c).file;
     let e: usize = (*c).entry;
@@ -1508,7 +1558,11 @@ pub unsafe fn start_waiting_job(
                         &fname[..fname.len() - 1],
                         b") PID ",
                         &pid_bytes((*c).pid),
-                        if (*c).remote() as i32 != 0 { b" (remote)" } else { b"" },
+                        if (*c).remote() as i32 != 0 {
+                            b" (remote)"
+                        } else {
+                            b""
+                        },
                         b" on the chain.\n",
                     ]);
                 }
@@ -1731,16 +1785,15 @@ pub unsafe fn new_job(
 
     // Allocate the child on the heap via Box (the former xcalloc); it owns its
     // expanded recipe lines.
-    let mut boxed = Box::new(child {
+    let mut boxed = Box::new(Child {
         cmd_name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         environment: ::core::ptr::null_mut::<*mut ::core::ffi::c_char>(),
         output: output {
             out: 0,
             err: 0,
-            syncout: [0; 1],
-            c2rust_padding: [0; 3],
+            syncout: 0,
         },
-        next: ::core::ptr::null_mut::<child>(),
+        next: ::core::ptr::null_mut::<Child>(),
         file,
         entry,
         sh_batch_file: ::core::ptr::null_mut::<::core::ffi::c_char>(),
@@ -1750,8 +1803,13 @@ pub unsafe fn new_job(
         command_buf: Vec::new(),
         command_ptr: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         pid: 0,
-        remote_noerror_good_stdin_deleted_recursive_jobslot_dontcare: [0; 1],
-        c2rust_padding: [0; 7],
+        remote: 0,
+        noerror: 0,
+        good_stdin: 0,
+        deleted: 0,
+        recursive: 0,
+        jobslot: 0,
+        dontcare: 0,
     });
     crate::output::output_init(ctx, &raw mut boxed.output);
     boxed.set_dontcare(dontcare as ::core::ffi::c_uint);
@@ -1785,11 +1843,11 @@ pub unsafe fn new_job(
         boxed.line_flags.push(line.flags);
     }
 
-    let c: *mut child = Box::into_raw(boxed);
+    let c: *mut Child = Box::into_raw(boxed);
     job_next_command(c);
     // `job_slots` is fixed for the run (set only during `main_0` job setup), so
     // snapshot it once rather than reading the borrow channel each spin.
-    let slots = crate::make_main::opt_job_slots(ctx);
+    let slots = crate::entry::opt_job_slots(ctx);
     if slots != 0 {
         while job_slots_used(ctx) == slots {
             reap_children(ctx, 1, 0)?;
@@ -1799,7 +1857,11 @@ pub unsafe fn new_job(
             if 0x4_i32 & db_level(ctx) != 0 {
                 crate::output::trace_parts(&[
                     b"Need a job token; we ",
-                    if !ctx.children.0.get().is_null() { b"" } else { b"don't ".as_slice() },
+                    if !ctx.children.0.get().is_null() {
+                        b""
+                    } else {
+                        b"don't ".as_slice()
+                    },
                     b"have children\n",
                 ]);
             }
@@ -1826,10 +1888,9 @@ pub unsafe fn new_job(
                     &[],
                 ));
             }
-            let got_token: i32 = jobserver_acquire(
-                ctx,
-                (ctx.waiting_jobs.0.get() != NULL as *mut child) as i32,
-            )? as i32;
+            let got_token: i32 =
+                jobserver_acquire(ctx, (ctx.waiting_jobs.0.get() != NULL as *mut Child) as i32)?
+                    as i32;
             if !(got_token == 1) {
                 continue;
             }
@@ -1995,7 +2056,7 @@ pub unsafe fn new_job(
         }
     }
     start_waiting_job(ctx, c)?;
-    if crate::make_main::opt_job_slots(ctx) == 1 || not_parallel(ctx) {
+    if crate::entry::opt_job_slots(ctx) == 1 || not_parallel(ctx) {
         while file_command_state(ctx, file) as i32 == cs_running as i32 {
             // Restore the output context before handing a reap failure back, so
             // the caller's diagnostics are not written into this job's captured
@@ -2013,7 +2074,7 @@ pub unsafe fn new_job(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn job_next_command(child: *mut child) -> i32 {
+pub unsafe fn job_next_command(child: *mut Child) -> i32 {
     // Advance to the next non-empty expanded line, loading it into the owned
     // `command_buf` and pointing `command_ptr` at its start. The former model
     // walked a `*mut *mut c_char` array and an in-place `command_ptr` cursor;
@@ -2109,7 +2170,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
     // failed, otherwise the open fd. Per-run state on the build-phase context.
     let proc_fd = &ctx.load_proc_fd.0;
     let mut load: ::core::ffi::c_double = 0.;
-    if crate::make_main::opt_max_load_average(ctx) < 0_i32 as ::core::ffi::c_double {
+    if crate::entry::opt_max_load_average(ctx) < 0_i32 as ::core::ffi::c_double {
         return 0;
     }
     if proc_fd.get() == -2_i32 {
@@ -2165,11 +2226,11 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
                             b" / make = ",
                             job_slots_used(ctx).to_string().as_bytes(),
                             b" (max requested = ",
-                            format!("{:.6}", crate::make_main::opt_max_load_average(ctx)).as_bytes(),
+                            format!("{:.6}", crate::entry::opt_max_load_average(ctx)).as_bytes(),
                             b")\n",
                         ]);
                     }
-                    return (cnt as ::core::ffi::c_double > crate::make_main::opt_max_load_average(ctx))
+                    return (cnt as ::core::ffi::c_double > crate::entry::opt_max_load_average(ctx))
                         as i32;
                 }
                 if 0x4_i32 & db_level(ctx) != 0 {
@@ -2236,11 +2297,11 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
             b" (actual = ",
             format!("{load:.6}").as_bytes(),
             b") (max requested = ",
-            format!("{:.6}", crate::make_main::opt_max_load_average(ctx)).as_bytes(),
+            format!("{:.6}", crate::entry::opt_max_load_average(ctx)).as_bytes(),
             b")\n",
         ]);
     }
-    (guess >= crate::make_main::opt_max_load_average(ctx)) as i32
+    (guess >= crate::entry::opt_max_load_average(ctx)) as i32
 }
 /// # Safety
 ///
@@ -2249,7 +2310,7 @@ pub unsafe fn load_too_high(ctx: &crate::execctx::ExecContext) -> i32 {
 pub unsafe fn start_waiting_jobs(
     ctx: &crate::execctx::ExecContext,
 ) -> Result<(), crate::build_result::BuildError> {
-    let mut job: *mut child;
+    let mut job: *mut Child;
     if ctx.waiting_jobs.0.get().is_null() {
         return Ok(());
     }
@@ -2459,7 +2520,7 @@ unsafe fn spawn_via_std(
         // SIGTERM/SIGINT make passes on. std already clears the child's mask
         // before running these hooks, but that is an implementation detail,
         // not a documented `pre_exec` guarantee — clear it explicitly.
-        let mut empty: sigset_t = crate::make_main::SigsetT { __val: [0; 16] };
+        let mut empty: sigset_t = crate::entry::SigsetT { __val: [0; 16] };
         sigemptyset(&raw mut empty);
         if sigprocmask(
             SIG_SETMASK,
@@ -3234,9 +3295,7 @@ fn resolve_shellflags(
             v.push(0);
         }
         v
-    } else if posix_pedantic(ctx)
-        && !crate::make_main::opt_ignore_errors(ctx)
-        && !(cmd_flags & 4 != 0)
+    } else if posix_pedantic(ctx) && !crate::entry::opt_ignore_errors(ctx) && !(cmd_flags & 4 != 0)
     {
         b"-ec\0".to_vec()
     } else {
@@ -3660,7 +3719,7 @@ mod collapse_dollar_refs_tests {
     /// stopchar map, so initialize it first (as the real program does).
     #[test]
     fn folds_continuation_inside_reference() {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         assert_eq!(collapse("$(foo \\\n   bar)"), "$(foo bar)");
         assert_eq!(collapse("${a \\\n b} z"), "${a b} z");
     }
@@ -3947,7 +4006,7 @@ mod start_waiting_jobs_tests {
     //! load-limit path) and so stops the loop.
 
     use {
-        super::{child, start_waiting_jobs},
+        super::{start_waiting_jobs, Child},
         crate::{
             execctx::{Config, ExecContext},
             file::{FileId, FileNode},
@@ -3965,15 +4024,14 @@ mod start_waiting_jobs_tests {
 
     /// Allocate a bare postponed child for `file`, matching the `Box::into_raw`
     /// ownership `new_job` gives every child.
-    fn boxed_child(file: FileId) -> *mut child {
-        Box::into_raw(Box::new(child {
+    fn boxed_child(file: FileId) -> *mut Child {
+        Box::into_raw(Box::new(Child {
             cmd_name: ::core::ptr::null_mut(),
             environment: ::core::ptr::null_mut(),
             output: output {
                 out: 0,
                 err: 0,
-                syncout: [0; 1],
-                c2rust_padding: [0; 3],
+                syncout: 0,
             },
             next: ::core::ptr::null_mut(),
             file,
@@ -3985,8 +4043,13 @@ mod start_waiting_jobs_tests {
             command_buf: Vec::new(),
             command_ptr: ::core::ptr::null_mut(),
             pid: 0,
-            remote_noerror_good_stdin_deleted_recursive_jobslot_dontcare: [0; 1],
-            c2rust_padding: [0; 7],
+            remote: 0,
+            noerror: 0,
+            good_stdin: 0,
+            deleted: 0,
+            recursive: 0,
+            jobslot: 0,
+            dontcare: 0,
         }))
     }
 
@@ -4041,11 +4104,15 @@ mod shell_settings_tests {
     //! so the rejection path has to put that action back too (the
     //! cleanup-paths contract from #561).
 
-    use super::{construct_command_argv, expand_shell_settings, resolve_shellflags};
-    use crate::build_result::BuildError;
-    use crate::expand::VARIABLE_BUFFER_TEST_LOCK;
-    use crate::warning::{self, Action, Type};
-    use std::ffi::CString;
+    use {
+        super::{construct_command_argv, expand_shell_settings, resolve_shellflags},
+        crate::{
+            build_result::BuildError,
+            expand::VARIABLE_BUFFER_TEST_LOCK,
+            warning::{self, Action, Type},
+        },
+        std::ffi::CString,
+    };
 
     /// `$(word 1)` is a builtin called with the wrong number of arguments, so
     /// expanding it is refused.
@@ -4072,7 +4139,7 @@ mod shell_settings_tests {
     }
 
     fn fresh_ctx() -> crate::execctx::ExecContext {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: fresh context; each table is initialized once.
         unsafe {
@@ -4103,8 +4170,7 @@ mod shell_settings_tests {
             assert_eq!(
                 warning::action(&ctx, Type::UndefinedVar),
                 Action::Error,
-                "the undefined-variable action must be restored on the \
-                 rejection path"
+                "the undefined-variable action must be restored on the rejection path"
             );
 
             let mut line = *b"true\0";

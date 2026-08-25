@@ -4,37 +4,63 @@
 //!
 //! Port of `commands.c`.
 
-use crate::ar::{ar_member_date, ar_name_err};
 pub use crate::ffi_types::{pid_t, sig_atomic_t, size_t, time_t, uintmax_t};
-use crate::dep::DepNode;
-use crate::file::{
-    file_timestamp_cons, lookup_file, remove_intermediates, system_time_from_unix, CommandState,
-    FileId, FileNode, UpdateStatus, VarOrigin, NONEXISTENT_MTIME, ORDINARY_MTIME_MIN,
+use crate::{
+    ar::{ar_member_date, ar_name_err},
+    dep::DepNode,
+    entry::{die_cleanup, one_shell, stopchar_map, temp_stdin_unlink},
+    file::{
+        file_timestamp_cons,
+        lookup_file,
+        remove_intermediates,
+        system_time_from_unix,
+        CommandState,
+        FileId,
+        FileNode,
+        UpdateStatus,
+        VarOrigin,
+        NONEXISTENT_MTIME,
+        ORDINARY_MTIME_MIN,
+    },
+    floc::Floc,
+    job::{job_slots_used, new_job, reap_children, Child},
+    load::unload_file,
+    misc::make_pid,
+    output::{error, exit_on_err, perror_with_name, FmtArg},
+    posixos::{jobserver_clear, osync_clear},
+    recipe::{Recipe, RecipeLine, RecipeLineFlags},
+    remake::notice_finished_file,
+    variable::{define_target_variable, initialize_file_variables},
 };
-use crate::floc::Floc;
-use crate::job::{child, job_slots_used, new_job, reap_children};
-use crate::load::unload_file;
-use crate::make_main::{die_cleanup, one_shell, stopchar_map, temp_stdin_unlink};
-use crate::misc::make_pid;
-use crate::output::{error, exit_on_err, perror_with_name, FmtArg};
-use crate::posixos::{jobserver_clear, osync_clear};
-use crate::recipe::{Recipe, RecipeLine, RecipeLineFlags};
-use crate::remake::notice_finished_file;
-use crate::variable::{define_target_variable, initialize_file_variables};
 
 use crate::execctx::ExecContext;
 
-use ::core::ffi::{c_char, CStr};
-use ::core::ptr::null;
-use ::std::collections::hash_map::Entry;
+use {
+    ::core::{
+        ffi::{c_char, CStr},
+        ptr::null,
+    },
+    ::std::collections::hash_map::Entry,
+};
 
 use rustc_hash::FxHashMap;
 
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location, exit, kill, signal, EINTR, ENOENT, SIGHUP, SIGINT, SIGQUIT,
-    SIGTERM, SIG_DFL, S_IFMT, S_IFREG,
+    __errno_location,
+    exit,
+    kill,
+    signal,
+    EINTR,
+    ENOENT,
+    SIGHUP,
+    SIGINT,
+    SIGQUIT,
+    SIGTERM,
+    SIG_DFL,
+    S_IFMT,
+    S_IFREG,
 };
 
 pub const MAKE_TROUBLE: i32 = 1;
@@ -120,8 +146,10 @@ fn autovar_dep_name<'a>(
 ) -> Result<&'a [u8], crate::build_result::BuildError> {
     let mut c = name.to_vec();
     c.push(0);
-    let is_ar =
-        ar_name_err(ctx, CStr::from_bytes_with_nul(&c).expect("dep name has interior NUL"))?;
+    let is_ar = ar_name_err(
+        ctx,
+        CStr::from_bytes_with_nul(&c).expect("dep name has interior NUL"),
+    )?;
     Ok(if is_ar {
         split_archive_ref(name)
             .expect("ar_name guarantees a lib(member) reference")
@@ -235,9 +263,13 @@ pub fn set_file_variables(
     }
     if let Some(ref rt) = node_recipe_text {
         let default_recipe = lookup_file(ctx, b".DEFAULT").and_then(|did| {
-            ctx.filenodes
-                .get(did)
-                .and_then(|n| n.lock().expect("file node poisoned").recipe.as_ref().map(|r| r.text.clone()))
+            ctx.filenodes.get(did).and_then(|n| {
+                n.lock()
+                    .expect("file node poisoned")
+                    .recipe
+                    .as_ref()
+                    .map(|r| r.text.clone())
+            })
         });
         if default_recipe.as_ref() == Some(rt) {
             less = at.clone();
@@ -285,7 +317,8 @@ pub fn set_file_variables(
     let mut bar: Vec<u8> = Vec::new();
     for (i, d) in deps.iter().enumerate() {
         // Take only each name's canonical (first-inserted) dep.
-        if dep_uses_auto_vars(d) && canonical.get(dep_name_bytes(ctx, d).as_slice()).copied() == Some(i)
+        if dep_uses_auto_vars(d)
+            && canonical.get(dep_name_bytes(ctx, d).as_slice()).copied() == Some(i)
         {
             let nm = autovar_dep_name(ctx, &dep_name_bytes(ctx, d))?.to_vec();
             if ignore_mtime[i] {
@@ -400,9 +433,7 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
     }
-    haystack
-        .windows(needle.len())
-        .position(|w| w == needle)
+    haystack.windows(needle.len()).position(|w| w == needle)
 }
 
 /// Run `file`'s commands: set up its variables and start a job, or mark it
@@ -443,9 +474,9 @@ pub fn execute_file_commands(
         (text, loaded, nm)
     };
 
-    let empty = recipe_text.iter().all(|&c| {
-        stop_set(c, MAP_BLANK | MAP_NEWLINE) || c == b'-' || c == b'@' || c == b'+'
-    });
+    let empty = recipe_text
+        .iter()
+        .all(|&c| stop_set(c, MAP_BLANK | MAP_NEWLINE) || c == b'-' || c == b'@' || c == b'+');
     if empty {
         {
             let mut guard = node.lock().expect("file node poisoned");
@@ -460,7 +491,10 @@ pub fn execute_file_commands(
     initialize_file_variables(ctx, file, 0)?;
     let stem = {
         let mut guard = node.lock().expect("file node poisoned");
-        entry_node(&mut guard, entry).stem.as_ref().map(|s| s.clone().into_bytes())
+        entry_node(&mut guard, entry)
+            .stem
+            .as_ref()
+            .map(|s| s.clone().into_bytes())
     };
     set_file_variables(ctx, file, stem.as_deref())?;
 
@@ -505,7 +539,7 @@ pub fn handling_fatal_signal(ctx: &ExecContext) -> bool {
 /// in bare unit tests with no installed context the empty set stands.
 fn adopt_live_fatal_signal_mask(ctx: &ExecContext) {
     if let Some(mask) =
-        crate::make_main::try_with_exec_context(|live_ctx| live_ctx.fatal_signal_set.0.get())
+        crate::entry::try_with_exec_context(|live_ctx| live_ctx.fatal_signal_set.0.get())
     {
         ctx.fatal_signal_set.0.set(mask);
     }
@@ -519,7 +553,7 @@ fn adopt_live_fatal_signal_mask(ctx: &ExecContext) {
 /// Only callable as a signal handler (or from one); touches global job
 /// state.
 pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
-    crate::make_main::try_with_exec_context(|live_ctx| {
+    crate::entry::try_with_exec_context(|live_ctx| {
         live_ctx
             .handling_fatal_signal
             .0
@@ -537,11 +571,11 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     // The temp-stdin name lives on the *live* context (it is per-run cleanup
     // state, not part of the default/throwaway one) — reach it through the
     // CTX_PTR borrow channel like `remove_intermediates` below.
-    crate::make_main::with_exec_context(|live_ctx| temp_stdin_unlink(live_ctx));
+    crate::entry::with_exec_context(|live_ctx| temp_stdin_unlink(live_ctx));
     osync_clear();
     jobserver_clear();
 
-    let live_children = crate::make_main::with_exec_context(|live_ctx| live_ctx.children.0.get());
+    let live_children = crate::entry::with_exec_context(|live_ctx| live_ctx.children.0.get());
 
     if sig == SIGTERM {
         // Pass SIGTERM on to children right away so they die with us.
@@ -558,7 +592,7 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         let mut c = live_children;
         while !c.is_null() {
             if (*c).remote() != 0 && (*c).pid > 0 {
-                crate::make_main::with_exec_context(|live_ctx| {
+                crate::entry::with_exec_context(|live_ctx| {
                     live_ctx.remote_backend.0.kill((*c).pid, sig)
                 });
             }
@@ -571,7 +605,7 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         while !c.is_null() {
             // Same boundary as the reaps below: this is a kernel-invoked
             // signal handler with no Rust frame to carry a `Result`.
-            crate::make_main::with_exec_context(|live_ctx| delete_child_targets(live_ctx, c))
+            crate::entry::with_exec_context(|live_ctx| delete_child_targets(live_ctx, c))
                 .unwrap_or_else(|e| exit_on_err(e));
             c = (*c).next;
         }
@@ -583,13 +617,13 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         // handler is already committed to tearing the run down, so a reap
         // failure bridges through `exit_on_err` rather than propagating
         // (#432 Phase B, #441).
-        while crate::make_main::with_exec_context(job_slots_used) > 0 {
-            crate::make_main::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 0))
+        while crate::entry::with_exec_context(job_slots_used) > 0 {
+            crate::entry::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 0))
                 .unwrap_or_else(|e| exit_on_err(e));
         }
     } else {
-        while crate::make_main::with_exec_context(job_slots_used) > 0 {
-            crate::make_main::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 1))
+        while crate::entry::with_exec_context(job_slots_used) > 0 {
+            crate::entry::with_exec_context(|live_ctx| reap_children(live_ctx, 1, 1))
                 .unwrap_or_else(|e| exit_on_err(e));
         }
     }
@@ -598,7 +632,7 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
     // context. Reach `main_0`'s `ExecContext` through the `CTX_PTR` borrow
     // channel; `remove_intermediates` `try_borrow`s the table so an async signal
     // that interrupted a `borrow_mut` skips cleanup rather than panicking.
-    crate::make_main::with_exec_context(|live_ctx| remove_intermediates(live_ctx, 1));
+    crate::entry::with_exec_context(|live_ctx| remove_intermediates(live_ctx, 1));
 
     if sig == SIGQUIT {
         exit(MAKE_TROUBLE);
@@ -624,7 +658,7 @@ pub unsafe extern "C" fn fatal_error_signal(sig: i32) {
         // This is a kernel-invoked signal handler with nowhere to propagate a
         // `Result` to, so it bridges through `exit_on_err` — the sanctioned
         // stand-in for the retired diverging `die` (#432 Phase B, #440).
-        crate::make_main::with_exec_context(|live_ctx| die_cleanup(live_ctx, MAKE_TROUBLE));
+        crate::entry::with_exec_context(|live_ctx| die_cleanup(live_ctx, MAKE_TROUBLE));
         exit_on_err(crate::build_result::BuildError::Trouble);
     }
 }
@@ -752,7 +786,7 @@ fn delete_target(
 /// `child` must be a valid child record.
 pub unsafe fn delete_child_targets(
     ctx: &ExecContext,
-    child: *mut child,
+    child: *mut Child,
 ) -> Result<(), crate::build_result::BuildError> {
     if (*child).deleted() != 0 || (*child).pid < 0 {
         return Ok(());
@@ -784,18 +818,20 @@ pub fn print_commands(ctx: &ExecContext, recipe: &Recipe) {
     // SAFETY: stdout/printf/fputs are the C stdio handles; the format buffers
     match &recipe.defined_in {
         None => crate::output::trace_out(b"#  recipe to execute (built-in):\n"),
-        Some(filenm) => crate::output::trace_parts(&[
-            b"#  recipe to execute (from '",
-            filenm,
-            b"', line ",
-            (recipe.defined_lineno as ::core::ffi::c_ulong)
-                .to_string()
-                .as_bytes(),
-            b"):\n",
-        ]),
+        Some(filenm) => {
+            crate::output::trace_parts(&[
+                b"#  recipe to execute (from '",
+                filenm,
+                b"', line ",
+                (recipe.defined_lineno as ::core::ffi::c_ulong)
+                    .to_string()
+                    .as_bytes(),
+                b"):\n",
+            ])
+        }
     }
 
-    let prefix = crate::make_main::opt_cmd_prefix(ctx) as u8;
+    let prefix = crate::entry::opt_cmd_prefix(ctx) as u8;
     print_recipe_lines(recipe.text.as_slice(), prefix);
 }
 
@@ -830,11 +866,11 @@ mod adopt_live_fatal_signal_mask_tests {
 
     #[test]
     fn copies_live_mask_when_context_installed() {
-        let _ctx = crate::make_main::install_default_exec_context_for_test();
-        let _ctx = crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::entry::install_default_exec_context_for_test();
+        let _ctx = crate::entry::install_default_exec_context_for_test();
         // Simulate `install_fatal_signal` adding SIGINT (bit 1 of word 0, as
         // `sigaddset(set, 2)` does on Linux) to the live context's mask.
-        crate::make_main::with_exec_context(|live_ctx| {
+        crate::entry::with_exec_context(|live_ctx| {
             let mut set = live_ctx.fatal_signal_set.0.get();
             set.__val[0] |= 1 << 1;
             live_ctx.fatal_signal_set.0.set(set);
@@ -948,12 +984,12 @@ mod autovar_dep_name_unsafe_oracle {
     //! reuses `split_archive_ref`. This keeps the verbatim c2rust-era pointer
     //! implementation as a differential oracle and asserts both yield identical
     //! bytes on plain names and `lib(member)` archive refs (AGENTS rule 3).
-    use super::autovar_dep_name;
-    use crate::ar::ar_name;
-    use crate::execctx::ExecContext;
-    use crate::ffi_types::size_t;
-    use ::core::ffi::{c_char, CStr};
-    use libc::{strchr, strlen};
+    use {
+        super::autovar_dep_name,
+        crate::{ar::ar_name, execctx::ExecContext, ffi_types::size_t},
+        ::core::ffi::{c_char, CStr},
+        libc::{strchr, strlen},
+    };
 
     /// Verbatim c2rust-era implementation: returns a `(ptr, len)` borrowing
     /// `c`'s storage, reaching the archive member via `strchr(c, '(')+1`.
@@ -1001,8 +1037,7 @@ mod hash_2_tests {
     //! their key pointer, so they are now safe `fn`s. Exercise each across
     //! the modules touched by this pass with both a null and a non-null key
     //! to confirm the pointer is ignored and the result is 0.
-    use core::ffi::c_void;
-    use core::ptr;
+    use core::{ffi::c_void, ptr};
 
     #[test]
     fn secondary_hashes_are_zero_and_ignore_key() {

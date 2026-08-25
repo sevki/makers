@@ -82,7 +82,7 @@ impl Default for Recipe {
 /// idiomatic, pointer-free replacement is [`Recipe`]; this `#[repr(C)]` struct
 /// stays only until the last `*mut Commands` site on `File` is swapped for a
 /// handle. `file.rs` re-exports it (and the `commands` alias) for compatibility.
-#[derive(Copy, Clone, BitfieldStruct)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct Commands {
     pub fileinfo: Floc,
@@ -91,8 +91,5 @@ pub struct Commands {
     pub lines_flags: *mut ::core::ffi::c_uchar,
     pub ncommand_lines: ::core::ffi::c_ushort,
     pub recipe_prefix: ::core::ffi::c_char,
-    #[bitfield(name = "any_recurse", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub any_recurse: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 4],
+    pub any_recurse: ::core::ffi::c_uint,
 }

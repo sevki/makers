@@ -5,21 +5,25 @@
 //! cache) because they are shared with `read.rs`, `remake.rs`, and
 //! `implicit.rs` through `extern "C"` boundaries.
 
-use ::core::ffi::{c_char, c_uint, c_void, CStr};
-use ::core::ptr::{null, null_mut};
+use ::core::{
+    ffi::{c_char, c_uint, c_void, CStr},
+    ptr::{null, null_mut},
+};
 
 use libc::{__errno_location, free, strcmp, strlen};
 
-use crate::dir::{dir_file_exists_p, dir_name};
-use crate::expand::expand_variable_buf;
-use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{file_timestamp_cons, lookup_file, system_time_from_unix};
-use crate::function::pattern_matches;
-use crate::make_main::stopchar_map;
-use crate::misc::xmalloc;
-use crate::read::find_percent;
-use crate::strcache::{strcache_add, strcache_add_len};
-use crate::sys_stat::stat;
+use crate::{
+    dir::{dir_file_exists_p, dir_name},
+    entry::stopchar_map,
+    expand::expand_variable_buf,
+    ffi_types::{size_t, uintmax_t},
+    file::{file_timestamp_cons, lookup_file, system_time_from_unix},
+    function::pattern_matches,
+    misc::xmalloc,
+    read::find_percent,
+    strcache::{strcache_add, strcache_add_len},
+    sys_stat::stat,
+};
 
 extern "C" {
     fn stat(file: *const c_char, buf: *mut stat) -> i32;
@@ -340,8 +344,7 @@ pub fn gpath_search(ctx: &crate::execctx::ExecContext, file: &[u8]) -> bool {
 
 #[cfg(test)]
 mod percent_off_unsafe_oracle {
-    use super::*;
-    use std::ffi::CString;
+    use {super::*, std::ffi::CString};
 
     /// Verbatim pre-conversion implementation, preserved as a differential
     /// oracle: recovers the `%` offset by raw address subtraction.
@@ -711,11 +714,7 @@ pub unsafe fn print_vpath_data_base(ctx: &crate::execctx::ExecContext) {
     let mut v = vpaths;
     while !v.is_null() {
         nvpaths += 1;
-        crate::output::trace_parts(&[
-            b"vpath ",
-            CStr::from_ptr((*v).pattern).to_bytes(),
-            b" ",
-        ]);
+        crate::output::trace_parts(&[b"vpath ", CStr::from_ptr((*v).pattern).to_bytes(), b" "]);
         print_search_path(v);
         v = (*v).next;
     }
@@ -758,9 +757,11 @@ mod vpath_variable_rejection_tests {
     //! `Result`: a `VPATH`/`GPATH` value that cannot be expanded comes back as
     //! a rejection instead of ending the process from inside the vpath setup.
 
-    use super::{build_vpath_lists, vpath_from_variable};
-    use crate::build_result::BuildError;
-    use std::ffi::CString;
+    use {
+        super::{build_vpath_lists, vpath_from_variable},
+        crate::build_result::BuildError,
+        std::ffi::CString,
+    };
 
     /// Define `name` as a recursive global variable holding `value`.
     ///
@@ -783,7 +784,7 @@ mod vpath_variable_rejection_tests {
     }
 
     fn fresh_ctx() -> crate::execctx::ExecContext {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: fresh context; each table is initialized once.
         unsafe {
@@ -808,8 +809,7 @@ mod vpath_variable_rejection_tests {
             ));
             assert!(
                 matches!(build_vpath_lists(&ctx), Err(BuildError::Failure)),
-                "the rejection must reach `build_vpath_lists`, which `main_0` \
-                 propagates"
+                "the rejection must reach `build_vpath_lists`, which `main_0` propagates"
             );
         }
     }
@@ -823,13 +823,17 @@ mod vpath_variable_rejection_tests {
         unsafe {
             define_recursive(&ctx, "VPATH", "   ");
             assert!(
-                vpath_from_variable(&ctx, b"VPATH\0").expect("well-formed").is_none(),
+                vpath_from_variable(&ctx, b"VPATH\0")
+                    .expect("well-formed")
+                    .is_none(),
                 "a whitespace-only value yields no chain"
             );
 
             define_recursive(&ctx, "GPATH", "src:include");
             assert!(
-                vpath_from_variable(&ctx, b"GPATH\0").expect("well-formed").is_some(),
+                vpath_from_variable(&ctx, b"GPATH\0")
+                    .expect("well-formed")
+                    .is_some(),
                 "a real search path yields a chain"
             );
             assert!(build_vpath_lists(&ctx).is_ok());

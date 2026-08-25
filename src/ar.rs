@@ -1,9 +1,10 @@
-use crate::output::FmtArg;
-use libc::fnmatch;
+use {crate::output::FmtArg, libc::fnmatch};
 
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
-use crate::file::{Dep, File, SeqNode};
-use crate::strcache::strcache_add;
+use crate::{
+    file::{Dep, File, SeqNode},
+    strcache::strcache_add,
+};
 extern "C" {
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
 }
@@ -37,13 +38,15 @@ pub type ar_member_func_t = Option<
         *const ::core::ffi::c_void,
     ) -> intmax_t,
 >;
-use crate::arscan::{ar_member_touch, ar_name_equal, ar_scan};
-use crate::dir::file_exists_p;
 pub use crate::file::nameseq;
-use crate::file::{enter_file, lookup_file};
-use crate::misc::{alpha_cmp, concat, cstr_bytes_or_empty};
-use crate::output::{error, fatal_err, out_of_memory, perror_with_name};
-use crate::remake::f_mtime;
+use crate::{
+    arscan::{ar_member_touch, ar_name_equal, ar_scan},
+    dir::file_exists_p,
+    file::{enter_file, lookup_file},
+    misc::{alpha_cmp, concat, cstr_bytes_or_empty},
+    output::{error, fatal_err, out_of_memory, perror_with_name},
+    remake::f_mtime,
+};
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub struct ArGlobState<T: SeqNode> {
@@ -120,16 +123,18 @@ pub fn ar_name_err(
     match classify_ar_name(name.to_bytes()) {
         ArName::Plain => Ok(false),
         ArName::Member => Ok(true),
-        ArName::Unsupported => Err(unsafe {
-            fatal_err(
-                ctx,
-                ::core::ptr::null_mut::<Floc>(),
-                name.to_bytes().len() as size_t,
-                b"attempt to use unsupported feature: '%s'\0" as *const u8
-                    as *const ::core::ffi::c_char,
-                &[FmtArg::Str((name.as_ptr()) as *const ::core::ffi::c_char)],
-            )
-        }),
+        ArName::Unsupported => {
+            Err(unsafe {
+                fatal_err(
+                    ctx,
+                    ::core::ptr::null_mut::<Floc>(),
+                    name.to_bytes().len() as size_t,
+                    b"attempt to use unsupported feature: '%s'\0" as *const u8
+                        as *const ::core::ffi::c_char,
+                    &[FmtArg::Str((name.as_ptr()) as *const ::core::ffi::c_char)],
+                )
+            })
+        }
     }
 }
 
@@ -286,21 +291,21 @@ pub unsafe fn ar_touch(
     match ar_member_touch(ctx, arname, memname) {
         -1 => {
             error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        strlen(arname) as size_t,
-        b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
-    );
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                strlen(arname) as size_t,
+                b"touch: archive '%s' does not exist\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+            );
         }
         -2 => {
             error(
-        ctx,
-        ::core::ptr::null_mut::<Floc>(),
-        strlen(arname) as size_t,
-        b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
-        &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
-    );
+                ctx,
+                ::core::ptr::null_mut::<Floc>(),
+                strlen(arname) as size_t,
+                b"touch: '%s' is not a valid archive\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((arname) as *const ::core::ffi::c_char)],
+            );
         }
         -3 => {
             perror_with_name(
@@ -362,8 +367,13 @@ unsafe fn ar_glob_match<T: SeqNode>(
             new,
             strcache_add(
                 ctx,
-                concat(&[cstr_bytes_or_empty((*state).arname), b"(", cstr_bytes_or_empty(mem), b")"]).as_ptr()
-                    as *const ::core::ffi::c_char,
+                concat(&[
+                    cstr_bytes_or_empty((*state).arname),
+                    b"(",
+                    cstr_bytes_or_empty(mem),
+                    b")",
+                ])
+                .as_ptr() as *const ::core::ffi::c_char,
             ),
         );
         T::set_next(new, (*state).chain);
@@ -421,8 +431,7 @@ pub fn ar_glob_member_names() -> bool {
 
 #[cfg(test)]
 mod ar_glob_member_names_tests {
-    use super::flag_on;
-    use std::ffi::OsStr;
+    use {super::flag_on, std::ffi::OsStr};
 
     #[test]
     fn unset_empty_and_zero_are_off() {
@@ -662,11 +671,13 @@ mod ar_date_touch_rejection_tests {
     //! travels back out instead of ending the process from inside the archive
     //! layer. These also give the two functions their first coverage.
 
-    use super::{ar_member_date, ar_touch};
-    use std::ffi::CString;
+    use {
+        super::{ar_member_date, ar_touch},
+        std::ffi::CString,
+    };
 
     fn fresh_ctx() -> crate::execctx::ExecContext {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: fresh context; each table is initialized once.
         unsafe {

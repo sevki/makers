@@ -1,8 +1,6 @@
-use crate::dep::DepNode;
-use crate::file::FileId;
+use crate::{dep::DepNode, file::FileId};
 
-use crate::fatal;
-use crate::make_main::not_parallel;
+use crate::{entry::not_parallel, fatal};
 
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
 pub enum Mode {
@@ -93,7 +91,12 @@ fn initial_seed(time: libc::time_t, pid: libc::time_t) -> u32 {
 fn make_rand(ctx: &crate::execctx::ExecContext) -> u32 {
     let mut cfg = ctx.shuffle.get();
     let mut next = if cfg.prng == 0 {
-        unsafe { initial_seed(libc::time(::core::ptr::null_mut()), crate::misc::make_pid() as libc::time_t) }
+        unsafe {
+            initial_seed(
+                libc::time(::core::ptr::null_mut()),
+                crate::misc::make_pid() as libc::time_t,
+            )
+        }
     } else {
         cfg.prng
     };
@@ -363,7 +366,12 @@ mod tests {
     fn shuffle_deps_reverse_reorders_in_place() {
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "reverse");
-        let mut deps = vec![dep_named("a"), dep_named("b"), dep_named("c"), dep_named("d")];
+        let mut deps = vec![
+            dep_named("a"),
+            dep_named("b"),
+            dep_named("c"),
+            dep_named("d"),
+        ];
         shuffle_deps(&ctx, &mut deps);
         assert_eq!(dep_names(&deps), vec!["d", "c", "b", "a"]);
         set_mode(&ctx, "none");
@@ -522,7 +530,7 @@ mod tests {
     fn shuffle_goals_recursive_not_parallel_is_a_noop_even_with_reorder_mode() {
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "reverse");
-        crate::make_main::set_not_parallel(&ctx);
+        crate::entry::set_not_parallel(&ctx);
 
         let mut goals = vec![goal_named("a"), goal_named("b"), goal_named("c")];
         shuffle_goals_recursive(&ctx, &mut goals);

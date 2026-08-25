@@ -1,17 +1,42 @@
 pub use crate::ffi_types::{
-    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
-    __pid_t, __syscall_slong_t, __time_t, __uid_t, pid_t, ptrdiff_t, size_t, ssize_t, uintmax_t,
+    __blkcnt_t,
+    __blksize_t,
+    __dev_t,
+    __gid_t,
+    __ino_t,
+    __mode_t,
+    __nlink_t,
+    __off64_t,
+    __off_t,
+    __pid_t,
+    __syscall_slong_t,
+    __time_t,
+    __uid_t,
+    pid_t,
+    ptrdiff_t,
+    size_t,
+    ssize_t,
+    uintmax_t,
 };
-use crate::file::{File, VariableSet, VariableSetList};
-use crate::misc::{
-    alpha_cmp, end_of_token, find_next_token, make_lltoa, next_token, xmalloc, xstrndup,
+use {
+    crate::{
+        file::{File, VariableSet, VariableSetList},
+        misc::{
+            alpha_cmp,
+            end_of_token,
+            find_next_token,
+            make_lltoa,
+            next_token,
+            xmalloc,
+            xstrndup,
+        },
+        output::FmtArg,
+        stdio::FILE,
+        strcache::strcache_add,
+    },
+    libc::{__errno_location, close, free, pipe, remove, sprintf, strerror, strstr},
+    std::sync::atomic::Ordering,
 };
-use crate::output::FmtArg;
-use crate::stdio::FILE;
-use crate::strcache::strcache_add;
-use c2rust_bitfields;
-use libc::{__errno_location, close, free, pipe, remove, sprintf, strerror, strstr};
-use std::sync::atomic::Ordering;
 extern "C" {
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
     static mut stderr: *mut FILE;
@@ -72,8 +97,7 @@ pub type gmk_func_ptr = Option<
         *mut *mut ::core::ffi::c_char,
     ) -> *mut ::core::ffi::c_char,
 >;
-pub use crate::sys_stat::stat;
-pub use crate::sys_stat::timespec;
+pub use crate::sys_stat::{stat, timespec};
 pub type __compar_fn_t =
     Option<unsafe extern "C" fn(*const ::core::ffi::c_void, *const ::core::ffi::c_void) -> i32>;
 pub type file = File;
@@ -118,25 +142,36 @@ pub const f_expand: variable_flavor = 3;
 pub const f_recursive: variable_flavor = 2;
 pub const f_simple: variable_flavor = 1;
 pub const f_bogus: variable_flavor = 0;
-use crate::expand::{
-    allocated_expand_string_for_file, expand_argument, expand_string_buf, expand_variable_output,
-    install_variable_buffer, restore_variable_buffer, variable_buffer_output,
+pub use crate::{file::nameseq, job::ChildBase, output::output};
+use {
+    crate::{
+        entry::{db_level, stopchar_map},
+        expand::{
+            allocated_expand_string_for_file,
+            expand_argument,
+            expand_string_buf,
+            expand_variable_output,
+            install_variable_buffer,
+            restore_variable_buffer,
+            variable_buffer_output,
+        },
+        hash::{hash_find_item, hash_init, hash_insert, hash_load, jhash},
+        job::{child_execute_job, construct_command_argv, free_childbase, reap_children},
+        output::{error, fatal_err, out_of_memory, output_context, outputs},
+        posixos::fd_noinherit,
+        read::{eval_buffer, find_percent, parse_file_seq},
+        variable::{
+            define_variable_in_set,
+            lookup_variable,
+            pop_variable_scope,
+            push_new_variable_scope,
+            target_environment,
+            warn_undefined,
+        },
+    },
+    rustc_hash::FxHashMap,
 };
-pub use crate::file::nameseq;
-use crate::hash::{hash_find_item, hash_init, hash_insert, hash_load, jhash};
-use rustc_hash::FxHashMap;
-pub use crate::job::ChildBase;
-use crate::job::{child_execute_job, construct_command_argv, free_childbase, reap_children};
-use crate::make_main::{db_level, stopchar_map};
-pub use crate::output::output;
-use crate::output::{error, fatal_err, out_of_memory, output_context, outputs};
-use crate::posixos::fd_noinherit;
-use crate::read::{eval_buffer, find_percent, parse_file_seq};
-use crate::variable::{
-    define_variable_in_set, lookup_variable, pop_variable_scope, push_new_variable_scope,
-    target_environment, warn_undefined,
-};
-#[derive(Copy, Clone, BitfieldStruct)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct FunctionTableEntry {
     pub fptr: C2RustUnnamed,
@@ -144,16 +179,40 @@ pub struct FunctionTableEntry {
     pub len: ::core::ffi::c_uchar,
     pub minimum_args: ::core::ffi::c_uchar,
     pub maximum_args: ::core::ffi::c_uchar,
-    #[bitfield(name = "expand_args", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "alloc_fn", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "adds_command", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    // Bit 3 flags a *safe* handler: one written as a pure `SafeFunc`
+    pub(crate) expand_args: ::core::ffi::c_uint,
+    pub(crate) alloc_fn: ::core::ffi::c_uint,
+    pub(crate) adds_command: ::core::ffi::c_uint,
+    // Flags a *safe* handler: one written as a pure `SafeFunc`
     // (`fn(&[u8], &[&[u8]]) -> Vec<u8>`) rather than the raw-pointer C ABI. The
     // dispatcher (`expand_builtin_function`) converts argv/output at the edge.
-    #[bitfield(name = "safe_fn", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    pub expand_args_alloc_fn_adds_command: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 4],
+    pub(crate) safe_fn: ::core::ffi::c_uint,
+}
+
+impl FunctionTableEntry {
+    pub fn expand_args(&self) -> ::core::ffi::c_uint {
+        self.expand_args
+    }
+    pub fn set_expand_args(&mut self, val: ::core::ffi::c_uint) {
+        self.expand_args = val;
+    }
+    pub fn alloc_fn(&self) -> ::core::ffi::c_uint {
+        self.alloc_fn
+    }
+    pub fn set_alloc_fn(&mut self, val: ::core::ffi::c_uint) {
+        self.alloc_fn = val;
+    }
+    pub fn adds_command(&self) -> ::core::ffi::c_uint {
+        self.adds_command
+    }
+    pub fn set_adds_command(&mut self, val: ::core::ffi::c_uint) {
+        self.adds_command = val;
+    }
+    pub fn safe_fn(&self) -> ::core::ffi::c_uint {
+        self.safe_fn
+    }
+    pub fn set_safe_fn(&mut self, val: ::core::ffi::c_uint) {
+        self.safe_fn = val;
+    }
 }
 /// A builtin handler written in fully safe Rust: it receives the function name
 /// and its already-expanded arguments as byte slices and returns the bytes to
@@ -466,8 +525,10 @@ unsafe fn lookup_function(
         len: 0,
         minimum_args: 0,
         maximum_args: 0,
-        expand_args_alloc_fn_adds_command: [0; 1],
-        c2rust_padding: [0; 4],
+        expand_args: 0,
+        alloc_fn: 0,
+        adds_command: 0,
+        safe_fn: 0,
     };
     let mut e: *const ::core::ffi::c_char = s;
     while *(stopchar_map().as_ptr() as *mut ::core::ffi::c_ushort)
@@ -604,8 +665,7 @@ fn join_glob_names(chain: &[crate::read::ParsedName]) -> Vec<u8> {
 
 #[cfg(test)]
 mod string_glob_tests {
-    use super::join_glob_names;
-    use crate::read::ParsedName;
+    use {super::join_glob_names, crate::read::ParsedName};
 
     /// Behavior oracle: the pre-conversion accumulation, reproduced faithfully —
     /// grow a scratch buffer, append each name followed by a space, then
@@ -807,14 +867,14 @@ mod func_join_tests {
         // `find_next_token` classifies whitespace through the runtime
         // `stopchar_map`; initialize it (as the read/file tests do) so the old
         // pointer walk sees the same blank/newline classes `tokens` uses.
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let cases: &[(&[u8], &[u8])] = &[
             (b"", b""),
             (b"a", b""),
             (b"", b"1"),
             (b"a b", b"1 2"),
-            (b"a b", b"1 2 3"),   // list2 longer
-            (b"a b c", b"1 2"),   // list1 longer
+            (b"a b", b"1 2 3"),      // list2 longer
+            (b"a b c", b"1 2"),      // list1 longer
             (b"  a   b  ", b"1\t2"), // irregular whitespace
         ];
         for &(l1, l2) in cases {
@@ -931,7 +991,6 @@ fn func_flavor(
 #[cfg(test)]
 mod func_origin_flavor_tests {
 
-
     // Since #442 the raw-ABI handlers return `Result`, while the verbatim-C
     // oracles they are compared against still return the bare output cursor
     // (AGENTS.md rule 3 keeps those byte-identical to the translated source).
@@ -954,12 +1013,22 @@ mod func_origin_flavor_tests {
     ) -> *mut c_char {
         super::func_flavor(ctx, o, argv, name).expect("harness drives only valid inputs")
     }
-    use super::{
-        define_variable_in_set, flavor_message, lookup_variable, o_override, origin_message,
-        size_t, strlen, variable, variable_buffer_output, variable_origin,
+    use {
+        super::{
+            define_variable_in_set,
+            flavor_message,
+            lookup_variable,
+            o_override,
+            origin_message,
+            size_t,
+            strlen,
+            variable,
+            variable_buffer_output,
+            variable_origin,
+        },
+        crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK},
+        std::ffi::{c_char, CString},
     };
-    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
-    use std::ffi::{c_char, CString};
     #[test]
     fn origin_message_matches_c_switch() {
         assert_eq!(origin_message(None), Some(&b"undefined"[..]));
@@ -1317,10 +1386,7 @@ fn addprefix_addsuffix_result(fix: &[u8], list: &[u8], is_addprefix: bool) -> Ve
     out.pop();
     out
 }
-fn func_addsuffix_addprefix(
-    name: &[u8],
-    args: &[&[u8]],
-) -> Vec<u8> {
+fn func_addsuffix_addprefix(name: &[u8], args: &[&[u8]]) -> Vec<u8> {
     // Classify the affix function (`addprefix`/`addsuffix`) through the typed
     // AST layer instead of switching on the raw fourth byte of the name.
     let is_addprefix = matches!(
@@ -1414,10 +1480,14 @@ mod word_family_tests {
     //! alongside the converted safe handlers, asserting byte-identical output.
     //! For `func_words` this cross-checks `u32::to_string` against the original
     //! `sprintf("%u")`.
-    use super::{func_firstword, func_lastword, func_words, size_t, tokens, SafeFunc};
-    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::{c_char, CString};
+    use {
+        super::{func_firstword, func_lastword, func_words, size_t, tokens, SafeFunc},
+        crate::{
+            entry::initialize_stopchar_map,
+            expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK},
+        },
+        std::ffi::{c_char, CString},
+    };
 
     type Handler = unsafe fn(
         &crate::execctx::ExecContext,
@@ -1515,7 +1585,10 @@ mod word_family_tests {
     fn assert_matches(safe: SafeFunc, oracle: Handler, arg: &[u8]) {
         let got = safe(b"f", &[arg]);
         let want = unsafe { emit(oracle, arg) };
-        assert_eq!(got, want, "safe vs unsafe oracle diverged for input {arg:?}");
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for input {arg:?}"
+        );
     }
 
     const CASES: &[&[u8]] = &[b"", b"   ", b"a", b"a b c", b"  a   b  ", b"a\tb\nc"];
@@ -1560,13 +1633,25 @@ mod path_family_tests {
     //! below as `*_unsafe_oracle` and driven through the real variable-output
     //! buffer alongside the converted safe handlers, asserting byte-identical
     //! output for both `notdir`/`suffix` and `basename`/`dir`.
-    use super::{
-        find_next_token, func_basename_dir, func_notdir_suffix, size_t, stop_set,
-        variable_buffer_output, SafeFunc, MAP_DIRSEP, MAP_DOT, MAP_NUL,
+    use {
+        super::{
+            find_next_token,
+            func_basename_dir,
+            func_notdir_suffix,
+            size_t,
+            stop_set,
+            variable_buffer_output,
+            SafeFunc,
+            MAP_DIRSEP,
+            MAP_DOT,
+            MAP_NUL,
+        },
+        crate::{
+            entry::initialize_stopchar_map,
+            expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK},
+        },
+        std::ffi::{c_char, CString},
     };
-    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::{c_char, CString};
 
     type Handler = unsafe fn(
         &crate::execctx::ExecContext,
@@ -1586,7 +1671,9 @@ mod path_family_tests {
         let mut doneany: i32 = 0;
         let mut len: size_t = 0;
         let is_suffix: i32 = matches!(
-            crate::parser::NotdirSuffix::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+            crate::parser::NotdirSuffix::from_funcname(
+                ::std::ffi::CStr::from_ptr(funcname).to_bytes()
+            ),
             Some(crate::parser::NotdirSuffix::Suffix)
         ) as i32;
         let is_notdir: i32 = (is_suffix == 0) as i32;
@@ -1645,7 +1732,9 @@ mod path_family_tests {
         let mut doneany: i32 = 0;
         let mut len: size_t = 0;
         let is_basename: i32 = matches!(
-            crate::parser::BasenameDir::from_funcname(::std::ffi::CStr::from_ptr(funcname).to_bytes()),
+            crate::parser::BasenameDir::from_funcname(
+                ::std::ffi::CStr::from_ptr(funcname).to_bytes()
+            ),
             Some(crate::parser::BasenameDir::Basename)
         ) as i32;
         let is_dir: i32 = (is_basename == 0) as i32;
@@ -1735,21 +1824,50 @@ mod path_family_tests {
     fn func_notdir_suffix_matches_unsafe_oracle() {
         initialize_stopchar_map();
         for &c in CASES {
-            assert_matches(func_notdir_suffix, func_notdir_suffix_unsafe_oracle, b"notdir", c);
-            assert_matches(func_notdir_suffix, func_notdir_suffix_unsafe_oracle, b"suffix", c);
+            assert_matches(
+                func_notdir_suffix,
+                func_notdir_suffix_unsafe_oracle,
+                b"notdir",
+                c,
+            );
+            assert_matches(
+                func_notdir_suffix,
+                func_notdir_suffix_unsafe_oracle,
+                b"suffix",
+                c,
+            );
         }
-        assert_eq!(func_notdir_suffix(b"notdir", &[b"src/foo.c bar"]), b"foo.c bar");
-        assert_eq!(func_notdir_suffix(b"suffix", &[b"src/foo.c bar.h noext"]), b".c .h");
+        assert_eq!(
+            func_notdir_suffix(b"notdir", &[b"src/foo.c bar"]),
+            b"foo.c bar"
+        );
+        assert_eq!(
+            func_notdir_suffix(b"suffix", &[b"src/foo.c bar.h noext"]),
+            b".c .h"
+        );
     }
 
     #[test]
     fn func_basename_dir_matches_unsafe_oracle() {
         initialize_stopchar_map();
         for &c in CASES {
-            assert_matches(func_basename_dir, func_basename_dir_unsafe_oracle, b"basename", c);
-            assert_matches(func_basename_dir, func_basename_dir_unsafe_oracle, b"dir", c);
+            assert_matches(
+                func_basename_dir,
+                func_basename_dir_unsafe_oracle,
+                b"basename",
+                c,
+            );
+            assert_matches(
+                func_basename_dir,
+                func_basename_dir_unsafe_oracle,
+                b"dir",
+                c,
+            );
         }
-        assert_eq!(func_basename_dir(b"basename", &[b"src/foo.c bar"]), b"src/foo bar");
+        assert_eq!(
+            func_basename_dir(b"basename", &[b"src/foo.c bar"]),
+            b"src/foo bar"
+        );
         assert_eq!(func_basename_dir(b"dir", &[b"src/foo.c noext"]), b"src/ ./");
     }
 }
@@ -1762,12 +1880,21 @@ mod affix_tests {
     //! `o -= 1` fixup — is preserved verbatim below as `*_unsafe_oracle` and
     //! driven through the real variable-output buffer alongside the converted
     //! safe handler, asserting byte-identical output for both addprefix/addsuffix.
-    use super::{
-        find_next_token, func_addsuffix_addprefix, size_t, strlen, variable_buffer_output, SafeFunc,
+    use {
+        super::{
+            find_next_token,
+            func_addsuffix_addprefix,
+            size_t,
+            strlen,
+            variable_buffer_output,
+            SafeFunc,
+        },
+        crate::{
+            entry::initialize_stopchar_map,
+            expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK},
+        },
+        std::ffi::{c_char, CString},
     };
-    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::{c_char, CString};
 
     type Handler = unsafe fn(
         &crate::execctx::ExecContext,
@@ -2031,13 +2158,15 @@ unsafe fn parse_numeric_err(
 ) -> Result<i64, crate::build_result::BuildError> {
     match classify_numeric(s.to_bytes()) {
         NumParse::Ok(n) => Ok(n),
-        NumParse::Empty => Err(fatal_err(
-            ctx,
-            ctx.expanding_var_floc(),
-            msg.to_bytes().len() as size_t,
-            c"%s: empty value".as_ptr(),
-            &[FmtArg::Str((msg.as_ptr()) as *const ::core::ffi::c_char)],
-        )),
+        NumParse::Empty => {
+            Err(fatal_err(
+                ctx,
+                ctx.expanding_var_floc(),
+                msg.to_bytes().len() as size_t,
+                c"%s: empty value".as_ptr(),
+                &[FmtArg::Str((msg.as_ptr()) as *const ::core::ffi::c_char)],
+            ))
+        }
         other => {
             let fmt = if other == NumParse::OutOfRange {
                 c"%s: '%s' out of range"
@@ -2124,9 +2253,10 @@ fn func_wordlist(
             return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
-                (badfirst.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(start, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
-                ),
+                (badfirst.to_bytes().len() as size_t).wrapping_add(strlen(make_lltoa(
+                    start,
+                    &raw mut buf as *mut ::core::ffi::c_char,
+                )) as size_t),
                 c"%s: '%s'".as_ptr(),
                 &[
                     FmtArg::Str((badfirst.as_ptr()) as *const ::core::ffi::c_char),
@@ -2150,9 +2280,10 @@ fn func_wordlist(
             return Err(fatal_err(
                 ctx,
                 ctx.expanding_var_floc(),
-                (badsecond.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(stop, &raw mut buf as *mut ::core::ffi::c_char)) as size_t,
-                ),
+                (badsecond.to_bytes().len() as size_t).wrapping_add(strlen(make_lltoa(
+                    stop,
+                    &raw mut buf as *mut ::core::ffi::c_char,
+                )) as size_t),
                 c"%s: '%s'".as_ptr(),
                 &[
                     FmtArg::Str((badsecond.as_ptr()) as *const ::core::ffi::c_char),
@@ -2218,17 +2349,32 @@ mod filter_filterout_tests {
     //! through the real variable-output buffer alongside the converted safe
     //! handler, asserting byte-identical output for both `filter` and
     //! `filter-out`.
-    use super::{
-        find_next_token, find_percent, func_filter_filterout, memcmp, pattern_matches, size_t,
-        strlen, variable_buffer_output, SafeFunc,
+    use {
+        super::{
+            find_next_token,
+            find_percent,
+            func_filter_filterout,
+            memcmp,
+            pattern_matches,
+            size_t,
+            strlen,
+            variable_buffer_output,
+            SafeFunc,
+        },
+        crate::{
+            entry::initialize_stopchar_map,
+            expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK},
+        },
+        rustc_hash::FxHashMap,
+        std::ffi::{c_char, c_void, CString},
     };
-    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
-    use crate::make_main::initialize_stopchar_map;
-    use rustc_hash::FxHashMap;
-    use std::ffi::{c_char, c_void, CString};
 
-    type Handler =
-        unsafe fn(&crate::execctx::ExecContext, *mut c_char, *mut *mut c_char, *const c_char) -> *mut c_char;
+    type Handler = unsafe fn(
+        &crate::execctx::ExecContext,
+        *mut c_char,
+        *mut *mut c_char,
+        *const c_char,
+    ) -> *mut c_char;
 
     #[derive(Default)]
     struct AWord {
@@ -2260,9 +2406,9 @@ mod filter_filterout_tests {
         let mut pat_count: ::core::ffi::c_ulong = 0;
         let mut word_count: ::core::ffi::c_ulong = 0;
         let mut a_word_table: FxHashMap<Box<[u8]>, *mut AWord> = FxHashMap::default();
-        let is_filter: i32 = (*funcname.offset(
-            (::core::mem::size_of::<[c_char; 7]>() as usize).wrapping_sub(1_usize) as isize,
-        ) as i32
+        let is_filter: i32 = (*funcname
+            .offset((::core::mem::size_of::<[c_char; 7]>() as usize).wrapping_sub(1_usize) as isize)
+            as i32
             == 0) as i32;
         let mut cp: *const c_char;
         let mut literals: i32 = 0;
@@ -2331,7 +2477,8 @@ mod filter_filterout_tests {
             (*wp).length = len;
             wp = wp.offset(1_i32 as isize);
         }
-        hashing = (literals > 1 && (literals as ::core::ffi::c_ulong).wrapping_mul(word_count) >= 10)
+        hashing = (literals > 1
+            && (literals as ::core::ffi::c_ulong).wrapping_mul(word_count) >= 10)
             as i32;
         if hashing != 0 {
             a_word_table.reserve(word_count as usize);
@@ -2425,7 +2572,13 @@ mod filter_filterout_tests {
         out
     }
 
-    fn assert_matches(safe: SafeFunc, oracle: Handler, funcname: &[u8], patterns: &[u8], words: &[u8]) {
+    fn assert_matches(
+        safe: SafeFunc,
+        oracle: Handler,
+        funcname: &[u8],
+        patterns: &[u8],
+        words: &[u8],
+    ) {
         let got = safe(funcname, &[patterns, words]);
         let want = unsafe { emit(oracle, funcname, patterns, words) };
         assert_eq!(
@@ -2442,7 +2595,10 @@ mod filter_filterout_tests {
         (b"%.c", b"a.c b.o c.c"),
         (b"%.c %.o", b"a.c b.o c.h"),
         (b"a\\%", b"a% b c"),
-        (b"lit1 lit2 lit3", b"lit1 lit2 lit3 lit4 lit5 lit6 lit7 lit8 lit9 lit10 lit11"),
+        (
+            b"lit1 lit2 lit3",
+            b"lit1 lit2 lit3 lit4 lit5 lit6 lit7 lit8 lit9 lit10 lit11",
+        ),
     ];
 
     #[test]
@@ -2457,7 +2613,10 @@ mod filter_filterout_tests {
                 words,
             );
         }
-        assert_eq!(func_filter_filterout(b"filter", &[b"%.c", b"a.c b.o c.c"]), b"a.c c.c");
+        assert_eq!(
+            func_filter_filterout(b"filter", &[b"%.c", b"a.c b.o c.c"]),
+            b"a.c c.c"
+        );
         assert!(func_filter_filterout(b"filter", &[b"", b"a b c"]).is_empty());
     }
 
@@ -2503,7 +2662,6 @@ mod filter_filterout_tests {
 #[cfg(test)]
 mod selection_tests {
 
-
     //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_findstring`,
     //! `func_word` and `func_wordlist` are preserved verbatim below as
     //! `*_unsafe_oracle` and driven through the real variable-output buffer
@@ -2511,14 +2669,28 @@ mod selection_tests {
     //! paths — the error paths call `fatal`, which aborts and cannot be unit
     //! tested. The conversion is signature-only (moving `unsafe` from the `fn`
     //! signature into blocks), so identical output confirms no behavioral drift.
-    use super::{
-        func_findstring, func_word, func_wordlist, make_lltoa, parse_numeric, size_t, strlen,
-        strstr, tokens, variable_buffer_output, word_span, FmtArg,
+    use {
+        super::{
+            func_findstring,
+            func_word,
+            func_wordlist,
+            make_lltoa,
+            parse_numeric,
+            size_t,
+            strlen,
+            strstr,
+            tokens,
+            variable_buffer_output,
+            word_span,
+            FmtArg,
+        },
+        crate::{
+            entry::initialize_stopchar_map,
+            expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK},
+            output::fatal,
+        },
+        std::ffi::{c_char, CString},
     };
-    use crate::output::fatal;
-    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::{c_char, CString};
 
     // Since #442 the raw-ABI handlers return `Result`, while the verbatim-C
     // oracles they are compared against still return the bare output cursor
@@ -2622,9 +2794,8 @@ mod selection_tests {
             fatal(
                 ctx,
                 ctx.expanding_var_floc(),
-                (badfirst.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(start, &raw mut buf as *mut c_char)) as size_t,
-                ),
+                (badfirst.to_bytes().len() as size_t)
+                    .wrapping_add(strlen(make_lltoa(start, &raw mut buf as *mut c_char)) as size_t),
                 c"%s: '%s'".as_ptr(),
                 &[
                     FmtArg::Str((badfirst.as_ptr()) as *const c_char),
@@ -2641,9 +2812,8 @@ mod selection_tests {
             fatal(
                 ctx,
                 ctx.expanding_var_floc(),
-                (badsecond.to_bytes().len() as size_t).wrapping_add(
-                    strlen(make_lltoa(stop, &raw mut buf as *mut c_char)) as size_t,
-                ),
+                (badsecond.to_bytes().len() as size_t)
+                    .wrapping_add(strlen(make_lltoa(stop, &raw mut buf as *mut c_char)) as size_t),
                 c"%s: '%s'".as_ptr(),
                 &[
                     FmtArg::Str((badsecond.as_ptr()) as *const c_char),
@@ -2693,7 +2863,10 @@ mod selection_tests {
     fn assert_matches(safe: Handler, oracle: Handler, args: &[&[u8]]) {
         let got = unsafe { emit(safe, args) };
         let want = unsafe { emit(oracle, args) };
-        assert_eq!(got, want, "safe vs unsafe oracle diverged for args {args:?}");
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for args {args:?}"
+        );
     }
 
     #[test]
@@ -2707,7 +2880,10 @@ mod selection_tests {
         for c in cases {
             assert_matches(func_findstring_checked, func_findstring_unsafe_oracle, c);
         }
-        assert_eq!(unsafe { emit(func_findstring_checked, &[b"ab", b"xaby"]) }, b"ab");
+        assert_eq!(
+            unsafe { emit(func_findstring_checked, &[b"ab", b"xaby"]) },
+            b"ab"
+        );
         assert!(unsafe { emit(func_findstring_checked, &[b"z", b"xaby"]) }.is_empty());
     }
 
@@ -2739,7 +2915,10 @@ mod selection_tests {
         for c in cases {
             assert_matches(func_wordlist_checked, func_wordlist_unsafe_oracle, c);
         }
-        assert_eq!(unsafe { emit(func_wordlist_checked, &[b"2", b"3", b"a b c d"]) }, b"b c");
+        assert_eq!(
+            unsafe { emit(func_wordlist_checked, &[b"2", b"3", b"a b c d"]) },
+            b"b c"
+        );
         assert!(unsafe { emit(func_wordlist_checked, &[b"3", b"2", b"a b c d"]) }.is_empty());
     }
 }
@@ -3135,18 +3314,21 @@ fn func_sort(
 #[cfg(test)]
 mod strip_sort_tests {
 
-
     //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `func_strip`
     //! and `func_sort` are preserved *verbatim* below as `*_unsafe_oracle` and
     //! driven through the real variable-output buffer alongside the converted
     //! safe handlers, asserting the emitted bytes are identical — including the
     //! per-word `variable_buffer_output` calls and the trailing `o -= 1` trim
     //! the safe versions replaced with an owned buffer + `pop()`.
-    use super::{func_sort, func_strip, size_t, stop_set, tokens, MAP_BLANK, MAP_NEWLINE};
-    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
-    use crate::make_main::initialize_stopchar_map;
-    use crate::misc::alpha_cmp;
-    use std::ffi::{c_char, CString};
+    use {
+        super::{func_sort, func_strip, size_t, stop_set, tokens, MAP_BLANK, MAP_NEWLINE},
+        crate::{
+            entry::initialize_stopchar_map,
+            expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK},
+            misc::alpha_cmp,
+        },
+        std::ffi::{c_char, CString},
+    };
 
     // Since #442 the raw-ABI handlers return `Result`, while the verbatim-C
     // oracles they are compared against still return the bare output cursor
@@ -3275,7 +3457,10 @@ mod strip_sort_tests {
     fn assert_matches(safe: Handler, oracle: Handler, arg: &[u8]) {
         let got = unsafe { emit(safe, arg) };
         let want = unsafe { emit(oracle, arg) };
-        assert_eq!(got, want, "safe vs unsafe oracle diverged for input {arg:?}");
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for input {arg:?}"
+        );
     }
 
     #[test]
@@ -3312,7 +3497,10 @@ mod strip_sort_tests {
             assert_matches(func_sort_checked, func_sort_unsafe_oracle, c);
         }
         // Exact bytes: sorted, de-duplicated, single-space-joined.
-        assert_eq!(unsafe { emit(func_sort_checked, b"foo foo bar") }, b"bar foo");
+        assert_eq!(
+            unsafe { emit(func_sort_checked, b"foo foo bar") },
+            b"bar foo"
+        );
         assert!(unsafe { emit(func_sort_checked, b"") }.is_empty());
     }
 }
@@ -3392,23 +3580,27 @@ unsafe fn parse_textint(
     let p: *const ::core::ffi::c_char = next_token(number);
     let t = ::core::ffi::CStr::from_ptr(p).to_bytes();
     match classify_textint(t) {
-        TextInt::Empty => Err(fatal_err(
-            ctx,
-            ctx.expanding_var_floc(),
-            strlen(msg) as size_t,
-            b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
-            &[FmtArg::Str((msg) as *const ::core::ffi::c_char)],
-        )),
-        TextInt::NotNumeric => Err(fatal_err(
-            ctx,
-            ctx.expanding_var_floc(),
-            (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
-            b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
-            &[
-                FmtArg::Str((msg) as *const ::core::ffi::c_char),
-                FmtArg::Str((number) as *const ::core::ffi::c_char),
-            ],
-        )),
+        TextInt::Empty => {
+            Err(fatal_err(
+                ctx,
+                ctx.expanding_var_floc(),
+                strlen(msg) as size_t,
+                b"%s: empty value\0" as *const u8 as *const ::core::ffi::c_char,
+                &[FmtArg::Str((msg) as *const ::core::ffi::c_char)],
+            ))
+        }
+        TextInt::NotNumeric => {
+            Err(fatal_err(
+                ctx,
+                ctx.expanding_var_floc(),
+                (strlen(msg) as size_t).wrapping_add(strlen(number) as size_t),
+                b"%s: '%s'\0" as *const u8 as *const ::core::ffi::c_char,
+                &[
+                    FmtArg::Str((msg) as *const ::core::ffi::c_char),
+                    FmtArg::Str((number) as *const ::core::ffi::c_char),
+                ],
+            ))
+        }
         TextInt::Parsed {
             sign: s,
             num_start,
@@ -3638,9 +3830,7 @@ mod trimmed_span_tests {
     //! pre-conversion path — the real `strip_whitespace` walked over a
     //! NUL-terminated buffer — so agreement proves the arithmetic removal is
     //! byte-for-byte behavior-preserving.
-    use super::trimmed_span_offsets;
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::c_char;
+    use {super::trimmed_span_offsets, crate::entry::initialize_stopchar_map, std::ffi::c_char};
 
     /// Pre-conversion span computation: `begp = arg; endp = arg + strlen - 1;
     /// strip_whitespace(&begp, &endp)`, then read back `[start, end)` offsets
@@ -4033,8 +4223,7 @@ pub unsafe fn func_shell_base(
         output: output {
             out: 0,
             err: 0,
-            syncout: [0; 1],
-            c2rust_padding: [0; 3],
+            syncout: 0,
         },
     };
     let mut batch_filename: *mut ::core::ffi::c_char =
@@ -4335,13 +4524,14 @@ unsafe fn func_file(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
-    use ::std::io::{Read, Write};
-    use ::std::os::unix::ffi::OsStrExt;
+    use ::std::{
+        io::{Read, Write},
+        os::unix::ffi::OsStrExt,
+    };
     let fn_0: *mut ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     if *fn_0.offset(0_i32 as isize) as i32 == '>' as i32 {
         let append = *fn_0.offset(1_i32 as isize) as i32 == '>' as i32;
-        let start: *const ::core::ffi::c_char =
-            next_token(fn_0.offset(1 + append as isize));
+        let start: *const ::core::ffi::c_char = next_token(fn_0.offset(1 + append as isize));
         if *start.offset(0_i32 as isize) as i32 == 0 {
             return Err(fatal_err(
                 ctx,
@@ -4370,18 +4560,19 @@ unsafe fn func_file(
             match opts.open(path) {
                 Ok(f) => break f,
                 Err(e) if e.raw_os_error() == Some(EINTR) => continue,
-                Err(e) => return Err(file_io_fatal(
-                    ctx,
-                    b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    &name_c,
-                    &e,
-                )),
+                Err(e) => {
+                    return Err(file_io_fatal(
+                        ctx,
+                        b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                        &name_c,
+                        &e,
+                    ))
+                }
             }
         };
-        crate::make_main::bump_command_count(ctx);
+        crate::entry::bump_command_count(ctx);
         if !(*argv.offset(1_i32 as isize)).is_null() {
-            let text =
-                ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
+            let text = ::core::ffi::CStr::from_ptr(*argv.offset(1_i32 as isize)).to_bytes();
             // The C code appends a newline unless the text already ends in
             // one — including for empty text, which writes just "\n".
             let write_result = file.write_all(text).and_then(|()| {
@@ -4443,20 +4634,21 @@ unsafe fn func_file(
                         let _ = out.write_all(b"file: Failed to open '");
                         let _ = out.write_all(name);
                         let _ = out.write_all(b"': ");
-                        let _ = out.write_all(
-                            ::core::ffi::CStr::from_ptr(strerror(ENOENT)).to_bytes(),
-                        );
+                        let _ =
+                            out.write_all(::core::ffi::CStr::from_ptr(strerror(ENOENT)).to_bytes());
                         let _ = out.write_all(b"\n");
                         let _ = out.flush();
                     }
                     return Ok(o);
                 }
-                Err(e) => return Err(file_io_fatal(
-                    ctx,
-                    b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    &name_c,
-                    &e,
-                )),
+                Err(e) => {
+                    return Err(file_io_fatal(
+                        ctx,
+                        b"open: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                        &name_c,
+                        &e,
+                    ))
+                }
             }
         };
         let mut buf = [0u8; 1024];
@@ -4473,12 +4665,14 @@ unsafe fn func_file(
                     n = n.wrapping_add(l as size_t);
                 }
                 Err(e) if e.kind() == ::std::io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(file_io_fatal(
-                    ctx,
-                    b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
-                    &name_c,
-                    &e,
-                )),
+                Err(e) => {
+                    return Err(file_io_fatal(
+                        ctx,
+                        b"read: %s: %s\0" as *const u8 as *const ::core::ffi::c_char,
+                        &name_c,
+                        &e,
+                    ))
+                }
             }
         }
         drop(file);
@@ -4524,14 +4718,16 @@ fn abspath_result(list: &[u8], starting_dir: &[u8]) -> Vec<u8> {
 /// carries no context parameter. Confines the one raw-pointer read to a
 /// single accessor so the path builtins stay fully safe.
 fn starting_directory_bytes() -> Vec<u8> {
-    crate::make_main::try_with_exec_context(|ctx| {
+    crate::entry::try_with_exec_context(|ctx| {
         let p = ctx.starting_directory.0.get();
         if p.is_null() {
             Vec::new()
         } else {
             // SAFETY: a non-null `starting_directory` is a NUL-terminated C
             // string in `main_0`'s frame, live for the whole run.
-            unsafe { ::core::ffi::CStr::from_ptr(p) }.to_bytes().to_vec()
+            unsafe { ::core::ffi::CStr::from_ptr(p) }
+                .to_bytes()
+                .to_vec()
         }
     })
     .unwrap_or_default()
@@ -4551,13 +4747,24 @@ mod func_abspath_tests {
     //! `starting_directory_bytes`), so they agree regardless of its value;
     //! the direct assertions pin the pure helper's behavior with an explicit
     //! base.
-    use super::{
-        abspath_into, abspath_result, find_next_token, func_abspath, size_t,
-        starting_directory_bytes, variable_buffer_output, SafeFunc, GET_PATH_MAX,
+    use {
+        super::{
+            abspath_into,
+            abspath_result,
+            find_next_token,
+            func_abspath,
+            size_t,
+            starting_directory_bytes,
+            variable_buffer_output,
+            SafeFunc,
+            GET_PATH_MAX,
+        },
+        crate::{
+            entry::initialize_stopchar_map,
+            expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK},
+        },
+        std::ffi::{c_char, CString},
     };
-    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::{c_char, CString};
 
     type Handler = unsafe fn(
         &crate::execctx::ExecContext,
@@ -4631,7 +4838,10 @@ mod func_abspath_tests {
     fn assert_matches(safe: SafeFunc, oracle: Handler, arg: &[u8]) {
         let got = safe(b"abspath", &[arg]);
         let want = unsafe { emit(oracle, arg) };
-        assert_eq!(got, want, "safe vs unsafe oracle diverged for input {arg:?}");
+        assert_eq!(
+            got, want,
+            "safe vs unsafe oracle diverged for input {arg:?}"
+        );
     }
 
     const CASES: &[&[u8]] = &[
@@ -4700,8 +4910,10 @@ const fn ft_entry(
         len: (name.len() - 1) as ::core::ffi::c_uchar,
         minimum_args: min,
         maximum_args: max,
-        expand_args_alloc_fn_adds_command: [expand & 1],
-        c2rust_padding: [0; 4],
+        expand_args: (expand & 1) as ::core::ffi::c_uint,
+        alloc_fn: 0,
+        adds_command: 0,
+        safe_fn: 0,
     }
 }
 /// Like [`ft_entry`], but registers a fully-safe [`SafeFunc`] handler. Sets the
@@ -4723,8 +4935,10 @@ const fn ft_entry_safe(
         len: (name.len() - 1) as ::core::ffi::c_uchar,
         minimum_args: min,
         maximum_args: max,
-        expand_args_alloc_fn_adds_command: [(expand & 1) | 0b1000],
-        c2rust_padding: [0; 4],
+        expand_args: (expand & 1) as ::core::ffi::c_uint,
+        alloc_fn: 0,
+        adds_command: 0,
+        safe_fn: 1,
     }
 }
 
@@ -4821,7 +5035,7 @@ unsafe fn expand_builtin_function(
         ));
     }
     if entry.adds_command() != 0 {
-        crate::make_main::bump_command_count(ctx);
+        crate::entry::bump_command_count(ctx);
     }
     if entry.safe_fn() != 0 {
         // Safe handler: marshal the C `argv`/name into borrowed byte slices at
@@ -5223,8 +5437,8 @@ pub unsafe fn define_new_function(
             ],
         ));
     }
-    ent = xmalloc(::core::mem::size_of::<FunctionTableEntry>() as size_t)
-        as *mut FunctionTableEntry;
+    ent =
+        xmalloc(::core::mem::size_of::<FunctionTableEntry>() as size_t) as *mut FunctionTableEntry;
     (*ent).name = strcache_add(ctx, name);
     (*ent).len = len as ::core::ffi::c_uchar;
     (*ent).minimum_args = min as ::core::ffi::c_uchar;
@@ -5273,27 +5487,14 @@ pub unsafe fn hash_init_function_table(ctx: &crate::execctx::ExecContext) {
 mod ft_init_tests {
     use super::*;
 
-    /// Verify that the bitfield byte we wrote in `ft_entry` round-trips
-    /// through the `BitfieldStruct`-generated getters. This catches any
-    /// drift between our hand-packed byte layout and the c2rust_bitfields
-    /// crate's expected encoding.
+    /// `ft_entry`/`ft_entry_safe` never set `alloc_fn`/`adds_command` —
+    /// verify the static table upholds that for every entry.
     #[test]
-    fn bitfield_byte_matches_getters() {
+    fn alloc_and_adds_are_always_zero_in_the_static_table() {
         let entries = unsafe { std::slice::from_raw_parts(function_table_init.as_ptr(), 38) };
         for (i, e) in entries.iter().enumerate() {
-            let byte = e.expand_args_alloc_fn_adds_command[0];
-            let exp = e.expand_args();
-            let alloc = e.alloc_fn();
-            let adds = e.adds_command();
-            let safe = e.safe_fn();
-            let reconstructed =
-                (exp & 1) | ((alloc & 1) << 1) | ((adds & 1) << 2) | ((safe & 1) << 3);
-            assert_eq!(
-                byte as u32, reconstructed,
-                "idx {i}: byte {byte:#04x} != getters(exp={exp}, alloc={alloc}, adds={adds}, safe={safe})"
-            );
             assert!(
-                alloc == 0 && adds == 0,
+                e.alloc_fn() == 0 && e.adds_command() == 0,
                 "idx {i}: alloc/adds expected zero in static table"
             );
         }
@@ -5571,8 +5772,7 @@ mod word_span_tests {
 
 #[cfg(test)]
 mod alpha_cmp_tests {
-    use super::alpha_cmp;
-    use core::cmp::Ordering;
+    use {super::alpha_cmp, core::cmp::Ordering};
 
     #[test]
     fn ascii_is_lexicographic() {
@@ -5820,12 +6020,18 @@ mod realpath_tests {
 
 #[cfg(test)]
 mod subst_and_strip_tests {
-    use super::{func_strip, subst_expand};
-    use crate::expand::{
-        initialize_variable_output, variable_buffer_output, VARIABLE_BUFFER_TEST_LOCK,
+    use {
+        super::{func_strip, subst_expand},
+        crate::{
+            entry::initialize_stopchar_map,
+            expand::{
+                initialize_variable_output,
+                variable_buffer_output,
+                VARIABLE_BUFFER_TEST_LOCK,
+            },
+        },
+        std::ffi::{c_char, CStr, CString},
     };
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::{c_char, CStr, CString};
 
     /// Run `body` with a freshly initialized variable-output buffer, returning
     /// the bytes it wrote (`[buffer, end_cursor)`), where `body` returns the
@@ -6021,8 +6227,10 @@ mod handle_function_abeg_unsafe_oracle {
 
 #[cfg(test)]
 mod find_next_argument_tests {
-    use super::{find_next_argument, stop_set, MAP_COMMA, MAP_VARSEP};
-    use ::core::ffi::c_char;
+    use {
+        super::{find_next_argument, stop_set, MAP_COMMA, MAP_VARSEP},
+        ::core::ffi::c_char,
+    };
 
     /// Original c2rust raw-pointer implementation, preserved verbatim as a
     /// differential oracle (returns a pointer into `[ptr, end)` or null).
@@ -6057,17 +6265,9 @@ mod find_next_argument_tests {
     /// no-comma case.
     #[test]
     fn matches_unsafe_oracle() {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let cases: &[&[u8]] = &[
-            b"a,b",
-            b"abc",
-            b"(a,b),c",
-            b"a(,)b,c",
-            b"))",
-            b"(((",
-            b",",
-            b"",
-            b"{a,b},c",
+            b"a,b", b"abc", b"(a,b),c", b"a(,)b,c", b"))", b"(((", b",", b"", b"{a,b},c",
             b"a,b,c,d",
         ];
         for &(sp, ep) in &[(b'(', b')'), (b'{', b'}')] {
@@ -6075,14 +6275,20 @@ mod find_next_argument_tests {
                 let safe = find_next_argument(sp, ep, bytes);
                 let ptr = bytes.as_ptr() as *const c_char;
                 let end = unsafe { ptr.add(bytes.len()) };
-                let oracle =
-                    unsafe { find_next_argument_unsafe_oracle(sp as c_char, ep as c_char, ptr, end) };
+                let oracle = unsafe {
+                    find_next_argument_unsafe_oracle(sp as c_char, ep as c_char, ptr, end)
+                };
                 let oracle_off = if oracle.is_null() {
                     None
                 } else {
                     Some(oracle as usize - ptr as usize)
                 };
-                assert_eq!(safe, oracle_off, "input {:?}", String::from_utf8_lossy(bytes));
+                assert_eq!(
+                    safe,
+                    oracle_off,
+                    "input {:?}",
+                    String::from_utf8_lossy(bytes)
+                );
             }
         }
     }
@@ -6090,7 +6296,7 @@ mod find_next_argument_tests {
     /// Spot-check the absolute offsets and nesting behaviour.
     #[test]
     fn splits_at_top_level_comma() {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         assert_eq!(find_next_argument(b'(', b')', b"a,b"), Some(1));
         // comma nested inside parens is skipped; the top-level one is at 5.
         assert_eq!(find_next_argument(b'(', b')', b"(a,b),c"), Some(5));
@@ -6131,7 +6337,7 @@ mod define_new_function_tests {
     /// out before the pointer is stored.
     fn rejects(name: &str, min: u32, max: u32) -> bool {
         let ctx = ctx();
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let cname = CString::new(name).unwrap();
         // SAFETY: `cname` outlives the call and `flocp` is the documented null
         // ("no source location") case; no table entry is created on any path
@@ -6191,13 +6397,21 @@ mod builtin_rejection_tests {
     //! Each case asserts the *rejection*, and each rejecting builtin is also
     //! driven over a valid input so the success path stays pinned alongside it.
 
-    use super::{
-        expand_builtin_function, func_intcmp, func_word, func_wordlist, function_table_init,
-        RawFunc,
+    use {
+        super::{
+            expand_builtin_function,
+            func_intcmp,
+            func_word,
+            func_wordlist,
+            function_table_init,
+            RawFunc,
+        },
+        crate::{
+            entry::initialize_stopchar_map,
+            expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK},
+        },
+        std::ffi::{c_char, CString},
     };
-    use crate::expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK};
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::{c_char, CString};
 
     /// Drive `handler` with `args` through a real variable-output buffer and
     /// return the bytes it wrote, or the `BuildError` it rejected with.
@@ -6212,8 +6426,7 @@ mod builtin_rejection_tests {
         initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         let cargs: Vec<CString> = args.iter().map(|a| CString::new(*a).unwrap()).collect();
-        let mut argv: Vec<*mut c_char> =
-            cargs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
+        let mut argv: Vec<*mut c_char> = cargs.iter().map(|c| c.as_ptr() as *mut c_char).collect();
         argv.push(::core::ptr::null_mut());
         let name = CString::new(funcname).unwrap();
         let start = initialize_variable_output(&ctx);
@@ -6253,7 +6466,10 @@ mod builtin_rejection_tests {
         let neg = unsafe { drive(func_intcmp, "intcmp", &["-3", "-3"]) }.expect("-3 == -3");
         assert_eq!(neg, b"-3", "a negative operand still compares equal");
         let pad = unsafe { drive(func_intcmp, "intcmp", &[" +4 ", "4"]) }.expect("+4 == 4");
-        assert!(!pad.is_empty(), "sign and padding do not defeat the compare");
+        assert!(
+            !pad.is_empty(),
+            "sign and padding do not defeat the compare"
+        );
     }
 
     #[test]
@@ -6290,10 +6506,12 @@ mod builtin_rejection_tests {
         initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         let arg = CString::new("1").unwrap();
-        let mut argv: [*mut c_char; 2] =
-            [arg.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
+        let mut argv: [*mut c_char; 2] = [arg.as_ptr() as *mut c_char, ::core::ptr::null_mut()];
         let o = initialize_variable_output(&ctx);
         let got = unsafe { expand_builtin_function(&ctx, o, 1, argv.as_mut_ptr(), entry) };
-        assert!(got.is_err(), "one argument is below `word`'s minimum of two");
+        assert!(
+            got.is_err(),
+            "one argument is below `word`'s minimum of two"
+        );
     }
 }

@@ -147,7 +147,7 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// forward explicitly rather than letting it reset to defaults, since it
     /// holds real accumulated run state (`goals`, `switches`, decoded
     /// command-line flags) that must survive the rebuild.
-    pub options: crate::make_main::Options,
+    pub options: crate::entry::Options,
 
     /// The session salsa database ([`crate::makedb::MakeDb`]) — hosts the
     /// string interner, the parser's interned AST nodes, and dependency-graph
@@ -987,15 +987,11 @@ impl Default for PatternVarsCell {
 /// A `Cell<[*mut PatternVar; 256]>` that defaults to all-null:
 /// `create_pattern_var`'s per-target-length fast-insert cache.
 #[derive(Debug, Clone)]
-pub struct LastPatternVarsCell(
-    pub ::core::cell::Cell<[*mut crate::variable::PatternVar; 256]>,
-);
+pub struct LastPatternVarsCell(pub ::core::cell::Cell<[*mut crate::variable::PatternVar; 256]>);
 
 impl Default for LastPatternVarsCell {
     fn default() -> Self {
-        Self(::core::cell::Cell::new(
-            [::core::ptr::null_mut(); 256],
-        ))
+        Self(::core::cell::Cell::new([::core::ptr::null_mut(); 256]))
     }
 }
 
@@ -1281,8 +1277,18 @@ impl Default for ShellVar {
                 offset: 0,
             },
             length: 0,
-            recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-                [0; 4],
+            recursive: 0,
+            append: 0,
+            conditional: 0,
+            per_target: 0,
+            special: 0,
+            exportable: 0,
+            expanding: 0,
+            private_var: 0,
+            exp_count: 0,
+            flavor: 0,
+            origin: 0,
+            export: 0,
         }))
     }
 }
@@ -1299,7 +1305,7 @@ impl ::core::fmt::Debug for ShellVar {
 /// A `Cell<*mut CommandVariable>` (list head) that defaults to null, for
 /// [`ExecContext::command_variables`] — raw pointers have no `Default`.
 #[derive(Debug, Clone)]
-pub struct CommandVariables(pub ::core::cell::Cell<*mut crate::make_main::CommandVariable>);
+pub struct CommandVariables(pub ::core::cell::Cell<*mut crate::entry::CommandVariable>);
 
 impl Default for CommandVariables {
     fn default() -> Self {
@@ -1321,11 +1327,11 @@ impl Default for DefaultGoalVar {
 /// A `Cell<SigsetT>` holding [`ExecContext::fatal_signal_set`], defaulting to
 /// the empty set the former `static mut` initializer produced.
 #[derive(Clone)]
-pub struct FatalSignalSet(pub ::core::cell::Cell<crate::make_main::SigsetT>);
+pub struct FatalSignalSet(pub ::core::cell::Cell<crate::entry::SigsetT>);
 
 impl Default for FatalSignalSet {
     fn default() -> Self {
-        Self(::core::cell::Cell::new(crate::make_main::SigsetT {
+        Self(::core::cell::Cell::new(crate::entry::SigsetT {
             __val: [0; 16],
         }))
     }
@@ -1364,8 +1370,7 @@ impl Default for MakeSync {
         Self(Box::new(::core::cell::Cell::new(crate::output::output {
             out: 0,
             err: 0,
-            syncout: [0; 1],
-            c2rust_padding: [0; 3],
+            syncout: 0,
         })))
     }
 }
@@ -1378,7 +1383,7 @@ impl ::core::fmt::Debug for MakeSync {
         f.debug_struct("MakeSync")
             .field("out", &o.out)
             .field("err", &o.err)
-            .field("syncout", &(o.syncout[0] & 1))
+            .field("syncout", &o.syncout())
             .finish()
     }
 }
@@ -1576,7 +1581,10 @@ impl VariableBuffer {
     /// address is undefined behavior, unlike `free(NULL)`.
     pub fn take_raw(
         &self,
-    ) -> (Option<::core::ptr::NonNull<::core::ffi::c_char>>, crate::ffi_types::size_t) {
+    ) -> (
+        Option<::core::ptr::NonNull<::core::ffi::c_char>>,
+        crate::ffi_types::size_t,
+    ) {
         let old = unsafe { ::core::mem::take(&mut *self.0.as_ptr()) };
         if old.is_empty() {
             return (None, 0);
@@ -1596,7 +1604,10 @@ impl VariableBuffer {
     /// allocation.
     pub fn take_raw_nonnull(
         &self,
-    ) -> (::core::ptr::NonNull<::core::ffi::c_char>, crate::ffi_types::size_t) {
+    ) -> (
+        ::core::ptr::NonNull<::core::ffi::c_char>,
+        crate::ffi_types::size_t,
+    ) {
         let (ptr, len) = self.take_raw();
         (
             ptr.expect(
@@ -1652,7 +1663,7 @@ impl ::core::fmt::Debug for PidString {
 /// [`ExecContext::children`] and [`ExecContext::waiting_jobs`] — raw pointers
 /// have no `Default`.
 #[derive(Debug, Clone)]
-pub struct ChildChain(pub ::core::cell::Cell<*mut crate::job::child>);
+pub struct ChildChain(pub ::core::cell::Cell<*mut crate::job::Child>);
 
 impl Default for ChildChain {
     fn default() -> Self {
@@ -1707,8 +1718,7 @@ impl Default for FunctionTableCell {
             ht_collisions: 0,
             ht_lookups: 0,
             ht_rehashes: 0,
-            ht_in_map: [0; 1],
-            c2rust_padding: [0; 3],
+            ht_in_map: 0,
         }))
     }
 }
@@ -1769,23 +1779,24 @@ impl ::core::convert::AsMut<crate::variable::VariableSet> for GlobalVariableSet 
 
 impl Default for GlobalVariableSet {
     fn default() -> Self {
-        Self(Box::new(::core::cell::Cell::new(crate::variable::VariableSet {
-            table: crate::hash::HashTable {
-                ht_vec: ::core::ptr::null_mut(),
-                ht_hash_1: None,
-                ht_hash_2: None,
-                ht_compare: None,
-                ht_size: 0,
-                ht_capacity: 0,
-                ht_fill: 0,
-                ht_empty_slots: 0,
-                ht_collisions: 0,
-                ht_lookups: 0,
-                ht_rehashes: 0,
-                ht_in_map: [0; 1],
-                c2rust_padding: [0; 3],
+        Self(Box::new(::core::cell::Cell::new(
+            crate::variable::VariableSet {
+                table: crate::hash::HashTable {
+                    ht_vec: ::core::ptr::null_mut(),
+                    ht_hash_1: None,
+                    ht_hash_2: None,
+                    ht_compare: None,
+                    ht_size: 0,
+                    ht_capacity: 0,
+                    ht_fill: 0,
+                    ht_empty_slots: 0,
+                    ht_collisions: 0,
+                    ht_lookups: 0,
+                    ht_rehashes: 0,
+                    ht_in_map: 0,
+                },
             },
-        })))
+        )))
     }
 }
 
@@ -1880,8 +1891,9 @@ impl Clone for VariableGlobals {
         // addresses instead of the source's — a field-by-field derive would
         // leave `global_setlist.set`/`current_variable_set_list` dangling at
         // the *original* boxes.
-        let global_variable_set =
-            GlobalVariableSet(Box::new(::core::cell::Cell::new(self.global_variable_set.0.get())));
+        let global_variable_set = GlobalVariableSet(Box::new(::core::cell::Cell::new(
+            self.global_variable_set.0.get(),
+        )));
         let mut setlist_data = self.global_setlist.0.get();
         setlist_data.set = global_variable_set.as_ptr();
         let global_setlist = GlobalSetlist(Box::new(::core::cell::Cell::new(setlist_data)));
@@ -1943,7 +1955,9 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
     /// variable reference: [`Self::expanding_var`]'s override when one is
     /// active, else wherever [`Self::reading_file`] currently points.
     pub fn expanding_var_floc(&self) -> *const crate::floc::Floc {
-        self.expanding_var.get().unwrap_or_else(|| self.reading_file.0.get())
+        self.expanding_var
+            .get()
+            .unwrap_or_else(|| self.reading_file.0.get())
     }
 
     /// Which shell personality is in effect (always [`ShellKind::Unixy`] in
@@ -2075,11 +2089,14 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Config, ConditionalsFrame, ExecContext, FileArena, StderrSink, StdoutSink};
+    use super::{ConditionalsFrame, Config, ExecContext, FileArena, StderrSink, StdoutSink};
 
     #[test]
     fn context_exposes_makelevel() {
-        let ctx = ExecContext::new(Config { makelevel: 3, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 3,
+            ..Default::default()
+        });
         assert_eq!(ctx.makelevel(), 3);
         // Cloning yields an independent copy of the owned state.
         assert_eq!(ctx.clone().makelevel(), 3);
@@ -2095,7 +2112,10 @@ mod tests {
     /// two channels be genuinely different sink instances.
     #[test]
     fn with_sinks_carries_state_and_swaps_only_the_io() {
-        let ctx = ExecContext::new(Config { makelevel: 5, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 5,
+            ..Default::default()
+        });
         let buffered = ctx.with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
         // Non-io state survived the conversion untouched.
         assert_eq!(buffered.makelevel(), 5);
@@ -2141,7 +2161,10 @@ mod tests {
         let ctx = ExecContext::new(Config::default())
             .with_sinks(Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()));
         crate::output::trace_out_ctx(&ctx, b"buffered trace line\n");
-        assert_eq!(ctx.stdout.borrow().get_ref().as_slice(), b"buffered trace line\n");
+        assert_eq!(
+            ctx.stdout.borrow().get_ref().as_slice(),
+            b"buffered trace line\n"
+        );
         assert!(ctx.stderr.borrow().get_ref().is_empty());
     }
 
@@ -2161,7 +2184,10 @@ mod tests {
     /// contrast, is a new run and must get its own record.
     #[test]
     fn make_sync_address_survives_the_rebuild_carry() {
-        let mut ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let mut ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         let addr = ctx.make_sync.as_ptr();
         ctx.output_context.0.set(addr);
 
@@ -2172,9 +2198,16 @@ mod tests {
         let ctx = ExecContext {
             make_sync: carried_make_sync,
             output_context: carried_output_context,
-            ..ExecContext::new(Config { makelevel: 2, ..Default::default() })
+            ..ExecContext::new(Config {
+                makelevel: 2,
+                ..Default::default()
+            })
         };
-        assert_eq!(ctx.make_sync.as_ptr(), addr, "carry must not move the record");
+        assert_eq!(
+            ctx.make_sync.as_ptr(),
+            addr,
+            "carry must not move the record"
+        );
         assert_eq!(
             ctx.output_context.0.get(),
             ctx.make_sync.as_ptr(),
@@ -2199,7 +2232,10 @@ mod tests {
     /// wired records.
     #[test]
     fn variable_globals_addresses_survive_the_rebuild_carry() {
-        let mut ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let mut ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         let gvs_addr = ctx.variable_globals.global_variable_set.as_ptr();
         let setlist_addr = ctx.variable_globals.global_setlist.as_ptr();
         assert_eq!(
@@ -2213,7 +2249,10 @@ mod tests {
         let carried_variable_globals = ::core::mem::take(&mut ctx.variable_globals);
         let ctx = ExecContext {
             variable_globals: carried_variable_globals,
-            ..ExecContext::new(Config { makelevel: 2, ..Default::default() })
+            ..ExecContext::new(Config {
+                makelevel: 2,
+                ..Default::default()
+            })
         };
         assert_eq!(
             ctx.variable_globals.global_variable_set.as_ptr(),
@@ -2289,9 +2328,16 @@ mod tests {
     #[test]
     fn expanding_var_floc_tracks_reading_file_until_overridden() {
         let ctx = ExecContext::default();
-        assert!(ctx.expanding_var_floc().is_null(), "starts at reading_file's default null");
+        assert!(
+            ctx.expanding_var_floc().is_null(),
+            "starts at reading_file's default null"
+        );
 
-        let floc_a = crate::floc::Floc { filenm: ::core::ptr::null(), lineno: 1, offset: 0 };
+        let floc_a = crate::floc::Floc {
+            filenm: ::core::ptr::null(),
+            lineno: 1,
+            offset: 0,
+        };
         ctx.reading_file.0.set(&floc_a as *const crate::floc::Floc);
         assert_eq!(
             ctx.expanding_var_floc(),
@@ -2299,7 +2345,11 @@ mod tests {
             "no override active: effective location follows reading_file"
         );
 
-        let floc_b = crate::floc::Floc { filenm: ::core::ptr::null(), lineno: 2, offset: 0 };
+        let floc_b = crate::floc::Floc {
+            filenm: ::core::ptr::null(),
+            lineno: 2,
+            offset: 0,
+        };
         ctx.reading_file.0.set(&floc_b as *const crate::floc::Floc);
         assert_eq!(
             ctx.expanding_var_floc(),
@@ -2307,8 +2357,13 @@ mod tests {
             "still no override: tracks reading_file's *new* value dynamically"
         );
 
-        let floc_override = crate::floc::Floc { filenm: ::core::ptr::null(), lineno: 99, offset: 0 };
-        ctx.expanding_var.set(Some(&floc_override as *const crate::floc::Floc));
+        let floc_override = crate::floc::Floc {
+            filenm: ::core::ptr::null(),
+            lineno: 99,
+            offset: 0,
+        };
+        ctx.expanding_var
+            .set(Some(&floc_override as *const crate::floc::Floc));
         assert_eq!(
             ctx.expanding_var_floc(),
             &floc_override as *const crate::floc::Floc,
@@ -2361,7 +2416,7 @@ mod tests {
     fn output_sync_state_starts_like_the_former_statics() {
         let ctx = ExecContext::default();
         let ms = ctx.make_sync.0.get();
-        assert_eq!((ms.out, ms.err, ms.syncout[0]), (0, 0, 0));
+        assert_eq!((ms.out, ms.err, ms.syncout()), (0, 0, 0));
         assert!(ctx.output_context.0.get().is_null());
     }
 
@@ -2370,7 +2425,10 @@ mod tests {
     /// stable across gets (the former static's address never moved either).
     #[test]
     fn pid_string_round_trips_and_has_a_stable_address() {
-        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         assert_eq!(ctx.pid_string.0.get()[0], 0, "starts empty");
         let addr = ctx.pid_string.0.as_ptr();
 
@@ -2391,11 +2449,14 @@ mod tests {
     /// handler (via the `CTX_PTR` channel) all see one chain.
     #[test]
     fn child_chains_start_empty_and_mutate_in_place() {
-        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         assert!(ctx.children.0.get().is_null());
         assert!(ctx.waiting_jobs.0.get().is_null());
 
-        let head = 0x1000usize as *mut crate::job::child;
+        let head = 0x1000usize as *mut crate::job::Child;
         ctx.children.0.set(head);
         ctx.waiting_jobs.0.set(head);
         assert_eq!(ctx.children.0.get(), head);
@@ -2407,7 +2468,10 @@ mod tests {
 
     #[test]
     fn load_sample_cache_starts_zeroed() {
-        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         assert_eq!(ctx.load_sample_second.get(), 0);
         assert_eq!(ctx.load_prev_weight.get(), 0.0);
         // `..Self::default()` in `new` must not skip the cache fields.
@@ -2421,7 +2485,10 @@ mod tests {
     /// `..Self::default()` in `new`.
     #[test]
     fn load_probe_caches_start_at_sentinels() {
-        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         assert_eq!(ctx.load_proc_fd.0.get(), -2);
         assert_eq!(ctx.load_lossage.0.get(), -1);
         assert_eq!(ExecContext::default().load_proc_fd.0.get(), -2);
@@ -2464,7 +2531,10 @@ mod tests {
         let carried = ::core::mem::take(&mut populated.directories);
         let rebuilt = ExecContext {
             directories: carried,
-            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
+            ..ExecContext::new(Config {
+                makelevel: 1,
+                ..Default::default()
+            })
         };
         // The carried table survived; the source field reset to empty.
         assert_eq!(rebuilt.directories.0.borrow().len(), 1);
@@ -2497,7 +2567,10 @@ mod tests {
         let rebuilt = ExecContext {
             read_dirstream_buf: carried_buf,
             read_dirstream_bufsz: carried_bufsz,
-            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
+            ..ExecContext::new(Config {
+                makelevel: 1,
+                ..Default::default()
+            })
         };
         // The carried buffer survived; the source fields reset to empty.
         assert_eq!(
@@ -2527,19 +2600,27 @@ mod tests {
 
         let mut populated = ExecContext::default();
         populated.variable_buffer.ensure_len(200);
-        populated.variable_buffer.set_byte_at(0, b'x' as ::core::ffi::c_char);
+        populated
+            .variable_buffer
+            .set_byte_at(0, b'x' as ::core::ffi::c_char);
         let addr = populated.variable_buffer.ptr();
 
         let carried_variable_buffer = ::core::mem::take(&mut populated.variable_buffer);
         let rebuilt = ExecContext {
             variable_buffer: carried_variable_buffer,
-            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
+            ..ExecContext::new(Config {
+                makelevel: 1,
+                ..Default::default()
+            })
         };
         // The carried buffer's contents (and address, since carrying is a
         // move, not a copy) survived.
         assert_eq!(rebuilt.variable_buffer.ptr(), addr);
         assert_eq!(rebuilt.variable_buffer.length(), 200);
-        assert_eq!(rebuilt.variable_buffer.byte_at(0), b'x' as ::core::ffi::c_char);
+        assert_eq!(
+            rebuilt.variable_buffer.byte_at(0),
+            b'x' as ::core::ffi::c_char
+        );
         // The source field reset to empty; a fresh context inherits nothing.
         assert_eq!(populated.variable_buffer.length(), 0);
         assert_eq!(rebuilt.makelevel(), 1);
@@ -2555,7 +2636,8 @@ mod tests {
     fn variable_buffer_clone_is_an_independent_copy() {
         let ctx = ExecContext::default();
         ctx.variable_buffer.ensure_len(200);
-        ctx.variable_buffer.set_byte_at(0, b'x' as ::core::ffi::c_char);
+        ctx.variable_buffer
+            .set_byte_at(0, b'x' as ::core::ffi::c_char);
 
         let cloned = ctx.clone();
         assert_ne!(
@@ -2564,12 +2646,20 @@ mod tests {
             "clone must own a separate allocation"
         );
         assert_eq!(cloned.variable_buffer.length(), 200);
-        assert_eq!(cloned.variable_buffer.byte_at(0), b'x' as ::core::ffi::c_char);
+        assert_eq!(
+            cloned.variable_buffer.byte_at(0),
+            b'x' as ::core::ffi::c_char
+        );
 
         // Mutating one must not affect the other.
-        cloned.variable_buffer.set_byte_at(0, b'y' as ::core::ffi::c_char);
+        cloned
+            .variable_buffer
+            .set_byte_at(0, b'y' as ::core::ffi::c_char);
         assert_eq!(ctx.variable_buffer.byte_at(0), b'x' as ::core::ffi::c_char);
-        assert_eq!(cloned.variable_buffer.byte_at(0), b'y' as ::core::ffi::c_char);
+        assert_eq!(
+            cloned.variable_buffer.byte_at(0),
+            b'y' as ::core::ffi::c_char
+        );
     }
 
     /// `parse_file_seq`'s reused scratch buffer (the former function-local
@@ -2582,12 +2672,18 @@ mod tests {
         assert!(ctx.file_seq_tmpbuf.borrow().is_empty());
 
         let mut populated = ExecContext::default();
-        populated.file_seq_tmpbuf.borrow_mut().extend_from_slice(b"scratch");
+        populated
+            .file_seq_tmpbuf
+            .borrow_mut()
+            .extend_from_slice(b"scratch");
 
         let carried_buf = ::core::mem::take(&mut populated.file_seq_tmpbuf);
         let rebuilt = ExecContext {
             file_seq_tmpbuf: carried_buf,
-            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
+            ..ExecContext::new(Config {
+                makelevel: 1,
+                ..Default::default()
+            })
         };
         assert_eq!(&*rebuilt.file_seq_tmpbuf.borrow(), b"scratch");
         assert!(populated.file_seq_tmpbuf.borrow().is_empty());
@@ -2624,14 +2720,17 @@ mod tests {
         populated
             .command_variables
             .0
-            .set(0x1 as *mut crate::make_main::CommandVariable);
+            .set(0x1 as *mut crate::entry::CommandVariable);
 
         let carried_shell_var = ::core::mem::take(&mut populated.shell_var);
         let carried_command_variables = ::core::mem::take(&mut populated.command_variables);
         let rebuilt = ExecContext {
             shell_var: carried_shell_var,
             command_variables: carried_command_variables,
-            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
+            ..ExecContext::new(Config {
+                makelevel: 1,
+                ..Default::default()
+            })
         };
         assert_eq!(rebuilt.shell_var.0.get().length, 5);
         assert!(!rebuilt.shell_var.0.get().value.is_null());
@@ -2669,7 +2768,10 @@ mod tests {
         let carried = ::core::mem::take(&mut populated.fatal_signal_set);
         let rebuilt = ExecContext {
             fatal_signal_set: carried,
-            ..ExecContext::new(Config { makelevel: 1, ..Default::default() })
+            ..ExecContext::new(Config {
+                makelevel: 1,
+                ..Default::default()
+            })
         };
         assert_eq!(rebuilt.fatal_signal_set.0.get().__val[0], 1 << 1);
         // The source field reset to empty; a fresh context inherits nothing.
@@ -2687,7 +2789,10 @@ mod tests {
     /// replacing the former process-global `no_intermediates`/`ALL_SECONDARY`.
     #[test]
     fn intermediate_latches_start_unset_and_are_per_run() {
-        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         assert!(!ctx.no_intermediates.get());
         assert!(!ctx.all_secondary.get());
 
@@ -2705,7 +2810,10 @@ mod tests {
     /// unset, replacing the former process-global `always_make_flag`.
     #[test]
     fn always_make_flag_starts_unset_and_is_per_run() {
-        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         assert!(!ctx.always_make_flag.get());
 
         ctx.always_make_flag.set(true);
@@ -2720,7 +2828,10 @@ mod tests {
     /// `snap_implicit_rules`/`pattern_search` compute.
     #[test]
     fn pattern_rule_stats_start_zero_and_track_maxima() {
-        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         assert_eq!(ctx.num_pattern_rules.get(), 0);
         assert_eq!(ctx.max_pattern_targets.get(), 0);
         assert_eq!(ctx.max_pattern_deps.get(), 0);
@@ -2747,7 +2858,10 @@ mod tests {
     /// process-global `CLOCK_SKEW_DETECTED`.
     #[test]
     fn clock_skew_detected_starts_unset_and_is_per_run() {
-        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         assert!(!ctx.clock_skew_detected.get(), "no skew yet");
 
         ctx.clock_skew_detected.set(true);
@@ -2761,7 +2875,10 @@ mod tests {
     /// former `static` atomics) start at 0, bump monotonically, and are per-run.
     #[test]
     fn goal_chain_counters_start_zero_and_bump() {
-        let ctx = ExecContext::new(Config { makelevel: 0, ..Default::default() });
+        let ctx = ExecContext::new(Config {
+            makelevel: 0,
+            ..Default::default()
+        });
         assert_eq!(ctx.commands_started.get(), 0);
         assert_eq!(ctx.considered.get(), 0);
 
@@ -2833,9 +2950,7 @@ mod tests {
         ctx.conditionals.borrow_mut().ignoring.push(0);
         ctx.conditionals.borrow_mut().seen_else.push(0);
 
-        let enclosing = ctx
-            .conditionals
-            .replace(ConditionalsFrame::default());
+        let enclosing = ctx.conditionals.replace(ConditionalsFrame::default());
         assert_eq!(enclosing.ignoring, vec![0]);
         assert!(
             ctx.conditionals.borrow().ignoring.is_empty(),

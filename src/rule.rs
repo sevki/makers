@@ -13,14 +13,10 @@
 //! statics — the `.SUFFIXES` file is looked up by name through
 //! `lookup_file`/`enter_file` (matching `read.rs::is_suffix_file`).
 
-use crate::dep::DepNode;
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::floc::Floc;
-use crate::make_main::posix_pedantic;
-use crate::recipe::Recipe;
+use crate::{dep::DepNode, entry::posix_pedantic, floc::Floc, recipe::Recipe};
 
-use crate::dir::dir_file_exists_p;
-use crate::file::lookup_file;
+use crate::{dir::dir_file_exists_p, file::lookup_file};
 
 pub const RECIPEPREFIX_DEFAULT: u8 = b'\t';
 
@@ -141,10 +137,7 @@ impl Rule {
 
 /// Run `f` with a shared borrow of the pattern-rule database
 /// ([`crate::execctx::ExecContext::rules`]).
-pub fn with_pattern_rules<R>(
-    ctx: &crate::execctx::ExecContext,
-    f: impl FnOnce(&[Rule]) -> R,
-) -> R {
+pub fn with_pattern_rules<R>(ctx: &crate::execctx::ExecContext, f: impl FnOnce(&[Rule]) -> R) -> R {
     f(&ctx.rules.borrow())
 }
 
@@ -227,15 +220,15 @@ pub fn snap_implicit_rules(
                     dirname.push(0);
                     // SAFETY: `dir_file_exists_p` reads two NUL-terminated C
                     // strings; `dirname` is NUL-terminated and `c""` is empty.
-                    let exists =
-                        match unsafe { dir_file_exists_p(ctx, dirname.as_ptr().cast(), c"".as_ptr()) }
-                        {
-                            Ok(e) => e,
-                            Err(e) => {
-                                rejected = Some(e);
-                                return;
-                            }
-                        };
+                    let exists = match unsafe {
+                        dir_file_exists_p(ctx, dirname.as_ptr().cast(), c"".as_ptr())
+                    } {
+                        Ok(e) => e,
+                        Err(e) => {
+                            rejected = Some(e);
+                            return;
+                        }
+                    };
                     d.changed = exists == 0;
                 } else {
                     d.changed = false;
@@ -396,15 +389,17 @@ pub fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
             rulename.extend_from_slice(&d2.name);
             // Look up the combined suffix-rule file and read its recipe + deps.
             let (has_prereqs, recipe, finfo) = match lookup_file(ctx, &rulename) {
-                Some(id) => match ctx.filenodes.get(id) {
-                    Some(node) => {
-                        let n = node.lock().expect("file node lock poisoned");
-                        let has = !n.deps.is_empty();
-                        let rec = n.recipe.clone();
-                        (has, rec, finfo_of(&n))
+                Some(id) => {
+                    match ctx.filenodes.get(id) {
+                        Some(node) => {
+                            let n = node.lock().expect("file node lock poisoned");
+                            let has = !n.deps.is_empty();
+                            let rec = n.recipe.clone();
+                            (has, rec, finfo_of(&n))
+                        }
+                        None => (false, None, null_floc()),
                     }
-                    None => (false, None, null_floc()),
-                },
+                }
                 None => (false, None, null_floc()),
             };
             if let Some(rec) = recipe {
@@ -436,11 +431,13 @@ fn null_floc() -> Floc {
 /// Build a `Floc` from a recipe's `defined_lineno`, for warnings.
 fn finfo_of(n: &crate::file::FileNode) -> Floc {
     match &n.recipe {
-        Some(r) => Floc {
-            filenm: ::core::ptr::null(),
-            lineno: r.defined_lineno as ::core::ffi::c_ulong,
-            offset: 0,
-        },
+        Some(r) => {
+            Floc {
+                filenm: ::core::ptr::null(),
+                lineno: r.defined_lineno as ::core::ffi::c_ulong,
+                offset: 0,
+            }
+        }
         None => null_floc(),
     }
 }

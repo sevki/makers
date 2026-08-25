@@ -6,26 +6,75 @@
 //! because `job.rs` and `main.rs` drive it through the original entry
 //! points.
 
-use ::core::ffi::{c_char, c_longlong, c_uint, c_void, CStr};
-use ::core::ptr::{null, null_mut};
+use ::core::{
+    ffi::{c_char, c_longlong, c_uint, c_void, CStr},
+    ptr::{null, null_mut},
+};
 
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location, close, fcntl, flock, free, fstat, mkfifo, open, perror, pipe, pselect, read,
-    sigemptyset, sigset_t, sprintf, sscanf, strcmp, strerror, strlen, strncmp,
-    timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET, FD_ZERO,
-    F_GETFD, F_GETFL, F_SETFD, F_SETFL, F_SETLKW, F_UNLCK, F_WRLCK, O_APPEND, O_EXCL, O_NONBLOCK,
-    O_RDONLY, O_RDWR, O_TMPFILE, O_WRONLY, SEEK_SET, S_IFMT, S_IFREG,
+    __errno_location,
+    close,
+    fcntl,
+    flock,
+    free,
+    fstat,
+    mkfifo,
+    open,
+    perror,
+    pipe,
+    pselect,
+    read,
+    sigemptyset,
+    sigset_t,
+    sprintf,
+    sscanf,
+    strcmp,
+    strerror,
+    strlen,
+    strncmp,
+    timespec,
+    write,
+    EAGAIN,
+    EBADF,
+    EINTR,
+    FD_CLOEXEC,
+    FD_SET,
+    FD_ZERO,
+    F_GETFD,
+    F_GETFL,
+    F_SETFD,
+    F_SETFL,
+    F_SETLKW,
+    F_UNLCK,
+    F_WRLCK,
+    O_APPEND,
+    O_EXCL,
+    O_NONBLOCK,
+    O_RDONLY,
+    O_RDWR,
+    O_TMPFILE,
+    O_WRONLY,
+    SEEK_SET,
+    S_IFMT,
+    S_IFREG,
 };
 
-use crate::commands::handling_fatal_signal;
-use crate::floc::Floc;
-use crate::make_main::db_level;
-use crate::misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc, xstrdup};
-use crate::output::{
-    error, fatal_err, perror_with_name, pfatal_with_name, pfatal_with_name_err, FmtArg,
-    INTSTR_LENGTH,
+use crate::{
+    commands::handling_fatal_signal,
+    entry::db_level,
+    floc::Floc,
+    misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc, xstrdup},
+    output::{
+        error,
+        fatal_err,
+        perror_with_name,
+        pfatal_with_name,
+        pfatal_with_name_err,
+        FmtArg,
+        INTSTR_LENGTH,
+    },
 };
 
 /// `check_io_state` bits (see os.h).
@@ -177,8 +226,9 @@ pub unsafe fn jobserver_setup(
 
     if style.is_null() || strcmp(style, c"fifo".as_ptr()) == 0 {
         let tmpdir = get_tmpdir(ctx);
-        let fifo_name = xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
-            as *mut c_char;
+        let fifo_name =
+            xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
+                as *mut c_char;
         sprintf(
             fifo_name,
             c"%s/GmFIFO%03lld".as_ptr(),
@@ -442,7 +492,7 @@ pub fn jobserver_enabled(ctx: &crate::execctx::ExecContext) -> c_uint {
 /// fds/fifo to clear" rather than panicking, matching the former statics'
 /// all-default behavior outside `main_0`.
 pub unsafe fn jobserver_clear() {
-    crate::make_main::try_with_exec_context(|ctx| {
+    crate::entry::try_with_exec_context(|ctx| {
         let fds = ctx.job_fds.0.get();
         if fds[0] >= 0 {
             close(fds[0]);
@@ -552,9 +602,7 @@ pub unsafe fn jobserver_acquire_all(ctx: &crate::execctx::ExecContext) -> c_uint
     }
 
     if 0x4 & db_level(ctx) != 0 {
-        crate::output::trace_out(
-            format!("Acquired all {} jobserver tokens.\n", tokens).as_bytes(),
-        );
+        crate::output::trace_out(format!("Acquired all {} jobserver tokens.\n", tokens).as_bytes());
     }
 
     jobserver_clear();
@@ -591,7 +639,7 @@ pub unsafe fn jobserver_post_child(ctx: &crate::execctx::ExecContext, recursive:
 /// `ExecContext` through the `CTX_PTR` borrow channel since a real signal
 /// handler cannot carry an extra parameter, matching `child_handler`.
 pub fn jobserver_signal() {
-    crate::make_main::try_with_exec_context(|ctx| {
+    crate::entry::try_with_exec_context(|ctx| {
         let rfd = job_rfd(ctx);
         if rfd >= 0 {
             // SAFETY: `close` is async-signal-safe, and closing a file
@@ -794,7 +842,7 @@ pub unsafe fn osync_parse_mutex(
 /// with no context installed, `try_with_exec_context` treats that as "no
 /// tmpfile to clear" rather than panicking.
 pub unsafe fn osync_clear() {
-    crate::make_main::try_with_exec_context(|ctx| {
+    crate::entry::try_with_exec_context(|ctx| {
         let h = ctx.osync_handle.0.load(Ordering::Relaxed);
         if h >= 0 {
             close(h);
@@ -821,7 +869,12 @@ pub unsafe fn osync_acquire(ctx: &crate::execctx::ExecContext) -> c_uint {
         fl.l_whence = SEEK_SET as ::core::ffi::c_short;
         fl.l_start = 0;
         fl.l_len = 1;
-        if fcntl(ctx.osync_handle.0.load(Ordering::Relaxed), F_SETLKW, &mut fl) == -1 {
+        if fcntl(
+            ctx.osync_handle.0.load(Ordering::Relaxed),
+            F_SETLKW,
+            &mut fl,
+        ) == -1
+        {
             perror(c"fcntl()".as_ptr());
             return 0;
         }
@@ -840,7 +893,12 @@ pub unsafe fn osync_release(ctx: &crate::execctx::ExecContext) {
         fl.l_whence = SEEK_SET as ::core::ffi::c_short;
         fl.l_start = 0;
         fl.l_len = 1;
-        if fcntl(ctx.osync_handle.0.load(Ordering::Relaxed), F_SETLKW, &mut fl) == -1 {
+        if fcntl(
+            ctx.osync_handle.0.load(Ordering::Relaxed),
+            F_SETLKW,
+            &mut fl,
+        ) == -1
+        {
             perror(c"fcntl()".as_ptr());
         }
     }
@@ -1135,7 +1193,7 @@ mod tests {
         );
 
         // `-d`'s jobserver bit (0x4) also exercises the trace line.
-        crate::make_main::set_db_level(&ctx, 0x4);
+        crate::entry::set_db_level(&ctx, 0x4);
 
         ctx.job_fds.0.set(fds);
         let tokens = unsafe { jobserver_acquire_all(&ctx) };
@@ -1187,13 +1245,13 @@ mod tests {
     /// read dup is installed (`job_rfd < 0`).
     #[test]
     fn jobserver_signal_is_noop_when_unset() {
-        let _ctx = crate::make_main::install_default_exec_context_for_test();
-        crate::make_main::with_exec_context(|ctx| ctx.job_rfd.0.store(-1, Ordering::Relaxed));
+        let _ctx = crate::entry::install_default_exec_context_for_test();
+        crate::entry::with_exec_context(|ctx| ctx.job_rfd.0.store(-1, Ordering::Relaxed));
 
         jobserver_signal();
 
         assert_eq!(
-            crate::make_main::with_exec_context(|ctx| ctx.job_rfd.0.load(Ordering::Relaxed)),
+            crate::entry::with_exec_context(|ctx| ctx.job_rfd.0.load(Ordering::Relaxed)),
             -1,
             "stays unset; nothing was closed"
         );
@@ -1391,7 +1449,10 @@ mod tests {
     fn jobserver_parse_auth_reports_unopenable_fifo() {
         let ctx = crate::execctx::ExecContext::default();
         let result = unsafe {
-            jobserver_parse_auth(&ctx, c"fifo:/nonexistent-dir-for-jobserver-test/fifo".as_ptr())
+            jobserver_parse_auth(
+                &ctx,
+                c"fifo:/nonexistent-dir-for-jobserver-test/fifo".as_ptr(),
+            )
         };
         assert_eq!(result, Ok(0));
     }

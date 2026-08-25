@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "proc-macros",
+    "proc-macros", "wit/introspection",
 ]
 [package]
 name = "make-sys"
@@ -14,13 +14,13 @@ autobins = false
 crate-type = ["staticlib", "rlib"]
 
 [[bin]]
-path = "bin/make.rs"
+path = "src/bin/main.rs"
 name = "make"
 
 [dependencies]
+anyhow = { version = "1.0.104", optional = true }
 bitflags = "2.13.0"
 blake3 = "1.8.5"
-c2rust-bitfields = "0.22.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", default-features = false, features = ["std", "error-context", "string"] }
 digest = "0.11"
@@ -29,6 +29,11 @@ jj-lib-proc-macros = { path = "proc-macros" }
 libc = "0.2"
 rustc-hash = "2"
 salsa = "0.28"
+wasmtime = { version = "48.0.1", optional = true }
+wasmtime-wasi = { version = "48.0.1", optional = true }
 
 [dev-dependencies]
 insta = { version = "=1.48.0", default-features = false }
+
+[features]
+wasmtime = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:anyhow"]

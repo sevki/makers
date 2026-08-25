@@ -11,15 +11,17 @@
 //! rather than by `*mut Rule`. No `*mut File`/`*mut Dep`/`*mut Commands`.
 
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::ar::ar_name_err;
-use crate::dep::{DepFlags, DepNode};
-use crate::dir::{file_exists_p, file_impossible, file_impossible_p};
-use crate::file::{enter_file, lookup_file, FileId};
-use crate::make_main::{db_level, stopchar_map};
-use crate::misc::{print_spaces, skip_reference};
-use crate::recipe::Recipe;
-use crate::rule::{with_pattern_rules, with_pattern_rules_mut};
-use crate::vpath::vpath_search;
+use crate::{
+    ar::ar_name_err,
+    dep::{DepFlags, DepNode},
+    dir::{file_exists_p, file_impossible, file_impossible_p},
+    entry::{db_level, stopchar_map},
+    file::{enter_file, lookup_file, FileId},
+    misc::{print_spaces, skip_reference},
+    recipe::Recipe,
+    rule::{with_pattern_rules, with_pattern_rules_mut},
+    vpath::vpath_search,
+};
 
 /// `DB_IMPLICIT`: `-d` implicit-rule tracing enabled in `db_level`.
 const DB_IMPLICIT: i32 = 0x8;
@@ -871,7 +873,8 @@ pub fn pattern_search(
     }
 
     // Inherit .PRECIOUS / .NOTINTERMEDIATE from the target pattern file.
-    let found_target = with_pattern_rules(ctx, |r| r[found].targets[found_tr.matches as usize].clone());
+    let found_target =
+        with_pattern_rules(ctx, |r| r[found].targets[found_tr.matches as usize].clone());
     let (pat_precious, pat_notint) = lookup_flags(ctx, &found_target);
     if let Some(node) = ctx.filenodes.get(file) {
         let mut n = node.lock().expect("file node lock poisoned");
@@ -962,13 +965,14 @@ fn merge_intermediate(ctx: &crate::execctx::ExecContext, id: FileId, pe: &PatDep
     // Enter each dep's file and propagate `changed` into tried_implicit.
     let changed_flags: Vec<bool> = {
         match ctx.filenodes.get(id) {
-            Some(node) => node
-                .lock()
-                .expect("file node lock poisoned")
-                .deps
-                .iter()
-                .map(|d| d.changed)
-                .collect(),
+            Some(node) => {
+                node.lock()
+                    .expect("file node lock poisoned")
+                    .deps
+                    .iter()
+                    .map(|d| d.changed)
+                    .collect()
+            }
             None => Vec::new(),
         }
     };
@@ -1206,16 +1210,17 @@ mod try_implicit_rule_tests {
     //! and the `archive((member))` rejection from `ar_name_err` travels out of
     //! the archive-member arm instead of ending the process.
 
-    use super::try_implicit_rule;
-    use crate::build_result::BuildError;
-    use crate::file::enter_file;
-    use std::sync::Mutex;
+    use {
+        super::try_implicit_rule,
+        crate::{build_result::BuildError, file::enter_file},
+        std::sync::Mutex,
+    };
 
     // The pattern-rule database and the file arena are process-wide.
     static IMPLICIT_LOCK: Mutex<()> = Mutex::new(());
 
     fn probe(name: &[u8]) -> Result<bool, BuildError> {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: fresh context; the global set is initialized once per probe.
         unsafe { crate::variable::init_hash_global_variable_set(&ctx) };
