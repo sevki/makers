@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "makers-plugin", "proc-macros", "wit/introspection",
+    "makers-plugin", "proc-macros",
 ]
 [package]
 name = "make-sys"

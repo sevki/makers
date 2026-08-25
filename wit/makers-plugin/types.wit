@@ -1,0 +1,80 @@
+package makers:plugin@1.0.0;
+
+/// Vocabulary shared by every other interface in this package.
+///
+/// Nothing here is graph-shaped on purpose: a `location` means the same
+/// thing to a diagnostic emitted while reading a makefile as it does to one
+/// emitted while analysing the resolved graph, and keeping it in one place
+/// is what lets the `read`/`analyze`/`execute` worlds grow without three
+/// incompatible spellings of "where did this come from".
+interface types {
+    /// A position in a makefile. Mirrors the host's `Floc` (`src/floc.rs`),
+    /// which every definition in `make` already carries — recipes, goals,
+    /// and per-target variables all know the file and line they came from.
+    /// Surfacing it is what lets a policy plugin say
+    /// `Makefile:42: recipe uses an absolute path` instead of just
+    /// `recipe uses an absolute path`; the former is a clickable
+    /// diagnostic in every editor, the latter is a grep.
+    record location {
+        /// Makefile path as `make` recorded it, not canonicalised.
+        file: string,
+        /// 1-based. `0` when the host only knew the file.
+        line: u64,
+        /// 0-based byte offset within the line. `0` when unknown.
+        column: u64,
+    }
+
+    /// How loudly the host should report a `diagnostic`, and — for `error` —
+    /// whether the build survives it. See `plugin.failure-policy`: an
+    /// `error` from an advisory plugin is still printed, but does not set
+    /// make's exit status.
+    enum severity {
+        note,
+        warning,
+        error,
+    }
+
+    record diagnostic {
+        severity: severity,
+        message: string,
+        location: option<location>,
+    }
+
+    /// A hook failed. Distinct from `diagnostic` because returning an
+    /// `error` also *stops* this plugin: the host drops the instance, skips
+    /// its remaining hooks, and (per its failure policy) may fail the build.
+    /// A plugin that wants to report a problem and keep going emits a
+    /// `diagnostic` with `severity.error` instead and returns `ok`.
+    record error {
+        message: string,
+        location: option<location>,
+    }
+
+    /// A typed value one plugin publishes on a graph node for other plugins
+    /// — and for its own later hooks — to read. This is Bazel's `provider`
+    /// with the Starlark struct replaced by an opaque payload.
+    ///
+    /// Why opaque bytes rather than a WIT variant of known shapes: the whole
+    /// point of providers in Bazel is that `CcInfo`/`JavaInfo`/... are
+    /// *third-party extensible* — the ruleset author declares the type, the
+    /// build system never sees inside it. Encoding provider payloads in WIT
+    /// would mean every new provider needs a `makers` release. Bytes keep
+    /// provider evolution on the plugin author's schedule, and let the host
+    /// do the one thing it genuinely needs to do with a payload without
+    /// understanding it: hash it into a cache key.
+    ///
+    /// The cost is that producer and consumer must agree on an encoding out
+    /// of band. That is the same contract Bazel providers have (both sides
+    /// must load the same `.bzl`), and `id` is the place to version it.
+    record provider {
+        /// Namespaced identity, `<org>:<package>/<name>` after WIT's own
+        /// naming, e.g. `makers:cc/compile-command`. Unnamespaced ids are
+        /// rejected by the host so two unrelated plugins cannot collide on
+        /// `"info"`.
+        id: string,
+        /// Encoding is the provider's business. Keep it deterministic:
+        /// the host hashes it, so a map iterated in random order will
+        /// defeat caching.
+        payload: list<u8>,
+    }
+}

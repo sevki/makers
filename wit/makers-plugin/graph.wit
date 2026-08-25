@@ -1,0 +1,262 @@
+package makers:plugin@1.0.0;
+
+/// The resolved build graph, as *handles*.
+///
+/// # Why handles and not records
+///
+/// The interface this replaces passed a whole `file` record — name, stem,
+/// and both dep lists, by value — into the guest on every visit. That makes
+/// the guest pay, per node, for every field it does not read: on a graph the
+/// size of LLVM's (~40k translation units, ~150 transitive headers each) the
+/// host allocates and copies millions of strings into guest linear memory so
+/// that a plugin which only wanted `name` can drop them.
+///
+/// Bazel hit exactly this wall and answered it with `depset`: a nested set
+/// whose union is O(1) and whose flattening is explicit and opt-in, precisely
+/// because rules that concatenate transitive dependency lists are O(n^2) in
+/// graph size. `node` and `node-set` here are that answer, one level lower:
+/// a `node` is a 4-byte index into a host-side table, every field is a
+/// method the guest calls only if it wants the value, and `node-set` is a
+/// real nested set — `union` links two sets, it does not copy their members.
+///
+/// # Identity
+///
+/// `node.id` is the host's own content-addressed key (a BLAKE3-derived
+/// `FileId`, hex-encoded), not a table index: it is stable across runs and
+/// across host restarts, so a plugin may use it as a cache key or write it
+/// into an artifact. Handles are *not* stable — they are valid only for the
+/// hook they were passed to, or until the plugin returns from `finish`.
+interface graph {
+    use types.{location, provider, error};
+
+    /// What a node stands for. `root` is the synthetic "command line" node
+    /// whose out-edges are the goals in command-line order; `rule` nodes are
+    /// pattern rules, reachable as provenance from the targets they matched.
+    enum node-kind {
+        root,
+        file,
+        rule,
+    }
+
+    /// The properties of one prerequisite edge that a reader can act on.
+    /// Deliberately not a 1:1 mirror of the host's `DepNode`: scheduling
+    /// bookkeeping (`changed`, `shuf`, `ignore-automatic-vars`) says nothing
+    /// to a consumer of the resolved graph and would be dead weight in the
+    /// contract.
+    flags dep-flags {
+        /// `target: | prereq` — ordering constraint, not a staleness input.
+        /// A cache-key plugin *must* exclude these or it will invalidate on
+        /// every `mkdir -p build`; that is the single most common reason a
+        /// hand-rolled make cache is wrong, and the reason this is a flag
+        /// on the edge rather than a filter the host applies for you.
+        order-only,
+        /// `.WAIT` barrier before this prerequisite.
+        wait,
+        /// Written in the makefile rather than produced by an implicit rule.
+        explicit,
+        /// Came from a static pattern rule (`$(objs): %.o: %.c`).
+        static-pattern,
+        /// Needs `.SECONDEXPANSION` before its name is final. A plugin that
+        /// reads `name` on such an edge is reading pre-expansion text.
+        second-expansion,
+    }
+
+    /// One prerequisite edge. Carries its own `name` because the name as
+    /// *written* is not always the target's name: VPATH resolution, `$*`
+    /// substitution and archive members all rewrite it, and a plugin
+    /// regenerating makefile text needs what was written while a plugin
+    /// hashing inputs needs what it resolved to.
+    record dep-edge {
+        /// The node this edge points at.
+        target: node,
+        /// The prerequisite as written in the makefile.
+        name: string,
+        /// `$*` for an implicit-rule match.
+        stem: option<string>,
+        %flags: dep-flags,
+    }
+
+    /// One logical recipe line, with the `@`/`-`/`+` prefixes parsed off.
+    /// Text is *unexpanded*: `$(CC) -c $<`, not `cc -c main.c`. That is
+    /// deliberate — see `vars.expand` for why the expanded form is a
+    /// separate, capability-gated request rather than a free field here.
+    record recipe-line {
+        text: string,
+        /// `@` — not echoed.
+        silent: bool,
+        /// `-` — a non-zero exit is ignored.
+        ignore-errors: bool,
+        /// `+` — runs even under `-n`, and counts as a sub-make.
+        recursive: bool,
+    }
+
+    record recipe {
+        defined-at: option<location>,
+        lines: list<recipe-line>,
+    }
+
+    enum var-flavor {
+        /// `=` — expanded at use.
+        recursive,
+        /// `:=` — expanded at definition.
+        simple,
+        undefined,
+    }
+
+    /// Where a variable's current value came from. This is `$(origin ...)`,
+    /// and it is on the interface because precedence is the thing that makes
+    /// a variable-reading plugin correct or wrong: a toolchain plugin that
+    /// overwrites a `command-line` value is a bug, one that overwrites a
+    /// `default` value is the whole point.
+    enum var-origin {
+        default,
+        environment,
+        env-override,
+        file,
+        command-line,
+        %override,
+        automatic,
+    }
+
+    record variable {
+        name: string,
+        /// Expanded value for `simple`, raw text for `recursive` — the same
+        /// distinction `$(value ...)` draws.
+        value: string,
+        flavor: var-flavor,
+        origin: var-origin,
+        defined-at: option<location>,
+        exported: bool,
+        private: bool,
+    }
+
+    /// A set of nodes with O(1) union and explicit flattening — Bazel's
+    /// `depset`, as a resource.
+    ///
+    /// `union` builds a node in a DAG of sets; it does not walk, copy or
+    /// deduplicate members. Only `to-list` does that, once, in a documented
+    /// order. A plugin that accumulates transitive information up the graph
+    /// (link lines, include paths, license sets — every non-trivial Bazel
+    /// aspect) therefore costs O(edges), not O(nodes * average depth).
+    resource node-set {
+        /// A set containing exactly these nodes, in the given order.
+        constructor(nodes: list<node>);
+        /// `self ∪ other`, in O(1). Neither operand is traversed.
+        union: func(other: borrow<node-set>) -> node-set;
+        /// True iff the set is empty, without flattening it.
+        is-empty: func() -> bool;
+        /// Membership without materialising the set as a list.
+        contains: func(n: borrow<node>) -> bool;
+        /// Flatten. Deterministic postorder: within a `union`, the left
+        /// operand's members come first, and a node appears at the position
+        /// of its *first* occurrence. This is Bazel's `postorder` /
+        /// "compile order" and it is the one that makes linker command lines
+        /// come out right; picking an order at all is the point, since an
+        /// unspecified one makes every artifact a plugin writes
+        /// nondeterministic.
+        to-list: func() -> list<node>;
+    }
+
+    /// A build-graph node.
+    ///
+    /// Every accessor is a call, so a plugin pays only for what it reads.
+    /// The ones that can fail or are expensive say so in their signature or
+    /// their docs; the rest are plain field reads on the host side.
+    resource node {
+        /// Content-addressed, stable identity (hex). Safe to persist.
+        id: func() -> string;
+        kind: func() -> node-kind;
+        /// Target name as make knows it. Non-UTF-8 target names arrive
+        /// lossily converted, the same way make's own display path converts
+        /// them; `id` remains byte-exact, so use it for identity and `name`
+        /// for output.
+        name: func() -> string;
+        /// `$*` if this target came from an implicit-rule match.
+        stem: func() -> option<string>;
+
+        /// Direct prerequisites, in makefile order. Order is load-bearing —
+        /// it is `$^`, and `$<` is its first element.
+        deps: func() -> node-set;
+        /// The same edges with their flags and as-written names.
+        dep-edges: func() -> list<dep-edge>;
+        /// Siblings produced by the same recipe (grouped targets, `&:`).
+        also-make: func() -> node-set;
+        /// Reverse edges: targets that name this node as a prerequisite.
+        /// The "up" direction an aspect needs to answer "who uses this
+        /// header?" — the query behind every `--changed-files` CI selector.
+        dependents: func() -> node-set;
+        /// Transitive closure over prerequisite edges, as a nested set.
+        /// O(1) to obtain; cost is paid at `to-list`.
+        transitive-deps: func() -> node-set;
+
+        /// The recipe, if this target has one. Requires the `read-recipes`
+        /// capability — granted by default, since a recipe is something
+        /// `make -p` will print to whoever ran it, but separable so that an
+        /// operator can withhold it from a plugin that has no business
+        /// reading text which routinely carries tokens and internal
+        /// hostnames. `none` when ungranted, indistinguishable from "no
+        /// recipe" by design: a denied plugin should degrade, not probe.
+        recipe: func() -> option<recipe>;
+        /// The pattern rule this target's deps and recipe came from, as
+        /// written (`%.o: %.c`). Provenance, not structure: it answers "why
+        /// does this edge exist", which is the question `make -d` output
+        /// exists to answer and nobody can read.
+        matched-rule: func() -> option<string>;
+        /// Where the target was defined.
+        defined-at: func() -> option<location>;
+
+        /// Timestamp make resolved for this file, in make's packed form;
+        /// `none` if the file does not exist. Present so that a plugin can
+        /// *report* on staleness — but deliberately not part of
+        /// `session.input-digest`, and so not the basis of any caching this
+        /// interface does. Timestamps are what make's own staleness model is
+        /// built on and what content addressing exists to escape; a plugin
+        /// that keys a cache on an mtime has reinvented the problem.
+        mtime: func() -> option<u64>;
+
+        phony: func() -> bool;
+        precious: func() -> bool;
+        intermediate: func() -> bool;
+        secondary: func() -> bool;
+        /// A target of some rule, as opposed to a name only ever mentioned
+        /// as a prerequisite.
+        is-target: func() -> bool;
+        /// Came from a built-in rule rather than the makefile.
+        builtin: func() -> bool;
+        /// `::` target.
+        double-colon: func() -> bool;
+
+        /// Target-scoped variable lookup: per-target definitions, then
+        /// pattern-specific ones, then global. This is what `$(CFLAGS)`
+        /// expands to *for this target*, which is the only value a
+        /// per-target consumer can correctly use — reading the global
+        /// `CFLAGS` and calling it this target's flags is the classic
+        /// compile-database bug.
+        variable: func(name: string) -> option<variable>;
+        /// This target's own per-target definitions only.
+        own-variables: func() -> list<variable>;
+
+        /// Providers published on this node so far — by earlier plugins in
+        /// the configured order, and by this plugin's own earlier hooks.
+        providers: func() -> list<provider>;
+        provider: func(id: string) -> option<provider>;
+    }
+
+    /// The synthetic root. Its `deps` are the goals, in command-line order.
+    root: func() -> node;
+    /// Goals, in command-line order. `make` with no arguments yields the
+    /// default goal.
+    goals: func() -> list<node>;
+    /// Look a target up by name. `none` if the graph does not know it.
+    find: func(name: string) -> option<node>;
+    /// Every node reachable from the goals. Not the whole file table:
+    /// unreachable targets are not part of *this* build, and a plugin that
+    /// reports on them will produce different output for `make` and
+    /// `make all` on the same makefile.
+    reachable: func() -> node-set;
+    /// Nodes in dependency order — every prerequisite before its dependents.
+    /// Fails with the cycle description if the graph has one. Supplied for
+    /// plugins that drive their own walk instead of using the `analyzer`
+    /// hooks; the hooks use this same order.
+    topological-order: func() -> result<list<node>, error>;
+}

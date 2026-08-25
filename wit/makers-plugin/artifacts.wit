@@ -1,0 +1,42 @@
+package makers:plugin@1.0.0;
+
+/// How a plugin produces output.
+///
+/// The interface this replaces had no answer: its example plugin wrote a
+/// Graphviz document to *stderr* and the test asserted on stderr. That is
+/// not a small wart — it means plugin output cannot be redirected, cannot be
+/// written atomically, interleaves with make's own diagnostics under `-j`,
+/// and cannot be discovered or cached by the host.
+///
+/// Outputs here are *declared* in the manifest and *named logically*. The
+/// plugin asks for `"compile-commands"`; the host decides that means
+/// `./compile_commands.json`, or whatever `--plugin-arg` said, writes it via
+/// a temporary file and an atomic rename, and knows afterwards exactly which
+/// files this plugin produced. Declaring them buys three things a raw
+/// filesystem capability cannot: the plugin needs no write access to the
+/// filesystem at all, the artifact set is knowable before the plugin runs
+/// (so `make` can report or clean them), and the host can serve a cache hit
+/// without instantiating the component.
+interface artifacts {
+    use types.{error};
+
+    /// An open declared output. Writes are buffered by the host and become
+    /// visible atomically at `finish`; a stream dropped without `finish` —
+    /// including one abandoned because the plugin trapped, ran out of fuel,
+    /// or returned an error — leaves any previous file untouched. A
+    /// half-written `compile_commands.json` breaks every editor that reads
+    /// it, so partial output is never published.
+    resource output {
+        write: func(bytes: list<u8>) -> result<_, error>;
+        /// Publish. Idempotent; further writes after it fail.
+        finish: func() -> result<_, error>;
+    }
+
+    /// Open a declared output by logical name. Fails if the name is not in
+    /// the manifest's `outputs`, or if `write-outputs` was not granted.
+    open: func(logical-name: string) -> result<output, error>;
+
+    /// Where a declared output will land, absolute. Useful for a plugin that
+    /// wants to embed its own path in its output, or log it.
+    path-of: func(logical-name: string) -> option<string>;
+}

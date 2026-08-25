@@ -1,0 +1,32 @@
+package makers:plugin@1.0.0;
+
+/// Reporting that is not output.
+///
+/// Separate from `artifacts` because these two are the answers to different
+/// questions — "what did you produce" and "what should the user know" — and
+/// separate from a hook's `error` return because a plugin very often needs
+/// to report *many* problems and still finish. A lint plugin that could only
+/// signal failure by returning would report its first finding and stop,
+/// which is precisely the compiler behaviour everyone turned off with
+/// `-fmax-errors`.
+interface diagnostics {
+    use types.{diagnostic};
+
+    /// Report. The host prefixes the instance name so that several plugins
+    /// in one run stay distinguishable, and counts the diagnostic. An
+    /// `error` from an instance whose manifest declares
+    /// `failure-policy.fatal` sets make's exit status once the analysis pass
+    /// completes — deferred rather than immediate, so that all findings are
+    /// reported in one run rather than only the first.
+    ///
+    /// `note` is suppressed unless the run asked for it
+    /// (`MAKERS_PLUGIN_VERBOSE`), so a plugin can narrate freely without
+    /// making every build noisy.
+    ///
+    /// Diagnostics currently go straight to stderr. Routing them through
+    /// make's own output machinery — so they interleave correctly under `-j`
+    /// and honour `--output-sync` — is worth doing and is not done yet; the
+    /// analysis pass runs after the update walk, where nothing else is
+    /// competing for stderr.
+    emit: func(d: diagnostic);
+}
