@@ -1525,9 +1525,7 @@ pub unsafe fn snapshot_set_to_targets(set: *mut variable_set) -> Vec<TargetVaria
     let end = slot.offset(setr.table.ht_size as isize);
     while slot < end {
         let v = *slot;
-        if !(v.is_null()
-            || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
-        {
+        if !(v.is_null() || ::core::ptr::eq(v, hash_deleted_item as *mut variable)) {
             out.push(target_variable_from_c(v));
         }
         slot = slot.offset(1_i32 as isize);

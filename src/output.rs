@@ -360,12 +360,7 @@ pub unsafe fn pump_from_tmp(ctx: &ExecContext, from: i32, to_stderr: bool) {
     if to_stderr {
         // `dst` already *is* the borrowed stderr sink; report through it
         // directly rather than taking a second borrow of `ctx.stderr`.
-        pump_copy(
-            &mut *src,
-            &mut *ctx.stderr.borrow_mut(),
-            false,
-            |dst, what, e| pump_perror(dst, what, e),
-        );
+        pump_copy(&mut *src, &mut *ctx.stderr.borrow_mut(), false, pump_perror);
     } else {
         // `dst` is the stdout sink here, so the stderr diagnostic borrows
         // the separate `ctx.stderr` `RefCell` freely.
