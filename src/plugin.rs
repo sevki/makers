@@ -142,9 +142,14 @@ fn parse_instances(
         let Some((lhs, value)) = entry.trim().split_once('=') else {
             continue;
         };
-        // Split at the *first* dot: the instance name is one segment, and
-        // keys are dotted (`out.database`).
-        let Some((instance, key)) = lhs.trim().split_once('.') else {
+        // Instance and key are separated by a colon, the same way
+        // `MAKERS_PLUGIN_ALLOW` separates instance from capability. It has
+        // to be a colon rather than a dot because keys are themselves
+        // dotted — `out.database` — so splitting on the first dot makes
+        // `compdb.out.database` mean an instance called `compdb` with key
+        // `out.database` only by luck, and leaves an instance named `a.b`
+        // unaddressable.
+        let Some((instance, key)) = lhs.trim().split_once(':') else {
             continue;
         };
         for spec in specs.iter_mut().filter(|s| s.name == instance) {
@@ -1266,7 +1271,7 @@ mod tests {
         let specs = parse_instances(
             Some("compdb=./cc.wasm, graph=./g.wasm"),
             None,
-            Some("compdb.out.database=build/db.json;graph.rankdir=TB;absent.k=v"),
+            Some("compdb:out.database=build/db.json;graph:rankdir=TB;absent:k=v"),
             None,
             None,
         );
@@ -1280,6 +1285,43 @@ mod tests {
         assert_eq!(
             spec_named(&specs, "graph").settings.get("rankdir"),
             Some(&"TB".to_string())
+        );
+    }
+
+    /// Instance and key are separated by a colon, not a dot.
+    ///
+    /// Keys are themselves dotted (`out.database`), so a dot separator only
+    /// happens to work when the instance name has none — and it leaves an
+    /// instance named `a.b` with no way to be addressed at all. The colon
+    /// also matches `MAKERS_PLUGIN_ALLOW`, which has always used one.
+    #[test]
+    fn settings_separate_instance_from_key_with_a_colon() {
+        let dotted = parse_instances(
+            Some("compdb=./cc.wasm"),
+            None,
+            Some("compdb.out.database=build/db.json"),
+            None,
+            None,
+        );
+        assert!(
+            spec_named(&dotted, "compdb").settings.is_empty(),
+            "a dotted separator is not the syntax and must not silently work"
+        );
+
+        let dotted_instance = parse_instances(
+            Some("a.b=./cc.wasm"),
+            None,
+            Some("a.b:out.database=db.json"),
+            None,
+            None,
+        );
+        assert_eq!(
+            spec_named(&dotted_instance, "a.b")
+                .settings
+                .get("out.database")
+                .map(String::as_str),
+            Some("db.json"),
+            "an instance name containing a dot is still addressable"
         );
     }
 

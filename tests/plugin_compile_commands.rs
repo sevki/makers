@@ -162,7 +162,7 @@ fn the_output_path_is_configurable_per_instance() {
         &dir,
         &[
             ("MAKERS_PLUGINS", &spec),
-            ("MAKERS_PLUGIN_ARGS", "compdb.out.database=build/db.json"),
+            ("MAKERS_PLUGIN_ARGS", "compdb:out.database=build/db.json"),
         ],
     );
     assert_clean(&run);

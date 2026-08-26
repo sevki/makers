@@ -485,7 +485,7 @@ same change as the interface.
 
 ```sh
 MAKERS_PLUGINS="compdb=./compile_commands.wasm,graph=./graphviz.wasm"
-MAKERS_PLUGIN_ARGS="compdb.out.database=build/compile_commands.json;graph.rankdir=TB"
+MAKERS_PLUGIN_ARGS="compdb:out.database=build/compile_commands.json;graph:rankdir=TB"
 MAKERS_PLUGIN_ALLOW="compdb:read-recipes,read-file-content"
 MAKERS_PLUGIN_DENY="graph:write-outputs"
 MAKERS_PLUGIN_VERBOSE=1

@@ -119,7 +119,7 @@ fn settings_reach_the_plugin() {
         &dir,
         &[
             ("MAKERS_PLUGINS", &spec),
-            ("MAKERS_PLUGIN_ARGS", "graph.rankdir=TB"),
+            ("MAKERS_PLUGIN_ARGS", "graph:rankdir=TB"),
         ],
     );
     assert_clean(&run);
