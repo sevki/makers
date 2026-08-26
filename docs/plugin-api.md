@@ -371,8 +371,12 @@ from what the language omits, so it is only as good as the standard
 library's exposed surface. A component's isolation is the wasm sandbox: a
 plugin cannot read memory it was not handed, cannot open a file it was not
 given, and cannot outrun its fuel budget. This is also the direct answer to
-what `make` has today — `dlopen`'d `gmk_*` plugins get the host's entire
-address space the moment `dlopen` returns.
+what upstream GNU Make offers — a `dlopen`'d `gmk_*` plugin gets the host's
+entire address space the moment `dlopen` returns. (This port never
+implemented that: `load_file` has always been a stub that fatals with
+`'load' is not supported on this platform`, and the dead `gmk_*` ABI
+surface was removed on main in
+[#648](https://github.com/sevki/makers/pull/648).)
 
 **Metering.** Section 3.10.
 
@@ -484,10 +488,13 @@ interface functions {
 ```
 
 This is the replacement for `gmk_add_function`, the most-used part of the
-`dlopen` API this system supersedes, and dropping it would be a regression
-against the thing being replaced. The host already has the machinery
-(`function::define_new_function`, and `gmk_func_ptr` passes the function
-name, so one trampoline can dispatch by name).
+`dlopen` API this system supersedes. It is the piece with the strongest
+claim on being built next: the `gmk_*` surface was removed from this port
+in [#648](https://github.com/sevki/makers/pull/648), so extending the
+makefile language is currently not possible by any means at all. The host
+still has the machinery it needs (`function::define_new_function`, and the
+`gmk_func_ptr` signature passed the function name, so one trampoline can
+dispatch by name).
 
 > *Use case: `$(sha256 file)` and `$(git-rev)`.* Both are `$(shell …)`
 > today, which means they are uncacheable and re-run on every expansion. As
@@ -544,12 +551,20 @@ capability that would let it substitute compilers.
   `finish`. `MAKERS_WASM_EXTENSION` keeps working as the instance `default`.
   The old world is removed rather than kept alongside: it has one plugin, in
   this repository, and it is ported here.
-* **From the `dlopen` `gmk_*` API** (`src/load.rs`, `src/loadapi.rs`) and
-  **Guile** (`src/guile.rs`, already a disabled stub). Both are to be
-  replaced, per the decision recorded on
-  [#633](https://github.com/sevki/makers/issues/633). `gmk_add_function` is
-  the one part with no replacement yet — see 7.1 — so retiring the `dlopen`
-  path should wait for the `reader` world rather than land with this change.
+* **From the `dlopen` `gmk_*` API and Guile — already done.** Both were
+  removed on main in [#648](https://github.com/sevki/makers/pull/648)
+  (landed via [#649](https://github.com/sevki/makers/pull/649)), per the
+  decision recorded on
+  [#633](https://github.com/sevki/makers/issues/633): `src/loadapi.rs` and
+  `src/guile.rs` are gone, and `src/load.rs` remains only as the stub that
+  fatals on a `load` directive. Nothing had to be migrated, because nothing
+  worked: this port never implemented dynamic loading, so the removed ABI
+  was dead surface rather than a retired feature.
+
+  What that leaves is a *gap*, not a migration: `gmk_add_function` was the
+  one part of that surface anyone would have wanted, and there is now no way
+  to add a makefile function from outside `function.rs`. The `reader` world
+  (7.1) is the replacement, and this is the argument for building it next.
 
 ---
 
