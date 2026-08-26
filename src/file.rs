@@ -12,15 +12,28 @@ pub use crate::recipe::{Recipe, RecipeLine, RecipeLineFlags};
 pub use crate::target_var::{TargetVariable, VarExport, VarFlavor, VarOrigin};
 
 pub use crate::ffi_types::{
-    __clockid_t, __off64_t, __off_t, __suseconds_t, __syscall_slong_t, __time_t, clockid_t,
-    intmax_t, size_t, time_t, uintmax_t,
+    __clockid_t,
+    __off64_t,
+    __off_t,
+    __suseconds_t,
+    __syscall_slong_t,
+    __time_t,
+    clockid_t,
+    intmax_t,
+    size_t,
+    time_t,
+    uintmax_t,
 };
-use crate::misc::{xcalloc, xrealloc};
-use libc::{__errno_location, free};
 #[cfg(test)]
 use std::ffi::CStr;
-use std::ffi::CString;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use {
+    crate::misc::{xcalloc, xrealloc},
+    libc::{__errno_location, free},
+    std::{
+        ffi::CString,
+        time::{Duration, SystemTime, UNIX_EPOCH},
+    },
+};
 extern "C" {
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
     fn memmove(
@@ -334,16 +347,21 @@ impl FileNode {
 // (`crate::recipe`), next to the idiomatic `Recipe` that replaces it.
 // Re-exported here so existing `crate::file::Commands` paths — and the
 // `pub type commands = Commands` alias below — keep resolving.
-use crate::commands::{print_commands, set_file_variables};
-use crate::expand::{expand_string_buf, expand_string_for_file, variable_buffer_output};
-use crate::floc::Floc;
-use crate::function::patsubst_expand_pat;
-use crate::make_main::{db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP};
-use crate::output::{error, fatal_err, perror_with_name, FmtArg};
-use crate::read::{find_percent, parse_file_seq};
 pub use crate::recipe::Commands;
-use crate::variable::{
-    initialize_file_variables, lookup_variable, print_file_variables, print_target_variables,
+use crate::{
+    commands::{print_commands, set_file_variables},
+    entry::{db_level, second_expansion, stopchar_map, with_options, MAP_DIRSEP},
+    expand::{expand_string_buf, expand_string_for_file, variable_buffer_output},
+    floc::Floc,
+    function::patsubst_expand_pat,
+    output::{error, fatal_err, perror_with_name, FmtArg},
+    read::{find_percent, parse_file_seq},
+    variable::{
+        initialize_file_variables,
+        lookup_variable,
+        print_file_variables,
+        print_target_variables,
+    },
 };
 
 pub type variable_set_list = VariableSetList;
@@ -1198,14 +1216,14 @@ pub fn rename_file(ctx: &crate::execctx::ExecContext, from_id: FileId, to_hname:
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) {
     let mut doneany: i32 = 0;
-    if crate::make_main::opt_question(ctx)
-        || crate::make_main::opt_touch(ctx)
+    if crate::entry::opt_question(ctx)
+        || crate::entry::opt_touch(ctx)
         || ctx.all_secondary.get()
         || ctx.no_intermediates.get()
     {
         return;
     }
-    if sig != 0 && crate::make_main::opt_just_print(ctx) {
+    if sig != 0 && crate::entry::opt_just_print(ctx) {
         return;
     }
     // Snapshot the intermediate candidates from the arena: lock the map, grab the
@@ -1255,7 +1273,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                 // ENOENT from unlink means the file was already gone: skip the
                 // diagnostic/bookkeeping below (the C code `continue`d here).
                 let skip: bool;
-                if crate::make_main::opt_just_print(ctx) {
+                if crate::entry::opt_just_print(ctx) {
                     status = 0;
                     skip = false;
                 } else {
@@ -1276,7 +1294,7 @@ pub unsafe fn remove_intermediates(ctx: &crate::execctx::ExecContext, sig: i32) 
                         if doneany == 0 && 0x1_i32 & db_level(ctx) != 0 {
                             crate::output::trace_out(b"Removing intermediate files...\n");
                         }
-                        if !crate::make_main::opt_run_silent(ctx) {
+                        if !crate::entry::opt_run_silent(ctx) {
                             if doneany == 0 {
                                 crate::output::trace_out(b"rm ");
                                 doneany = 1;
@@ -1755,10 +1773,8 @@ fn dep_name_bytes(d: &DepNode) -> Vec<u8> {
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub fn snap_deps(
-    ctx: &crate::execctx::ExecContext,
-) -> Result<(), crate::build_result::BuildError> {
-    crate::make_main::mark_snapped_deps(ctx);
+pub fn snap_deps(ctx: &crate::execctx::ExecContext) -> Result<(), crate::build_result::BuildError> {
+    crate::entry::mark_snapped_deps(ctx);
 
     // `.PRECIOUS`: mark each prereq target precious.
     for fid in special_dep_targets(ctx, b".PRECIOUS") {
@@ -1823,7 +1839,9 @@ pub fn snap_deps(
                 });
                 if let Some(name) = conflict {
                     // SAFETY: see the `.INTERMEDIATE` conflict call above.
-                    unsafe { fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .SECONDARY") }?;
+                    unsafe {
+                        fatal_special_conflict(ctx, &name, b".NOTINTERMEDIATE and .SECONDARY")
+                    }?;
                 }
             }
         }
@@ -1858,7 +1876,7 @@ pub fn snap_deps(
                 apply_to_file_and_double_colon(ctx, fid, |n| n.command_flags |= COMMANDS_NOERROR);
             }
         }
-        SpecialTargetState::NoDeps => crate::make_main::set_ignore_errors_mirror(ctx, true),
+        SpecialTargetState::NoDeps => crate::entry::set_ignore_errors_mirror(ctx, true),
         SpecialTargetState::Absent => {}
     }
 
@@ -1881,7 +1899,7 @@ pub fn snap_deps(
                 mark_notparallel(ctx, fid);
             }
         }
-        SpecialTargetState::NoDeps => crate::make_main::set_not_parallel(ctx),
+        SpecialTargetState::NoDeps => crate::entry::set_not_parallel(ctx),
         SpecialTargetState::Absent => {}
     }
 
@@ -2274,15 +2292,17 @@ pub fn file_timestamp_string(ts: uintmax_t) -> String {
     let mut out = match Local.timestamp_opt(t as i64, 0).single() {
         // `%04ld` of `tm_year + 1900`; for every realistic file timestamp this
         // is a >= 4-digit non-negative year, so `{:04}` matches `%04ld`.
-        Some(dt) => format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
-            dt.year(),
-            dt.month(),
-            dt.day(),
-            dt.hour(),
-            dt.minute(),
-            dt.second(),
-        ),
+        Some(dt) => {
+            format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                dt.year(),
+                dt.month(),
+                dt.day(),
+                dt.hour(),
+                dt.minute(),
+                dt.second(),
+            )
+        }
         None if t < 0 => format!("{}", t as i64), // C `%ld`
         None => format!("{}", t as u64),          // C `%lu`
     };
@@ -2361,12 +2381,12 @@ unsafe fn print_file_node(
     f: &FileNode,
     has_double_colon: bool,
 ) {
-    if crate::make_main::opt_no_builtin_rules(ctx) && f.builtin {
+    if crate::entry::opt_no_builtin_rules(ctx) && f.builtin {
         return;
     }
     crate::output::trace_out(b"\n");
     if let Some(recipe) = f.recipe.as_ref() {
-        if recipe.recipe_prefix as i32 != crate::make_main::opt_cmd_prefix(ctx) as i32 {
+        if recipe.recipe_prefix as i32 != crate::entry::opt_cmd_prefix(ctx) as i32 {
             crate::output::trace_out(b".RECIPEPREFIX = ");
             let new_prefix = recipe.recipe_prefix as ::core::ffi::c_char;
             with_options(ctx, |o| o.cmd_prefix.set(new_prefix));
@@ -2453,19 +2473,21 @@ unsafe fn print_file_node(
         CommandState::DepsRunning => {
             crate::output::trace_out(b"#  Dependencies recipe running (THIS IS A BUG).\n");
         }
-        CommandState::NotStarted | CommandState::Finished => match f.update_status {
-            UpdateStatus::Success => {
-                crate::output::trace_out(b"#  Successfully updated.\n");
+        CommandState::NotStarted | CommandState::Finished => {
+            match f.update_status {
+                UpdateStatus::Success => {
+                    crate::output::trace_out(b"#  Successfully updated.\n");
+                }
+                UpdateStatus::Question => {
+                    if crate::entry::opt_question(ctx) {
+                    } else {
+                        panic!("assertion failed: question_flag");
+                    };
+                    crate::output::trace_out(b"#  Needs to be updated (-q is set).\n");
+                }
+                _ => {}
             }
-            UpdateStatus::Question => {
-                if crate::make_main::opt_question(ctx) {
-                } else {
-                    panic!("assertion failed: question_flag");
-                };
-                crate::output::trace_out(b"#  Needs to be updated (-q is set).\n");
-            }
-            _ => {}
-        },
+        }
     }
     if !f.variables.is_empty() {
         print_file_variables(ctx, fid);
@@ -2660,9 +2682,7 @@ pub const FILE_TIMESTAMP_HI_RES: i32 = 1;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::make_main::initialize_stopchar_map;
-    use std::sync::Mutex;
+    use {super::*, crate::entry::initialize_stopchar_map, std::sync::Mutex};
 
     // FFI declarations and types the pre-std clock cascade depended on. They
     // were removed from production code when `file_timestamp_now` moved to
@@ -3062,7 +3082,7 @@ mod tests {
     #[test]
     fn file_table_is_per_context_not_global() {
         let _g = FILE_GRAPH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _ctx = crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::entry::install_default_exec_context_for_test();
         initialize_stopchar_map();
         let a = crate::execctx::ExecContext::default();
         let b = crate::execctx::ExecContext::default();
@@ -3488,9 +3508,25 @@ mod tests {
     #[test]
     fn target_variable_enums_match_c_constants() {
         use crate::variable::{
-            f_append, f_append_value, f_bogus, f_expand, f_recursive, f_shell, f_simple,
-            o_automatic, o_command, o_default, o_env, o_env_override, o_file, o_invalid,
-            o_override, v_default, v_export, v_ifset, v_noexport,
+            f_append,
+            f_append_value,
+            f_bogus,
+            f_expand,
+            f_recursive,
+            f_shell,
+            f_simple,
+            o_automatic,
+            o_command,
+            o_default,
+            o_env,
+            o_env_override,
+            o_file,
+            o_invalid,
+            o_override,
+            v_default,
+            v_export,
+            v_ifset,
+            v_noexport,
         };
 
         assert_eq!(VarFlavor::Bogus as u32, f_bogus);

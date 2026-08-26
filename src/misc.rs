@@ -5,26 +5,42 @@
 //! their callers (the makefile reader, the variable expander, the job
 //! runner) are still C-shaped.
 
-use ::core::ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void};
-use ::core::ptr::{null, null_mut};
-
+use ::core::{
+    ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void},
+    ptr::{null, null_mut},
+};
 #[cfg(target_family = "wasm")]
 use crate::compat::{getpid, mkstemp, stpcpy, umask};
-use libc::{
-    __errno_location, calloc, free, getenv, malloc, realloc, sleep, sprintf, strcpy, strdup,
-    strerror, strlen, strndup, EINTR,
-};
 #[cfg(unix)]
 use libc::{getpid, mkstemp, stpcpy, umask};
 
-use crate::ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t};
-use crate::file::nameseq;
-use crate::floc::Floc;
-use crate::make_main::{posix_pedantic, stopchar_map};
-use crate::output::{error, out_of_memory, FmtArg};
-use crate::posixos::os_anontmp;
-use crate::stdio::FILE;
-use crate::sys_stat::stat;
+use libc::{
+    __errno_location,
+    calloc,
+    free,
+    getenv,
+    malloc,
+    realloc,
+    sleep,
+    sprintf,
+    strcpy,
+    strdup,
+    strerror,
+    strlen,
+    strndup,
+    EINTR,
+};
+
+use crate::{
+    entry::{posix_pedantic, stopchar_map},
+    ffi_types::{__mode_t, mode_t, pid_t, size_t, ssize_t},
+    file::nameseq,
+    floc::Floc,
+    output::{error, out_of_memory, FmtArg},
+    posixos::os_anontmp,
+    stdio::FILE,
+    sys_stat::stat,
+};
 
 extern "C" {
     fn stat(file: *const c_char, buf: *mut stat) -> i32;
@@ -860,8 +876,10 @@ pub unsafe fn get_tmpfile(
 
 #[cfg(test)]
 mod bufio_tests {
-    use super::{readbuf, writebuf};
-    use std::os::fd::AsRawFd;
+    use {
+        super::{readbuf, writebuf},
+        std::os::fd::AsRawFd,
+    };
 
     /// writebuf writes everything and readbuf reads it back, stopping at
     /// EOF with a short count (the C loops' contract, now write_all/read).
@@ -911,9 +929,10 @@ mod bufio_tests {
 
 #[cfg(test)]
 mod tmpfile_tests {
-    use super::{dbg, get_tmpfile, open_anon_tmpfd, open_named_tmpfd};
-    use ::core::ffi::c_char;
-    use ::core::ptr::null_mut;
+    use {
+        super::{dbg, get_tmpfile, open_anon_tmpfd, open_named_tmpfd},
+        ::core::{ffi::c_char, ptr::null_mut},
+    };
 
     // `get_tmpfile` drives the whole temp-file chain (`open_named_tmpfd` ->
     // `get_tmptemplate` -> `get_tmpdir`): it must hand back a read-write
@@ -1048,9 +1067,13 @@ mod make_toui_tests {
 
 #[cfg(test)]
 mod alpha_compare_tests {
-    use super::alpha_cmp;
-    use ::core::cmp::Ordering;
-    use ::core::ffi::{c_char, c_void};
+    use {
+        super::alpha_cmp,
+        ::core::{
+            cmp::Ordering,
+            ffi::{c_char, c_void},
+        },
+    };
 
     /// Verbatim pre-refactor `qsort` comparator, preserved as the behavior
     /// oracle (AGENTS.md: keep the original `unsafe` code as a `#[cfg(test)]`
@@ -1175,9 +1198,11 @@ mod collapse_continuations_tests {
 
 #[cfg(test)]
 mod next_token_tests {
-    use super::next_token;
-    use crate::make_main::initialize_stopchar_map;
-    use std::ffi::{c_char, CStr, CString};
+    use {
+        super::next_token,
+        crate::entry::initialize_stopchar_map,
+        std::ffi::{c_char, CStr, CString},
+    };
 
     /// `next_token` advances past leading blanks/newlines and returns the first
     /// non-whitespace character (or the terminating NUL for all-blank input).
@@ -1206,9 +1231,10 @@ mod next_token_tests {
 
 #[cfg(test)]
 mod lindex_unsafe_oracle {
-    use super::lindex;
-    use ::core::ffi::c_char;
-    use ::core::ptr::null_mut;
+    use {
+        super::lindex,
+        ::core::{ffi::c_char, ptr::null_mut},
+    };
 
     /// Verbatim copy of the original c2rust-derived `lindex`, preserved as a
     /// behavioral oracle for the safe slice-based rewrite.
@@ -1269,15 +1295,14 @@ mod lindex_unsafe_oracle {
 
 #[cfg(test)]
 mod skip_reference_unsafe_oracle {
-    use super::skip_reference;
-    use ::core::ffi::c_char;
+    use {super::skip_reference, ::core::ffi::c_char};
 
     // Re-derive the helpers the oracle needs, identical to the module ones.
     const MAP_NUL: i32 = 0x0001;
     const MAP_VARSEP: i32 = 0x0080;
 
     fn stop_set(c: c_char, mask: i32) -> bool {
-        crate::make_main::stopchar_map()[c as u8 as usize] as i32 & mask != 0
+        crate::entry::stopchar_map()[c as u8 as usize] as i32 & mask != 0
     }
 
     /// Verbatim copy of the original c2rust-derived `skip_reference`, preserved
@@ -1329,7 +1354,7 @@ mod skip_reference_unsafe_oracle {
         // The oracle and the safe implementation both read the global stopchar
         // map; initialize it up front so this test passes in isolation rather
         // than relying on another test having seeded the global.
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
 
         // Each case is NUL-terminated; the character at index 0 is the one
         // following the `$`.
@@ -1362,11 +1387,13 @@ mod skip_reference_unsafe_oracle {
 
 #[cfg(test)]
 mod end_of_token_unsafe_oracle {
-    use super::{end_of_token, MAP_NUL, MAP_SPACE};
-    use ::core::ffi::c_char;
+    use {
+        super::{end_of_token, MAP_NUL, MAP_SPACE},
+        ::core::ffi::c_char,
+    };
 
     fn stop_set(c: c_char, mask: i32) -> bool {
-        crate::make_main::stopchar_map()[c as u8 as usize] as i32 & mask != 0
+        crate::entry::stopchar_map()[c as u8 as usize] as i32 & mask != 0
     }
 
     /// Verbatim copy of the original c2rust-derived `end_of_token`, preserved
@@ -1388,7 +1415,7 @@ mod end_of_token_unsafe_oracle {
     /// `s.add(offset)`.
     #[test]
     fn matches_oracle() {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
 
         let cases: &[&[u8]] = &[
             b"\0",            // empty: token end at offset 0
@@ -1442,11 +1469,13 @@ mod eval_tmpdir_var_tests {
         match usable {
             // SAFETY: `Usable` carries the `getenv` value pointer, valid until
             // the next environment mutation; we read it before removing the var.
-            TmpdirCandidate::Usable(p) => assert_eq!(
-                unsafe { ::core::ffi::CStr::from_ptr(p) }.to_bytes(),
-                b"/tmp",
-                "a usable directory returns its value",
-            ),
+            TmpdirCandidate::Usable(p) => {
+                assert_eq!(
+                    unsafe { ::core::ffi::CStr::from_ptr(p) }.to_bytes(),
+                    b"/tmp",
+                    "a usable directory returns its value",
+                )
+            }
             _ => panic!("expected a usable directory"),
         }
         std::env::remove_var("MAKE_PROBE_TMPDIR_DIR");
@@ -1493,8 +1522,10 @@ mod concat_tests {
 
 #[cfg(test)]
 mod concat_unsafe_oracle {
-    use super::{cstr_bytes_or_empty, strlen};
-    use ::core::ffi::c_char;
+    use {
+        super::{cstr_bytes_or_empty, strlen},
+        ::core::ffi::c_char,
+    };
 
     /// Verbatim pre-conversion implementation (the last `unsafe fn concat`,
     /// before it became the safe, pure `super::concat`), preserved as a
@@ -1558,8 +1589,10 @@ mod concat_unsafe_oracle {
 
 #[cfg(test)]
 mod free_ns_tests {
-    use super::{free_ns, free_ns_chain};
-    use crate::file::NameSeq;
+    use {
+        super::{free_ns, free_ns_chain},
+        crate::file::NameSeq,
+    };
 
     /// `free_ns_chain` must walk and free every node in a `next`-linked chain
     /// (which exercises `free_ns` on each), and a single-node chain is the base

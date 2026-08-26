@@ -15,13 +15,15 @@
 //! pattern as [`crate::strcache`].
 //!
 //! Byte classification deliberately consults the process-global `stopchar_map`
-//! (via [`crate::make_main::stopchar_map`]) rather than re-deriving `isspace`,
+//! (via [`crate::entry::stopchar_map`]) rather than re-deriving `isspace`,
 //! so the AST agrees with the C reader byte-for-byte, locale and all.
 
 use std::ops::Range;
 
-use crate::make_main::{stopchar_map, MAP_BLANK, MAP_COMMENT, MAP_NEWLINE, MAP_NUL, MAP_VARSEP};
-use crate::variable::{f_append, f_expand, f_recursive, f_shell, f_simple, variable_flavor};
+use crate::{
+    entry::{stopchar_map, MAP_BLANK, MAP_COMMENT, MAP_NEWLINE, MAP_NUL, MAP_VARSEP},
+    variable::{f_append, f_expand, f_recursive, f_shell, f_simple, variable_flavor},
+};
 
 /// The assignment operator's flavor, mirroring make's `variable_flavor`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -1507,9 +1509,7 @@ fn var_def(db: &crate::makedb::MakeDb, scan: VarModScan) -> LineClass {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::make_main::initialize_stopchar_map;
-    use std::sync::Once;
+    use {super::*, crate::entry::initialize_stopchar_map, std::sync::Once};
 
     /// The byte classifier reads the process-global stopchar map, which `main`
     /// builds at startup; tests must initialize it once before parsing.
@@ -2126,10 +2126,12 @@ mod tests {
         // directive (`include = x`, `vpath = x`, `ifdef = x`).
         for line in ["include = x", "vpath = x", "ifdef = x"] {
             match classify(line) {
-                LineClass::VarDef(vl) => assert!(
-                    vl.assign && !vl.had_modifier,
-                    "{line:?} should be a plain assignment"
-                ),
+                LineClass::VarDef(vl) => {
+                    assert!(
+                        vl.assign && !vl.had_modifier,
+                        "{line:?} should be a plain assignment"
+                    )
+                }
                 other => panic!("{line:?} expected VarDef, got {other:?}"),
             }
         }
@@ -2178,11 +2180,13 @@ mod tests {
                 arg1,
                 arg2,
                 trailing_text,
-            } => Some((
-                String::from_utf8(b[arg1].to_vec()).unwrap(),
-                String::from_utf8(b[arg2].to_vec()).unwrap(),
-                trailing_text,
-            )),
+            } => {
+                Some((
+                    String::from_utf8(b[arg1].to_vec()).unwrap(),
+                    String::from_utf8(b[arg2].to_vec()).unwrap(),
+                    trailing_text,
+                ))
+            }
             _ => None,
         }
     }
@@ -2527,7 +2531,7 @@ mod tests {
 
     #[test]
     fn find_map_unquote_skips_refs_and_collapses() {
-        use crate::make_main::{MAP_SEMI, MAP_VARIABLE};
+        use crate::entry::{MAP_SEMI, MAP_VARIABLE};
         ensure_map();
 
         // (result index, resulting C string up to the new NUL).

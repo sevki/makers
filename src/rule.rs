@@ -13,14 +13,10 @@
 //! statics — the `.SUFFIXES` file is looked up by name through
 //! `lookup_file`/`enter_file` (matching `read.rs::is_suffix_file`).
 
-use crate::dep::DepNode;
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::floc::Floc;
-use crate::make_main::posix_pedantic;
-use crate::recipe::Recipe;
+use crate::{dep::DepNode, entry::posix_pedantic, floc::Floc, recipe::Recipe};
 
-use crate::dir::dir_file_exists_p;
-use crate::file::lookup_file;
+use crate::{dir::dir_file_exists_p, file::lookup_file};
 
 pub const RECIPEPREFIX_DEFAULT: u8 = b'\t';
 
@@ -393,15 +389,17 @@ pub fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
             rulename.extend_from_slice(&d2.name);
             // Look up the combined suffix-rule file and read its recipe + deps.
             let (has_prereqs, recipe, finfo) = match lookup_file(ctx, &rulename) {
-                Some(id) => match ctx.filenodes.get(id) {
-                    Some(node) => {
-                        let n = node.lock().expect("file node lock poisoned");
-                        let has = !n.deps.is_empty();
-                        let rec = n.recipe.clone();
-                        (has, rec, finfo_of(&n))
+                Some(id) => {
+                    match ctx.filenodes.get(id) {
+                        Some(node) => {
+                            let n = node.lock().expect("file node lock poisoned");
+                            let has = !n.deps.is_empty();
+                            let rec = n.recipe.clone();
+                            (has, rec, finfo_of(&n))
+                        }
+                        None => (false, None, null_floc()),
                     }
-                    None => (false, None, null_floc()),
-                },
+                }
                 None => (false, None, null_floc()),
             };
             if let Some(rec) = recipe {

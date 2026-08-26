@@ -1,0 +1,8 @@
+# `plugins/graphviz-export` is its own standalone workspace (see the
+# `[workspace]` marker in Cargo.toml, same pattern as `fuzz/`) so it doesn't
+# inherit the main crate's heavy dependency graph. Without this, `cargo
+# component build` run from this directory writes to
+# `plugins/graphviz-export/target/` instead of the repo-root `target/` that
+# `tests/plugin_graphviz_export.rs` looks in.
+[build]
+target-dir = "../../target"

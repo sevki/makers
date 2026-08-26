@@ -419,6 +419,60 @@ jobs:
               run: cargo test
 
     # ─────────────────────────────────────────────────────────────────────
+    # The `wasmtime` feature (#633/#636: the component-model introspection
+    # host) is optional and off by default, so the plain `test` job above
+    # never compiles it — a regression there would only surface once someone
+    # happened to build with `--features wasmtime` locally. This job builds
+    # the `wit/introspection` guest component and the `plugins/` components
+    # via `cargo component build` (needs the `wasm32-wasip1` target and the
+    # `cargo-component` subcommand, neither of which the default
+    # toolchain/job has) and then runs the full suite with the feature on,
+    # which exercises them end-to-end in tests/wasm_ext.rs and
+    # tests/plugin_*.rs against a real makefile.
+    # ─────────────────────────────────────────────────────────────────────
+    test-wasm-feature:
+        name: test (--features wasmtime)
+        needs: build
+        if: github.event_name != 'schedule'
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Cache cargo registry
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cargo/registry
+                      ~/.cargo/git
+                  key: cargo-${{ runner.os }}-wasm-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+                  restore-keys: cargo-${{ runner.os }}-wasm-
+
+            - name: Add wasm32-wasip1 target
+              run: rustup target add wasm32-wasip1
+
+            - name: Cache cargo-component
+              id: cargo-component-cache
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cargo/bin/cargo-component
+                  key: cargo-component-${{ runner.os }}
+
+            - name: Install cargo-component
+              if: steps.cargo-component-cache.outputs.cache-hit != 'true'
+              run: cargo install cargo-component --locked
+
+            - name: Build the introspection guest component
+              working-directory: wit/introspection
+              run: cargo component build
+
+            - name: Build the graphviz-export plugin component
+              working-directory: plugins/graphviz-export
+              run: cargo component build
+
+            - name: Run the test suite with the wasmtime feature
+              run: cargo test --features wasmtime
+
+    # ─────────────────────────────────────────────────────────────────────
     # The fuzz crate declares its own `[workspace]`, so the repo-root
     # `cargo check --all-targets` never builds it. Without this job a
     # signature change to a fuzzed function compiles fine on the PR and only

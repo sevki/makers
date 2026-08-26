@@ -1,9 +1,6 @@
 #![allow(non_camel_case_types)]
 #![allow(non_upper_case_globals)]
-#![feature(extern_types)]
 
-#[macro_use]
-extern crate c2rust_bitfields;
 extern crate libc;
 extern crate self as make_sys;
 
@@ -21,6 +18,7 @@ pub mod default;
 pub mod dep;
 pub mod depgraph;
 pub mod dir;
+pub mod entry;
 pub mod execctx;
 pub mod expand;
 pub mod ffi_types;
@@ -30,15 +28,11 @@ pub mod floc;
 pub mod function;
 pub mod getopt;
 pub mod getopt1;
-pub mod guile;
 pub mod hash;
 pub mod id_wireformat;
 pub mod implicit;
 pub mod job;
 pub mod load;
-pub mod loadapi;
-#[path = "main.rs"]
-pub mod make_main;
 pub mod makedb;
 pub mod misc;
 pub mod output;
@@ -59,3 +53,5 @@ pub mod variable;
 pub mod version;
 pub mod vpath;
 pub mod warning;
+#[cfg(feature = "wasmtime")]
+pub mod wasm_ext;

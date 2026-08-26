@@ -127,7 +127,7 @@ pub fn construct_include_path(
             )?;
         }
     }
-    crate::make_main::with_options(ctx, |o| {
+    crate::entry::with_options(ctx, |o| {
         *o.resolved_include_dirs.borrow_mut() = dirs;
     });
     Ok(())

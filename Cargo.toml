@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "proc-macros",
+    "makers-plugin", "proc-macros", "wit/introspection",
 ]
 [package]
 name = "make-sys"
@@ -14,13 +14,13 @@ autobins = false
 crate-type = ["staticlib", "rlib"]
 
 [[bin]]
-path = "bin/make.rs"
+path = "src/bin/main.rs"
 name = "make"
 
 [dependencies]
+anyhow = { version = "1.0.104", optional = true }
 bitflags = "2.13.0"
 blake3 = "1.8.5"
-c2rust-bitfields = "0.22.1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", default-features = false, features = ["std", "error-context", "string"] }
 digest = "0.11"
@@ -34,9 +34,14 @@ rustc-hash = "2"
 # on native targets where it's a harmless no-op today but may matter later,
 # and drop it under wasm to avoid depending on threading that never works.
 salsa = { version = "0.28", default-features = false, features = ["salsa_unstable", "macros", "inventory", "accumulator"] }
+wasmtime = { version = "48.0.1", optional = true }
+wasmtime-wasi = { version = "48.0.1", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 salsa = { version = "0.28", features = ["rayon"] }
 
 [dev-dependencies]
 insta = { version = "=1.48.0", default-features = false }
+
+[features]
+wasmtime = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:anyhow"]

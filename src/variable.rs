@@ -1,8 +1,11 @@
 pub use crate::ffi_types::{size_t, uintmax_t};
-use crate::file::{file, Commands, Dep, FileId, TargetVariable, VarExport, VarFlavor, VarOrigin};
-use crate::misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup};
-use c2rust_bitfields;
-use libc::{free, sprintf, strchr, strcmp, strcpy, strstr};
+use {
+    crate::{
+        file::{file, Commands, Dep, FileId, TargetVariable, VarExport, VarFlavor, VarOrigin},
+        misc::{next_token, xcalloc, xmalloc, xrealloc, xstrdup, xstrndup},
+    },
+    libc::{free, sprintf, strchr, strcmp, strcpy, strstr},
+};
 extern "C" {
     fn memcpy(
         __dest: *mut ::core::ffi::c_void,
@@ -54,24 +57,37 @@ pub struct VariableSetList {
 
 pub type dep = Dep;
 pub type commands = Commands;
-use crate::execctx::ExecContext;
-use crate::expand::{
-    allocated_expand_string_for_file, allocated_expand_variable, install_variable_buffer,
-    recursively_expand_for_file, swap_variable_buffer,
+use crate::{
+    entry::stopchar_map,
+    execctx::ExecContext,
+    expand::{
+        allocated_expand_string_for_file,
+        allocated_expand_variable,
+        install_variable_buffer,
+        recursively_expand_for_file,
+        swap_variable_buffer,
+    },
+    floc::Floc,
+    function::func_shell_base,
+    hash::{
+        hash_delete_at,
+        hash_deleted_item,
+        hash_find_item,
+        hash_find_slot,
+        hash_free,
+        hash_init,
+        hash_insert_at,
+        hash_map,
+        hash_map_arg,
+        hash_print_stats,
+        jhash,
+    },
+    job::default_shell,
+    misc::{concat, cstr_bytes_or_empty},
+    output::{fatal_err, msg},
+    posixos::jobserver_get_invalid_auth,
+    strcache::strcache_add,
 };
-use crate::floc::Floc;
-use crate::function::func_shell_base;
-use crate::hash::{
-    hash_delete_at, hash_deleted_item, hash_find_item, hash_find_slot, hash_free, hash_init,
-    hash_insert_at, hash_map, hash_map_arg, hash_print_stats, jhash,
-};
-use crate::job::default_shell;
-use crate::make_main::stopchar_map;
-use crate::misc::{concat, cstr_bytes_or_empty};
-use crate::output::fatal_err;
-use crate::output::msg;
-use crate::posixos::jobserver_get_invalid_auth;
-use crate::strcache::strcache_add;
 
 pub const o_invalid: variable_origin = 7;
 pub const o_automatic: variable_origin = 6;
@@ -81,27 +97,100 @@ pub const o_env_override: variable_origin = 3;
 pub const o_file: variable_origin = 2;
 pub const o_env: variable_origin = 1;
 pub const o_default: variable_origin = 0;
-#[derive(Copy, Clone, BitfieldStruct)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct variable {
     pub name: *mut ::core::ffi::c_char,
     pub value: *mut ::core::ffi::c_char,
     pub fileinfo: Floc,
     pub length: ::core::ffi::c_uint,
-    #[bitfield(name = "recursive", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    #[bitfield(name = "append", ty = "::core::ffi::c_uint", bits = "1..=1")]
-    #[bitfield(name = "conditional", ty = "::core::ffi::c_uint", bits = "2..=2")]
-    #[bitfield(name = "per_target", ty = "::core::ffi::c_uint", bits = "3..=3")]
-    #[bitfield(name = "special", ty = "::core::ffi::c_uint", bits = "4..=4")]
-    #[bitfield(name = "exportable", ty = "::core::ffi::c_uint", bits = "5..=5")]
-    #[bitfield(name = "expanding", ty = "::core::ffi::c_uint", bits = "6..=6")]
-    #[bitfield(name = "private_var", ty = "::core::ffi::c_uint", bits = "7..=7")]
-    #[bitfield(name = "exp_count", ty = "::core::ffi::c_uint", bits = "8..=22")]
-    #[bitfield(name = "flavor", ty = "variable_flavor", bits = "23..=25")]
-    #[bitfield(name = "origin", ty = "variable_origin", bits = "26..=28")]
-    #[bitfield(name = "export", ty = "variable_export", bits = "29..=30")]
-    pub recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export:
-        [u8; 4],
+    pub(crate) recursive: ::core::ffi::c_uint,
+    pub(crate) append: ::core::ffi::c_uint,
+    pub(crate) conditional: ::core::ffi::c_uint,
+    pub(crate) per_target: ::core::ffi::c_uint,
+    pub(crate) special: ::core::ffi::c_uint,
+    pub(crate) exportable: ::core::ffi::c_uint,
+    pub(crate) expanding: ::core::ffi::c_uint,
+    pub(crate) private_var: ::core::ffi::c_uint,
+    pub(crate) exp_count: ::core::ffi::c_uint,
+    pub(crate) flavor: variable_flavor,
+    pub(crate) origin: variable_origin,
+    pub(crate) export: variable_export,
+}
+
+impl variable {
+    pub fn recursive(&self) -> ::core::ffi::c_uint {
+        self.recursive
+    }
+    pub fn set_recursive(&mut self, val: ::core::ffi::c_uint) {
+        self.recursive = val;
+    }
+    pub fn append(&self) -> ::core::ffi::c_uint {
+        self.append
+    }
+    pub fn set_append(&mut self, val: ::core::ffi::c_uint) {
+        self.append = val;
+    }
+    pub fn conditional(&self) -> ::core::ffi::c_uint {
+        self.conditional
+    }
+    pub fn set_conditional(&mut self, val: ::core::ffi::c_uint) {
+        self.conditional = val;
+    }
+    pub fn per_target(&self) -> ::core::ffi::c_uint {
+        self.per_target
+    }
+    pub fn set_per_target(&mut self, val: ::core::ffi::c_uint) {
+        self.per_target = val;
+    }
+    pub fn special(&self) -> ::core::ffi::c_uint {
+        self.special
+    }
+    pub fn set_special(&mut self, val: ::core::ffi::c_uint) {
+        self.special = val;
+    }
+    pub fn exportable(&self) -> ::core::ffi::c_uint {
+        self.exportable
+    }
+    pub fn set_exportable(&mut self, val: ::core::ffi::c_uint) {
+        self.exportable = val;
+    }
+    pub fn expanding(&self) -> ::core::ffi::c_uint {
+        self.expanding
+    }
+    pub fn set_expanding(&mut self, val: ::core::ffi::c_uint) {
+        self.expanding = val;
+    }
+    pub fn private_var(&self) -> ::core::ffi::c_uint {
+        self.private_var
+    }
+    pub fn set_private_var(&mut self, val: ::core::ffi::c_uint) {
+        self.private_var = val;
+    }
+    pub fn exp_count(&self) -> ::core::ffi::c_uint {
+        self.exp_count
+    }
+    pub fn set_exp_count(&mut self, val: ::core::ffi::c_uint) {
+        self.exp_count = val;
+    }
+    pub fn flavor(&self) -> variable_flavor {
+        self.flavor
+    }
+    pub fn set_flavor(&mut self, val: variable_flavor) {
+        self.flavor = val;
+    }
+    pub fn origin(&self) -> variable_origin {
+        self.origin
+    }
+    pub fn set_origin(&mut self, val: variable_origin) {
+        self.origin = val;
+    }
+    pub fn export(&self) -> variable_export {
+        self.export
+    }
+    pub fn set_export(&mut self, val: variable_export) {
+        self.export = val;
+    }
 }
 pub type variable_export = ::core::ffi::c_uint;
 pub const v_ifset: variable_export = 3;
@@ -278,7 +367,18 @@ fn c_variable_from_target(tv: &TargetVariable) -> (variable, Vec<u8>, Vec<u8>, O
             offset: 0,
         },
         length: tv.name.len() as ::core::ffi::c_uint,
-        recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
+        recursive: 0,
+        append: 0,
+        conditional: 0,
+        per_target: 0,
+        special: 0,
+        exportable: 0,
+        expanding: 0,
+        private_var: 0,
+        exp_count: 0,
+        flavor: 0,
+        origin: 0,
+        export: 0,
     };
     v.set_flavor(tv.flavor as i32 as variable_flavor);
     v.set_origin(tv.origin as i32 as variable_origin);
@@ -565,7 +665,7 @@ unsafe fn redefine_existing(
     recursive: i32,
     flocp: *const Floc,
 ) {
-    if crate::make_main::env_overrides(ctx) && vr.origin() as i32 == o_env as i32 {
+    if crate::entry::env_overrides(ctx) && vr.origin() as i32 == o_env as i32 {
         vr.set_origin(o_env_override as variable_origin);
     }
     if origin as i32 >= vr.origin() as i32 {
@@ -633,7 +733,18 @@ pub unsafe fn define_variable_in_set(
             offset: 0,
         },
         length: 0,
-        recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
+        recursive: 0,
+        append: 0,
+        conditional: 0,
+        per_target: 0,
+        special: 0,
+        exportable: 0,
+        expanding: 0,
+        private_var: 0,
+        exp_count: 0,
+        flavor: 0,
+        origin: 0,
+        export: 0,
     };
     check_valid_name(ctx, flocp, name, length)?;
     // Route SET through a checked reference; null means the global set.
@@ -652,7 +763,7 @@ pub unsafe fn define_variable_in_set(
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut *mut variable;
     v = *var_slot;
-    if crate::make_main::env_overrides(ctx)
+    if crate::entry::env_overrides(ctx)
         && origin as ::core::ffi::c_uint == o_env as i32 as ::core::ffi::c_uint
     {
         origin = o_env_override;
@@ -772,7 +883,18 @@ pub unsafe fn undefine_variable_in_set(
             offset: 0,
         },
         length: 0,
-        recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
+        recursive: 0,
+        append: 0,
+        conditional: 0,
+        per_target: 0,
+        special: 0,
+        exportable: 0,
+        expanding: 0,
+        private_var: 0,
+        exp_count: 0,
+        flavor: 0,
+        origin: 0,
+        export: 0,
     };
     check_valid_name(ctx, flocp, name, length)?;
     // Route SET through a checked reference; null means the global set.
@@ -790,7 +912,7 @@ pub unsafe fn undefine_variable_in_set(
         &raw mut set.table,
         &raw mut var_key as *const ::core::ffi::c_void,
     ) as *mut *mut variable;
-    if crate::make_main::env_overrides(ctx)
+    if crate::entry::env_overrides(ctx)
         && origin as ::core::ffi::c_uint == o_env as i32 as ::core::ffi::c_uint
     {
         origin = o_env_override;
@@ -799,7 +921,7 @@ pub unsafe fn undefine_variable_in_set(
     if !(v.is_null()
         || v as *mut ::core::ffi::c_void == hash_deleted_item as *mut ::core::ffi::c_void)
     {
-        if crate::make_main::env_overrides(ctx) && (*v).origin() as i32 == o_env as i32 {
+        if crate::entry::env_overrides(ctx) && (*v).origin() as i32 == o_env as i32 {
             (*v).set_origin(o_env_override as variable_origin);
         }
         if origin as i32 >= (*v).origin() as i32 {
@@ -943,7 +1065,18 @@ unsafe fn search_variable_set_list(
             offset: 0,
         },
         length: length as ::core::ffi::c_uint,
-        recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
+        recursive: 0,
+        append: 0,
+        conditional: 0,
+        per_target: 0,
+        special: 0,
+        exportable: 0,
+        expanding: 0,
+        private_var: 0,
+        exp_count: 0,
+        flavor: 0,
+        origin: 0,
+        export: 0,
     };
     let mut is_parent: i32 = 0;
     let mut setlist: *const variable_set_list =
@@ -985,7 +1118,18 @@ pub unsafe fn lookup_variable_in_set(
             offset: 0,
         },
         length: 0,
-        recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
+        recursive: 0,
+        append: 0,
+        conditional: 0,
+        per_target: 0,
+        special: 0,
+        exportable: 0,
+        expanding: 0,
+        private_var: 0,
+        exp_count: 0,
+        flavor: 0,
+        origin: 0,
+        export: 0,
     };
     check_variable_reference(ctx, name, length)?;
     var_key.name = name as *mut ::core::ffi::c_char;
@@ -1720,10 +1864,10 @@ fn should_export_decision(
 /// Safe wrapper over [`should_export_decision`]: it borrows the variable and
 /// returns a plain `bool`. The `export_all_variables` flag is read from the
 /// owned `Options` through the `with_options` borrow channel
-/// ([`crate::make_main::opt_export_all_variables`]), so this is fully safe —
+/// ([`crate::entry::opt_export_all_variables`]), so this is fully safe —
 /// no `unsafe` and no global remain.
 pub fn should_export(ctx: &crate::execctx::ExecContext, v: &variable) -> bool {
-    let export_all = crate::make_main::opt_export_all_variables(ctx);
+    let export_all = crate::entry::opt_export_all_variables(ctx);
     should_export_decision(v.export(), v.origin(), v.exportable() != 0, export_all)
 }
 /// # Safety
@@ -1762,8 +1906,7 @@ pub unsafe fn target_environment(
         ht_collisions: 0,
         ht_lookups: 0,
         ht_rehashes: 0,
-        ht_in_map: [0; 1],
-        c2rust_padding: [0; 3],
+        ht_in_map: 0,
     };
     let mut v_slot: *mut *mut variable;
     let mut v_end: *mut *mut variable;
@@ -1779,7 +1922,7 @@ pub unsafe fn target_environment(
             .0
             .fetch_add(1, ::std::sync::atomic::Ordering::Relaxed);
     }
-    if recursive == 0 && crate::make_main::opt_jobserver_auth_present(ctx) {
+    if recursive == 0 && crate::entry::opt_jobserver_auth_present(ctx) {
         invalid = jobserver_get_invalid_auth(ctx);
     }
     if file.is_some() {
@@ -2093,7 +2236,7 @@ unsafe fn set_special_var(
                 (b"MAKEFLAGS\0" as *const u8 as *const ::core::ffi::c_char).offset(1_i32 as isize),
             ) == 0)
     {
-        crate::make_main::reset_makeflags(ctx, &ctx.options, origin)?;
+        crate::entry::reset_makeflags(ctx, &ctx.options, origin)?;
     } else if vn0 == *(b".RECIPEPREFIX\0" as *const u8 as *const ::core::ffi::c_char) as i32
         && (vn0 == 0
             || strcmp(
@@ -2107,7 +2250,7 @@ unsafe fn set_special_var(
         } else {
             *varr.value.offset(0_i32 as isize) as i32
         }) as ::core::ffi::c_char;
-        crate::make_main::with_options(ctx, |o| o.cmd_prefix.set(new_prefix));
+        crate::entry::with_options(ctx, |o| o.cmd_prefix.set(new_prefix));
     } else if vn0 == *(b".WARNINGS\0" as *const u8 as *const ::core::ffi::c_char) as i32
         && (vn0 == 0
             || strcmp(
@@ -2487,7 +2630,18 @@ pub unsafe fn try_variable_definition(
             offset: 0,
         },
         length: 0,
-        recursive_append_conditional_per_target_special_exportable_expanding_private_var_exp_count_flavor_origin_export: [0; 4],
+        recursive: 0,
+        append: 0,
+        conditional: 0,
+        per_target: 0,
+        special: 0,
+        exportable: 0,
+        expanding: 0,
+        private_var: 0,
+        exp_count: 0,
+        flavor: 0,
+        origin: 0,
+        export: 0,
     };
     // SAFETY: dereference `flocp` only behind the null check; `as_ref` yields a
     // checked reference so the read is provably valid. The `None` arm keeps the
@@ -2734,12 +2888,12 @@ unsafe fn set_env_override(item: *const ::core::ffi::c_void, arg: *mut ::core::f
     // hash-table walk directly).
     let ctx = &*(arg as *const crate::execctx::ExecContext);
     let v: *mut variable = item as *mut variable;
-    let old: variable_origin = (if crate::make_main::env_overrides(ctx) {
+    let old: variable_origin = (if crate::entry::env_overrides(ctx) {
         o_env as i32
     } else {
         o_env_override as i32
     }) as variable_origin;
-    let new: variable_origin = (if crate::make_main::env_overrides(ctx) {
+    let new: variable_origin = (if crate::entry::env_overrides(ctx) {
         o_env_override as i32
     } else {
         o_env as i32
@@ -2980,8 +3134,16 @@ pub fn print_target_variables(ctx: &ExecContext, file: FileId) {
 #[cfg(test)]
 mod should_export_tests {
     use super::{
-        o_automatic, o_command, o_default, o_env, o_env_override, should_export_decision,
-        v_default, v_export, v_ifset, v_noexport,
+        o_automatic,
+        o_command,
+        o_default,
+        o_env,
+        o_env_override,
+        should_export_decision,
+        v_default,
+        v_export,
+        v_ifset,
+        v_noexport,
     };
 
     #[test]
@@ -3031,12 +3193,28 @@ mod should_export_tests {
 /// with the original c2rust unsafe implementation across every relevant input.
 #[cfg(test)]
 mod should_export_unsafe_oracle {
-    use super::{
-        o_automatic, o_command, o_default, o_env, o_env_override, o_file, o_invalid, o_override,
-        should_export, should_export_decision, v_default, v_export, v_ifset, v_noexport, variable,
-        variable_export, variable_origin,
+    use {
+        super::{
+            o_automatic,
+            o_command,
+            o_default,
+            o_env,
+            o_env_override,
+            o_file,
+            o_invalid,
+            o_override,
+            should_export,
+            should_export_decision,
+            v_default,
+            v_export,
+            v_ifset,
+            v_noexport,
+            variable,
+            variable_export,
+            variable_origin,
+        },
+        crate::entry::{install_default_exec_context_for_test, with_options},
     };
-    use crate::make_main::{install_default_exec_context_for_test, with_options};
 
     /// Original c2rust implementation, preserved as the behavioral oracle (raw
     /// `*const variable`, `i32` result). The `export_all_variables` flag now
@@ -3094,8 +3272,8 @@ mod should_export_unsafe_oracle {
                         let safe = should_export(ctx, &v) as i32;
                         assert_eq!(
                             safe, oracle,
-                            "mismatch: export={export} origin={origin} \
-                             exportable={exportable} export_all={export_all}"
+                            "mismatch: export={export} origin={origin} exportable={exportable} \
+                             export_all={export_all}"
                         );
                     }
                 }
@@ -3108,8 +3286,7 @@ mod should_export_unsafe_oracle {
 
 #[cfg(test)]
 mod env_recursion_tests {
-    use super::env_recursion;
-    use std::sync::atomic::Ordering;
+    use {super::env_recursion, std::sync::atomic::Ordering};
 
     /// `env_recursion()` is a plain load of `ctx.env_recursion`, so it agrees
     /// with a direct load. Each test gets its own `ExecContext`, so this
@@ -3137,9 +3314,7 @@ mod env_recursion_tests {
 
 #[cfg(test)]
 mod initialize_file_variables_tests {
-    use super::initialize_file_variables;
-    use crate::file::enter_file;
-    use std::sync::Mutex;
+    use {super::initialize_file_variables, crate::file::enter_file, std::sync::Mutex};
 
     // The pattern-var database / global sets are process-wide; serialize so
     // these tests don't race other variable-layer tests.
@@ -3150,7 +3325,7 @@ mod initialize_file_variables_tests {
     #[test]
     fn reading_nonzero_skips_pattern_search() {
         let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         let f = enter_file(&ctx, b"ifv_probe_target");
         initialize_file_variables(&ctx, f, 1).expect("initialize_file_variables rejected");
@@ -3167,7 +3342,7 @@ mod initialize_file_variables_tests {
     #[test]
     fn reading_zero_runs_pattern_search_and_latches() {
         let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         let f = enter_file(&ctx, b"ifv_reading0_unmatched_probe");
         {
@@ -3187,7 +3362,7 @@ mod initialize_file_variables_tests {
     #[test]
     fn pattern_search_runs_at_most_once() {
         let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         let f = enter_file(&ctx, b"ifv_probe_once");
         initialize_file_variables(&ctx, f, 0).expect("initialize_file_variables rejected");
@@ -3208,7 +3383,7 @@ mod initialize_file_variables_tests {
     #[test]
     fn rejected_pattern_variable_propagates_and_restores_the_scope() {
         let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: the pattern-var database and the function table are the
         // legacy pointer machinery; every string handed across is a
@@ -3254,7 +3429,7 @@ mod initialize_file_variables_tests {
     #[test]
     fn parent_chains_into_parent_scope() {
         let _g = GLOBAL_VARS_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         let parent = enter_file(&ctx, b"ifv_parent_probe");
         let child = enter_file(&ctx, b"ifv_child_probe");
@@ -3297,7 +3472,7 @@ mod assign_variable_definition_tests {
     fn rejects_non_definition_line() {
         // The assignment parser keys off the global stopchar map to find the
         // line terminator; initialize it first (idempotent) so the scan stops.
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: `assign_variable_definition` is the c2rust raw-pointer API. We
         // pass a freshly zeroed `variable` and a valid NUL-terminated line,
@@ -3320,7 +3495,7 @@ mod assign_variable_definition_tests {
     /// is why it sat uncovered.
     #[test]
     fn rejects_empty_variable_name() {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let _g = crate::expand::VARIABLE_BUFFER_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -3347,7 +3522,7 @@ mod assign_variable_definition_tests {
     /// so the rejection above is about the empty name and nothing else.
     #[test]
     fn accepts_named_definition() {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let _g = crate::expand::VARIABLE_BUFFER_TEST_LOCK
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -3372,8 +3547,7 @@ mod assign_variable_definition_tests {
 
 #[cfg(test)]
 mod variable_cmp_tests {
-    use super::*;
-    use ::core::cmp::Ordering;
+    use {super::*, ::core::cmp::Ordering};
 
     /// Verbatim preservation of the original raw-pointer `variable_hash_cmp`
     /// callback, retained as a differential oracle per the project rule for
@@ -3533,13 +3707,14 @@ mod shell_assignment_tests {
     //! output, so the swap back has to happen on the rejection path too (the
     //! cleanup-paths contract from #561).
 
-    use super::shell_result;
-    use crate::build_result::BuildError;
-    use crate::expand::VARIABLE_BUFFER_TEST_LOCK;
-    use std::ffi::CString;
+    use {
+        super::shell_result,
+        crate::{build_result::BuildError, expand::VARIABLE_BUFFER_TEST_LOCK},
+        std::ffi::CString,
+    };
 
     fn fresh_ctx() -> crate::execctx::ExecContext {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: fresh context; each table is initialized once.
         unsafe {
@@ -3597,13 +3772,17 @@ mod var_name_rejection_tests {
     //! variable layer: `lookup_variable` and `lookup_variable_in_set` hand the
     //! rejection back to whichever expansion frame asked for the name.
 
-    use super::{lookup_variable, lookup_variable_in_set};
-    use crate::build_result::BuildError;
-    use crate::warning::{Action, Type};
-    use std::ffi::CString;
+    use {
+        super::{lookup_variable, lookup_variable_in_set},
+        crate::{
+            build_result::BuildError,
+            warning::{Action, Type},
+        },
+        std::ffi::CString,
+    };
 
     fn fresh_ctx() -> crate::execctx::ExecContext {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: fresh context; each table is initialized once.
         unsafe {
@@ -3737,12 +3916,10 @@ mod special_var_rejection_tests {
     //! `MAKEFLAGS` travels back out through `do_variable_definition` instead
     //! of ending the process from inside the variable layer.
 
-    use super::set_special_var;
-    use crate::build_result::BuildError;
-    use std::ffi::CString;
+    use {super::set_special_var, crate::build_result::BuildError, std::ffi::CString};
 
     fn fresh_ctx() -> crate::execctx::ExecContext {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: fresh context; each table is initialized once.
         unsafe {

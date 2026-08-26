@@ -6,15 +6,21 @@
 //! Port of `dir.c`.
 
 pub use crate::ffi_types::{__ino_t, __off_t, __size_t, dev_t, ino_t, size_t, time_t};
-use crate::floc::Floc;
-use crate::make_main::db_level;
-use crate::misc::xrealloc;
-use crate::output::{fatal_err, FmtArg};
-use crate::strcache::strcache_add_len;
+use crate::{
+    entry::db_level,
+    floc::Floc,
+    misc::xrealloc,
+    output::{fatal_err, FmtArg},
+    strcache::strcache_add_len,
+};
 
-use ::core::ffi::{c_char, c_long, c_uchar, c_uint, c_ushort, c_void};
-use ::core::ptr::{null, null_mut};
-use rustc_hash::FxHashMap;
+use {
+    ::core::{
+        ffi::{c_char, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void},
+        ptr::{null, null_mut},
+    },
+    rustc_hash::FxHashMap,
+};
 
 use libc::{__errno_location, closedir, memcpy, opendir, readdir, strerror, strlen, DIR, EINTR};
 
@@ -145,7 +151,7 @@ pub unsafe fn find_directory(
                 Some(dc) => dc.counter,
                 None => boxed.counter,
             };
-            if ctr == crate::make_main::opt_command_count(ctx) {
+            if ctr == crate::entry::opt_command_count(ctx) {
                 // Valid hit. The `Box` keeps the entry at a stable heap address,
                 // so this raw pointer outlives the released map borrow.
                 return Ok((&mut **boxed) as *mut directory);
@@ -157,9 +163,7 @@ pub unsafe fn find_directory(
                     b" cache invalidated (count ",
                     ctr.to_string().as_bytes(),
                     b" != command ",
-                    crate::make_main::opt_command_count(ctx)
-                        .to_string()
-                        .as_bytes(),
+                    crate::entry::opt_command_count(ctx).to_string().as_bytes(),
                     b")\n",
                 ]);
             }
@@ -179,7 +183,7 @@ pub unsafe fn find_directory(
     };
     let dir_ref = dir.as_mut().expect("directory entry just selected");
     dir_ref.contents = null_mut();
-    dir_ref.counter = crate::make_main::opt_command_count(ctx);
+    dir_ref.counter = crate::entry::opt_command_count(ctx);
 
     let mut st: stat = ::core::mem::zeroed();
     let mut r;
@@ -219,11 +223,11 @@ pub unsafe fn find_directory(
     let dc = dc.as_mut().expect("DirectoryContents entry just selected");
     dir_ref.contents = dc;
 
-    if dc.counter != crate::make_main::opt_command_count(ctx) {
+    if dc.counter != crate::entry::opt_command_count(ctx) {
         if dc.counter != 0 {
             clear_directory_contents(ctx, dc);
         }
-        dc.counter = crate::make_main::opt_command_count(ctx);
+        dc.counter = crate::entry::opt_command_count(ctx);
         loop {
             *__errno_location() = 0;
             dc.dirstream = opendir(name);
@@ -687,7 +691,7 @@ extern "C" fn open_dirstream(directory: *const c_char) -> *mut c_void {
     // whole body's verdict bridges once, here, rather than at each fallible
     // call inside it. This is the one site in this cone that keeps bridging
     // (#432 Phase B, #539).
-    crate::make_main::with_exec_context(|ctx| unsafe { open_dirstream_cached(ctx, directory) })
+    crate::entry::with_exec_context(|ctx| unsafe { open_dirstream_cached(ctx, directory) })
         .unwrap_or_else(|e| crate::output::exit_on_err(e))
 }
 
@@ -744,7 +748,7 @@ pub extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
     // callback's C-ABI signature cannot carry an `&ExecContext`, so it reaches
     // the live context through the `CTX_PTR` borrow channel, exactly as the
     // sibling `gl_opendir` callback `open_dirstream` does.
-    crate::make_main::with_exec_context(|ctx| unsafe {
+    crate::entry::with_exec_context(|ctx| unsafe {
         let ds = (stream as *mut DirStream)
             .as_mut()
             .expect("read_dirstream: null stream");
@@ -875,8 +879,10 @@ mod split_dir_unsafe_oracle {
     //! verbatim c2rust-era pointer implementation as a differential oracle and
     //! asserts the safe `&CStr` version produces the identical dirname buffer
     //! and basename bytes (AGENTS rule 3).
-    use super::{split_dir, split_dir_parts};
-    use ::core::ffi::{c_char, CStr};
+    use {
+        super::{split_dir, split_dir_parts},
+        ::core::ffi::{c_char, CStr},
+    };
 
     /// Verbatim pre-conversion implementation: returns the owned dirname buffer,
     /// a pointer into it, and the basename via `name.add(base_off)`.
@@ -903,11 +909,13 @@ mod split_dir_unsafe_oracle {
                     "basename for {name:?}"
                 );
             }
-            (s, o) => panic!(
-                "split_dir disagreed on {name:?}: safe.is_some()={}, oracle.is_some()={}",
-                s.is_some(),
-                o.is_some()
-            ),
+            (s, o) => {
+                panic!(
+                    "split_dir disagreed on {name:?}: safe.is_some()={}, oracle.is_some()={}",
+                    s.is_some(),
+                    o.is_some()
+                )
+            }
         }
     }
 

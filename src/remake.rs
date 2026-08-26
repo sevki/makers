@@ -1,15 +1,44 @@
 pub use crate::ffi_types::{
-    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
-    __syscall_slong_t, __time_t, __uid_t, off_t, size_t, ssize_t, time_t, uintmax_t,
+    __blkcnt_t,
+    __blksize_t,
+    __dev_t,
+    __gid_t,
+    __ino_t,
+    __mode_t,
+    __nlink_t,
+    __off64_t,
+    __off_t,
+    __syscall_slong_t,
+    __time_t,
+    __uid_t,
+    off_t,
+    size_t,
+    ssize_t,
+    time_t,
+    uintmax_t,
 };
-use crate::file::{
-    cs_deps_running, cs_finished, cs_not_started, cs_running, us_failed, us_none, us_question,
-    us_success, CommandState, UpdateStatus, VariableSet, VariableSetList,
+use {
+    crate::{
+        file::{
+            cs_deps_running,
+            cs_finished,
+            cs_not_started,
+            cs_running,
+            us_failed,
+            us_none,
+            us_question,
+            us_success,
+            CommandState,
+            UpdateStatus,
+            VariableSet,
+            VariableSetList,
+        },
+        misc::{find_next_token, print_spaces},
+        output::FmtArg,
+        strcache::strcache_add,
+    },
+    libc::{__errno_location, close, free, open, sprintf, strcmp, strcpy, strerror, strrchr},
 };
-use crate::misc::{find_next_token, print_spaces};
-use crate::output::FmtArg;
-use crate::strcache::strcache_add;
-use libc::{__errno_location, close, free, open, sprintf, strcmp, strcpy, strerror, strrchr};
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
     fn fstat(__fd: i32, __buf: *mut stat) -> i32;
@@ -35,8 +64,7 @@ extern "C" {
 unsafe fn lseek(_fd: i32, _offset: __off_t, _whence: i32) -> __off_t {
     -1
 }
-pub use crate::sys_stat::stat;
-pub use crate::sys_stat::timespec;
+pub use crate::sys_stat::{stat, timespec};
 use crate::warning::{self, Action, Type};
 pub type variable_set_list = VariableSetList;
 pub type variable_set = VariableSet;
@@ -45,21 +73,28 @@ pub type hash_cmp_func_t = crate::hash::hash_cmp_func_t;
 pub type hash_func_t = crate::hash::hash_func_t;
 use crate::floc::Floc;
 
-use crate::ar::{ar_member_date, ar_name_err, ar_touch, ParsedArName};
-use crate::commands::{chop_commands, execute_file_commands};
-use crate::expand::{allocated_expand_variable, variable_buffer_output};
-pub use crate::file::nameseq;
-use crate::file::{
-    enter_file, expand_deps, file_timestamp_cons, file_timestamp_now, lookup_file, rehash_file,
-    rename_file, system_time_from_unix,
+use crate::{
+    ar::{ar_member_date, ar_name_err, ar_touch, ParsedArName},
+    commands::{chop_commands, execute_file_commands},
+    entry::{db_level, opt_rebuilding_makefiles, second_expansion},
+    expand::{allocated_expand_variable, variable_buffer_output},
+    file::{
+        enter_file,
+        expand_deps,
+        file_timestamp_cons,
+        file_timestamp_now,
+        lookup_file,
+        rehash_file,
+        rename_file,
+        system_time_from_unix,
+    },
+    implicit::try_implicit_rule,
+    job::{reap_children, start_waiting_jobs},
+    output::{error, message, perror_with_name},
+    read::find_percent,
+    vpath::{gpath_search, vpath_search},
 };
-use crate::implicit::try_implicit_rule;
-use crate::job::{reap_children, start_waiting_jobs};
-use crate::make_main::{db_level, opt_rebuilding_makefiles, second_expansion};
-use crate::output::{error, message, perror_with_name};
-use crate::read::find_percent;
-pub use crate::read::goaldep;
-use crate::vpath::{gpath_search, vpath_search};
+pub use crate::{file::nameseq, read::goaldep};
 pub const __S_IFMT: i32 = 0o170000_i32;
 pub const ENOENT: i32 = 2;
 pub const EINTR: i32 = 4;
@@ -89,9 +124,11 @@ pub const ORDINARY_MTIME_MIN: i32 = OLD_MTIME + 1;
 //     `Vec<DepNode>` by index.
 pub const DROPPED_LIST_INCR: i32 = 5;
 
-use crate::dep::{DepFlags, DepNode, GoalDepNode};
-use crate::file::{FileId, FileNode};
-use crate::recipe::RecipeLineFlags;
+use crate::{
+    dep::{DepFlags, DepNode, GoalDepNode},
+    file::{FileId, FileNode},
+    recipe::RecipeLineFlags,
+};
 
 /// Walk the `renamed` chain from `id` to the live node, collecting ids so no
 /// `FileNode` guard is held across an arena lookup. Returns the final id (the
@@ -193,7 +230,7 @@ fn new_mtime() -> uintmax_t {
     })
 }
 
-/// Read the debug level via the `make_main` accessor.
+/// Read the debug level via the `entry` accessor.
 #[inline]
 /// `-d` trace line `<pre><name><post>`, where `name` is a `cname`-style
 /// NUL-terminated buffer (the NUL is dropped) — one printf `%s` site.
@@ -238,10 +275,12 @@ pub fn check_also_make(ctx: &crate::execctx::ExecContext, file: FileId) {
             return;
         };
         let n = node.lock().expect("file node lock poisoned");
-        let floc = n.recipe.as_ref().map(|r| Floc {
-            filenm: ::core::ptr::null(),
-            lineno: r.defined_lineno,
-            offset: 0,
+        let floc = n.recipe.as_ref().map(|r| {
+            Floc {
+                filenm: ::core::ptr::null(),
+                lineno: r.defined_lineno,
+                offset: 0,
+            }
         });
         let peers = n
             .also_make
@@ -307,9 +346,9 @@ pub fn update_goal_chain(
     goaldeps: &mut Vec<GoalDepNode>,
 ) -> Result<UpdateStatus, crate::build_result::BuildError> {
     let mut last_cmd_count: u64 = 0;
-    let t: bool = crate::make_main::opt_touch(ctx);
-    let q: bool = crate::make_main::opt_question(ctx);
-    let n: bool = crate::make_main::opt_just_print(ctx);
+    let t: bool = crate::entry::opt_touch(ctx);
+    let q: bool = crate::entry::opt_question(ctx);
+    let n: bool = crate::entry::opt_just_print(ctx);
     let mut status: UpdateStatus = us_none;
     let depth: ::core::ffi::c_uint =
         (if opt_rebuilding_makefiles(ctx) { 1 } else { 0 }) as ::core::ffi::c_uint;
@@ -331,11 +370,11 @@ pub fn update_goal_chain(
             start_waiting_jobs(ctx)?;
             reap_children(
                 ctx,
-                (last_cmd_count == crate::make_main::opt_command_count(ctx)) as i32,
+                (last_cmd_count == crate::entry::opt_command_count(ctx)) as i32,
                 0,
             )?;
         }
-        last_cmd_count = crate::make_main::opt_command_count(ctx);
+        last_cmd_count = crate::entry::opt_command_count(ctx);
         // Walk the goals by index; finished goals are removed from `goals`.
         let mut gi = 0usize;
         while gi < goals.len() {
@@ -365,13 +404,13 @@ pub fn update_goal_chain(
                 .unwrap_or(false);
             if opt_rebuilding_makefiles(ctx) {
                 if cmd_target {
-                    crate::make_main::set_touch_mirror(ctx, t);
-                    crate::make_main::set_question_mirror(ctx, q);
-                    crate::make_main::set_just_print_mirror(ctx, n);
+                    crate::entry::set_touch_mirror(ctx, t);
+                    crate::entry::set_question_mirror(ctx, q);
+                    crate::entry::set_just_print_mirror(ctx, n);
                 } else {
-                    crate::make_main::set_just_print_mirror(ctx, false);
-                    crate::make_main::set_question_mirror(ctx, false);
-                    crate::make_main::set_touch_mirror(ctx, false);
+                    crate::entry::set_just_print_mirror(ctx, false);
+                    crate::entry::set_question_mirror(ctx, false);
+                    crate::entry::set_touch_mirror(ctx, false);
                 }
             }
             let ocommands_started = ctx.commands_started.get();
@@ -427,8 +466,8 @@ pub fn update_goal_chain(
             {
                 if ustatus as u64 != 0 {
                     status = ustatus;
-                    stop = (crate::make_main::opt_question(ctx)
-                        && !crate::make_main::opt_keep_going(ctx)
+                    stop = (crate::entry::opt_question(ctx)
+                        && !crate::entry::opt_keep_going(ctx)
                         && !opt_rebuilding_makefiles(ctx)) as i32;
                 } else {
                     let mtime: uintmax_t = if opt_rebuilding_makefiles(ctx) {
@@ -444,8 +483,8 @@ pub fn update_goal_chain(
                     };
                     if updated && mtime != mtime_before_update {
                         if !opt_rebuilding_makefiles(ctx)
-                            || !crate::make_main::opt_just_print(ctx)
-                                && !crate::make_main::opt_question(ctx)
+                            || !crate::entry::opt_just_print(ctx)
+                                && !crate::entry::opt_question(ctx)
                         {
                             status = UpdateStatus::Success;
                         }
@@ -468,8 +507,8 @@ pub fn update_goal_chain(
                 if !opt_rebuilding_makefiles(ctx)
                     && ustatus as i32 == us_success as i32
                     && !g_changed
-                    && !crate::make_main::opt_run_silent(ctx)
-                    && !crate::make_main::opt_question(ctx)
+                    && !crate::entry::opt_run_silent(ctx)
+                    && !crate::entry::opt_question(ctx)
                 {
                     let head_name = node_name(ctx, head);
                     let cn = cname(&head_name);
@@ -502,9 +541,9 @@ pub fn update_goal_chain(
         }
     }
     if opt_rebuilding_makefiles(ctx) {
-        crate::make_main::set_touch_mirror(ctx, t);
-        crate::make_main::set_question_mirror(ctx, q);
-        crate::make_main::set_just_print_mirror(ctx, n);
+        crate::entry::set_touch_mirror(ctx, t);
+        crate::entry::set_question_mirror(ctx, q);
+        crate::entry::set_just_print_mirror(ctx, n);
     }
     // `complain()` and `update_file_1`'s circular-dep check route through
     // `fatal_err`/`BuildError` and now propagate all the way up through
@@ -631,7 +670,7 @@ pub fn update_file(
         let new = update_file_1(ctx, file, depth, entry)?;
         // Follow any rename that happened.
         let live = follow_renamed(ctx, file);
-        if new as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going(ctx) {
+        if new as ::core::ffi::c_uint != 0 && !crate::entry::opt_keep_going(ctx) {
             return Ok(new);
         }
         let cs = ctx
@@ -705,7 +744,7 @@ pub fn complain(
         let m: *const ::core::ffi::c_char = b"%sNo rule to make target '%s', needed by '%s'%s\0"
             as *const u8 as *const ::core::ffi::c_char;
         unsafe {
-            if !crate::make_main::opt_keep_going(ctx) {
+            if !crate::entry::opt_keep_going(ctx) {
                 return Err(crate::output::fatal_err(
                     ctx,
                     NILF,
@@ -736,7 +775,7 @@ pub fn complain(
         let m_0: *const ::core::ffi::c_char =
             b"%sNo rule to make target '%s'%s\0" as *const u8 as *const ::core::ffi::c_char;
         unsafe {
-            if !crate::make_main::opt_keep_going(ctx) {
+            if !crate::entry::opt_keep_going(ctx) {
                 return Err(crate::output::fatal_err(
                     ctx,
                     NILF,
@@ -1108,8 +1147,7 @@ fn update_file_1(
                 deps[di].file = Some(dfile2);
                 // running: walk the dep's double-colon chain command_state.
                 running |= dep_chain_running(ctx, dfile2) as i32;
-                if dep_status as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going(ctx)
-                {
+                if dep_status as ::core::ffi::c_uint != 0 && !crate::entry::opt_keep_going(ctx) {
                     break 'amake;
                 }
                 if running == 0 {
@@ -1198,8 +1236,7 @@ fn update_file_1(
                 let dfile2 = follow_renamed(ctx, dfile);
                 new_deps[di].file = Some(dfile2);
                 running |= dep_chain_running(ctx, dfile2) as i32;
-                if dep_status as ::core::ffi::c_uint != 0 && !crate::make_main::opt_keep_going(ctx)
-                {
+                if dep_status as ::core::ffi::c_uint != 0 && !crate::entry::opt_keep_going(ctx) {
                     break;
                 }
                 if running == 0 {
@@ -1254,9 +1291,9 @@ fn update_file_1(
             trace_name(b"Giving up on target file '", &cn, b"'.\n");
         }
         if depth == 0
-            && crate::make_main::opt_keep_going(ctx)
-            && !crate::make_main::opt_just_print(ctx)
-            && !crate::make_main::opt_question(ctx)
+            && crate::entry::opt_keep_going(ctx)
+            && !crate::entry::opt_just_print(ctx)
+            && !crate::entry::opt_question(ctx)
         {
             unsafe {
                 error(
@@ -1473,7 +1510,7 @@ pub fn notice_finished_file(
             entry_node_mut(&mut g, entry).update_status
         })
         .unwrap_or(us_success);
-    if crate::make_main::opt_touch(ctx) && ustatus as i32 == us_success as i32 {
+    if crate::entry::opt_touch(ctx) && ustatus as i32 == us_success as i32 {
         // Touch unless every recipe line is recursive (RECURSE); one
         // non-recursive line means we touch.
         let mut should_touch = true;
@@ -1516,9 +1553,9 @@ pub fn notice_finished_file(
     }
     if ran != 0 && !file_phony || touched != 0 {
         let mut i_0: i32 = 0;
-        if (crate::make_main::opt_question(ctx)
-            || crate::make_main::opt_just_print(ctx)
-            || crate::make_main::opt_touch(ctx))
+        if (crate::entry::opt_question(ctx)
+            || crate::entry::opt_just_print(ctx)
+            || crate::entry::opt_touch(ctx))
             && has_recipe
         {
             i_0 = recipe_line_flags.len() as i32;
@@ -1609,7 +1646,7 @@ pub fn notice_finished_file(
             if ran != 0 && !ad_phony {
                 // lock: no guard held across f_mtime.
                 f_mtime(ctx, *adfile, false)?;
-                if crate::make_main::opt_just_print(ctx) {
+                if crate::entry::opt_just_print(ctx) {
                     if let Some(node) = ctx.filenodes.get(*adfile) {
                         node.lock().expect("file node lock poisoned").last_mtime = new_mtime();
                     }
@@ -1795,8 +1832,7 @@ pub fn check_dep(
                     }
                     let dfile2 = follow_renamed(ctx, dep_file);
                     deps[di].file = Some(dfile2);
-                    if dep_status as ::core::ffi::c_uint != 0
-                        && !crate::make_main::opt_keep_going(ctx)
+                    if dep_status as ::core::ffi::c_uint != 0 && !crate::entry::opt_keep_going(ctx)
                     {
                         break;
                     }
@@ -1837,7 +1873,7 @@ pub fn touch_file(
     let cn = cname(&name);
     let name_ptr = cn.as_ptr() as *const ::core::ffi::c_char;
     unsafe {
-        if !crate::make_main::opt_run_silent(ctx) {
+        if !crate::entry::opt_run_silent(ctx) {
             message(
                 ctx,
                 0,
@@ -1846,7 +1882,7 @@ pub fn touch_file(
                 &[FmtArg::Str(name_ptr)],
             );
         }
-        if crate::make_main::opt_just_print(ctx) {
+        if crate::entry::opt_just_print(ctx) {
             return Ok(us_success);
         }
         if ar_name_err(ctx, ::core::ffi::CStr::from_ptr(name_ptr))? {
@@ -2014,7 +2050,7 @@ pub fn remake_file(
                 chop_commands(ctx, recipe);
             }
         }
-        if !crate::make_main::opt_touch(ctx) || any_recurse {
+        if !crate::entry::opt_touch(ctx) || any_recurse {
             // lock: no guard held across execute_file_commands.
             return execute_file_commands(ctx, file, entry);
         }
@@ -2379,7 +2415,7 @@ pub unsafe fn name_mtime(
         );
         return NONEXISTENT_MTIME as uintmax_t;
     }
-    if crate::make_main::opt_check_symlink(ctx) && strlen(name) <= GET_PATH_MAX as size_t {
+    if crate::entry::opt_check_symlink(ctx) && strlen(name) <= GET_PATH_MAX as size_t {
         mtime = follow_symlink_mtime(ctx, name, mtime);
     }
     mtime
@@ -2645,9 +2681,7 @@ pub const FILE_TIMESTAMP_HI_RES: i32 = 1;
 
 #[cfg(test)]
 mod f_mtime_tests {
-    use super::*;
-    use crate::file::FileNode;
-    use std::io::Write;
+    use {super::*, crate::file::FileNode, std::io::Write};
 
     // Serialize tests that touch the process-wide file/strcache globals.
     static F_MTIME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -2715,7 +2749,7 @@ mod f_mtime_tests {
     #[test]
     fn f_mtime_missing_file_is_nonexistent() {
         let _g = F_MTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _ctx = crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::entry::install_default_exec_context_for_test();
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -2756,7 +2790,7 @@ mod f_mtime_tests {
     #[test]
     fn f_mtime_future_file_warns_and_sets_skew() {
         let _g = F_MTIME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _ctx = crate::make_main::install_default_exec_context_for_test();
+        let _ctx = crate::entry::install_default_exec_context_for_test();
         let (path, name) = make_temp_file();
         let future = std::time::SystemTime::now() + std::time::Duration::from_secs(10_000_000);
         let future_secs = future
@@ -2882,11 +2916,13 @@ mod touch_file_tests {
     //! travels back out to `notice_finished_file` instead of ending the
     //! process. These also give `touch_file` its first coverage.
 
-    use super::touch_file;
-    use crate::file::{enter_file, UpdateStatus};
+    use {
+        super::touch_file,
+        crate::file::{enter_file, UpdateStatus},
+    };
 
     fn fresh_ctx() -> crate::execctx::ExecContext {
-        crate::make_main::initialize_stopchar_map();
+        crate::entry::initialize_stopchar_map();
         let ctx = crate::execctx::ExecContext::default();
         // SAFETY: fresh context; each table is initialized once.
         unsafe {

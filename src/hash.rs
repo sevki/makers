@@ -24,7 +24,7 @@ pub type qsort_cmp_t = Option<unsafe extern "C" fn(*const c_void, *const c_void)
 
 /// An open-addressed (double-hashed) table of `void *` items. Deleted
 /// slots hold [`hash_deleted_item`]; empty slots hold null.
-#[derive(Copy, Clone, BitfieldStruct)]
+#[derive(Copy, Clone)]
 #[repr(C)]
 pub struct HashTable {
     pub ht_vec: *mut *mut c_void,
@@ -42,10 +42,17 @@ pub struct HashTable {
     pub ht_collisions: u64,
     pub ht_lookups: u64,
     pub ht_rehashes: c_uint,
-    #[bitfield(name = "ht_in_map", ty = "::core::ffi::c_uint", bits = "0..=0")]
-    pub ht_in_map: [u8; 1],
-    #[bitfield(padding)]
-    pub c2rust_padding: [u8; 3],
+    pub(crate) ht_in_map: c_uint,
+}
+
+impl HashTable {
+    pub fn ht_in_map(&self) -> c_uint {
+        self.ht_in_map
+    }
+
+    pub fn set_ht_in_map(&mut self, val: c_uint) {
+        self.ht_in_map = val;
+    }
 }
 
 pub const MAKE_TROUBLE: i32 = 1;

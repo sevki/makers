@@ -1,0 +1,88 @@
+package makers:introspection@0.1.0;
+
+/// Read-only view of the build graph, exported by the host (native `make`,
+/// Shape A) or re-exported by the outer runtime on `make`'s behalf (wasm
+/// guest, Shape B). Extensions import this interface; they never get a
+/// mutable handle onto the graph — this is the MVP scope from
+/// docs/wasm-extension-system.md: introspection only, no rule definition,
+/// no recipe execution.
+interface graph {
+    /// A single prerequisite edge, mirroring `DepNode`'s host-visible
+    /// fields. Flags not meaningful to a read-only consumer (e.g.
+    /// `wait-here`, internal scheduling flags) are omitted rather than
+    /// mapped 1:1 to the internal type. A dep names its target by string
+    /// rather than a numeric handle — the real host key (`FileId`) is a
+    /// 32-byte content hash, not a small int, and `find-file` already
+    /// resolves a name to a full record when a consumer needs one.
+    record dep {
+        name: string,
+        stem: option<string>,
+        is-explicit: bool,
+    }
+
+    /// A single target/file node, mirroring the host-visible fields of
+    /// `FileNode` (src/file.rs). Raw byte fields (`name`, `hname` in the
+    /// host) are exposed as `string`: WIT strings are Unicode, so
+    /// non-UTF-8 target names round-trip as WTF-8 the same way the host's
+    /// `String::from_utf8_lossy` display path already does; introspection
+    /// is not the byte-exact path (recipe execution, if ever added, would
+    /// need its own byte-accurate interface). `name` is the node's identity
+    /// for this interface — pass it back to `find-file` to re-resolve.
+    record file {
+        name: string,
+        stem: option<string>,
+        deps: list<dep>,
+        also-make: list<dep>,
+        is-target: bool,
+        precious: bool,
+        phony: bool,
+    }
+
+    /// Look up a single target by name. `none` if no such target is known
+    /// to the graph. Auxiliary lookup for use from inside a `visitor` hook —
+    /// e.g. resolving a `dep`'s name to its full record.
+    find-file: func(name: string) -> option<file>;
+
+    /// Look up a single variable's expanded value in the global scope.
+    /// `none` if undefined. Per-file/pattern-scoped variable lookup is
+    /// out of MVP scope — the host only exposes the global `VariableSet`
+    /// here, not `pat-variables`/file-local overrides.
+    get-variable: func(name: string) -> option<string>;
+}
+
+/// Push-based traversal hooks the host calls into as it walks the resolved
+/// dependency graph, depth-first from the goals — the guest observes the
+/// walk rather than pulling a snapshot and deciding its own iteration order
+/// (see #644: the earlier `list-files`-only shape put the guest in charge of
+/// "what order", which only the host's real traversal order can answer
+/// meaningfully — `$<`/`$^`/`.WAIT` order, cycles-as-`DerivedBy` provenance,
+/// etc.). Strictly observational, matching the read-only MVP scope from
+/// docs/wasm-extension-system.md: no hook can skip a node, reorder
+/// traversal, or otherwise influence what the host does next.
+interface visitor {
+    use graph.{dep, file};
+
+    /// Called once, the first time the host's traversal reaches `file` —
+    /// i.e. on entering the node, before any of its own dependency edges are
+    /// followed. Every node is visited at most once even if reachable by
+    /// multiple paths (shared prerequisites, `also-make` siblings, ...).
+    visit-file: func(file: file) -> result<_, string>;
+
+    /// Called once for every edge the host is about to follow, right before
+    /// it visits `child` (so this always precedes the matching `visit-file`
+    /// call for `child`, the first time that node is reached). `parent` is
+    /// the name of the node the edge comes from, or the empty string for a
+    /// top-level goal (the traversal root is the synthetic "command line"
+    /// node and has no file record of its own).
+    visiting-child: func(parent: string, child: dep) -> result<_, string>;
+
+    /// Called once after the whole traversal completes, so a guest that
+    /// accumulates state across `visit-file`/`visiting-child` calls has a
+    /// defined point to report it.
+    visit-done: func() -> result<_, string>;
+}
+
+world introspection-extension {
+    import graph;
+    export visitor;
+}
