@@ -16,7 +16,7 @@ use crate::{
 
 use {
     ::core::{
-        ffi::{c_char, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void},
+        ffi::{c_char, c_long, c_uchar, c_uint, c_ushort, c_void},
         ptr::{null, null_mut},
     },
     rustc_hash::FxHashMap,
