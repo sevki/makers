@@ -7,7 +7,14 @@
 //! entries are and are not allowed to land.
 //!
 //! Every test runs the real `make` binary against a real component. See
-//! `tests/plugin_common/mod.rs`.
+//! `tests/plugin_common/mod.rs`. Requires the component to be built:
+//! `(cd plugins/bazel-export && cargo component build)`.
+
+// The plugin host is behind an optional feature, so without it there is no
+// `make` binary that loads components and every assertion here would fail
+// against a build that simply ignores `MAKERS_PLUGINS`. Same gate as the
+// two sibling suites.
+#![cfg(feature = "wasmtime")]
 
 mod plugin_common;
 
