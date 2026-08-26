@@ -57,13 +57,18 @@ settled for the MVP:
    reference component-model implementation), but v8 (`rusty_v8`) was also
    raised as a candidate. See [Runtime choice](#runtime-choice-depends-on-deployment-shape)
    below — the answer is now shape-dependent rather than a single pick.
-3. **Replaces `dlopen` and Guile.** No long-term coexistence: the
-   component-model system supersedes `src/load.rs`/`src/loadapi.rs` and
-   `src/guile.rs`. Open implementation question (not yet decided): whether
-   `dlopen` support is removed atomically when the component-model MVP
-   lands, or deprecated for a release cycle first. If any Makefiles/plugins
-   in the wild depend on the `gmk_*` API, an atomic removal needs a
-   migration note; this doc does not resolve that scheduling question.
+3. **Replaces `dlopen` and Guile.** No long-term coexistence. Decided and
+   executed (#639): the `gmk_*` ABI surface (`src/loadapi.rs`) and the
+   disabled Guile stub (`src/guile.rs`) were removed atomically, not
+   deprecated — `load_file` (`src/load.rs`) already reported `load` as
+   unsupported on every path in this port (dlopen was never actually wired
+   up), so nothing reachable from a real Makefile changed, and there is no
+   working `gmk_*`-based plugin in the wild to migrate. `src/load.rs` itself
+   is kept as-is: it implements the `load` directive/`--load` flag's
+   "unsupported on this platform" behavior, which mirrors upstream GNU
+   Make's own non-dlopen build configuration and is orthogonal to the
+   component-model work — a future decision to make `load` dispatch to wasm
+   extensions is out of scope here.
 4. **MVP scope, not full-surface-upfront design.** Interface grows from a
    narrow introspection-only start rather than being fully speced before
    any extension exists.

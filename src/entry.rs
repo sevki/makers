@@ -314,7 +314,6 @@ use crate::{
         verify_file_data_base,
     },
     function::hash_init_function_table,
-    guile::guile_gmake_setup,
     job::{child_handler, exec_command, job_slots_used, jobserver_tokens, reap_children},
     load::load_file,
     misc::{concat, cstr_bytes_or_empty},
@@ -2093,7 +2092,6 @@ pub unsafe fn main_0(
     let features: *const ::core::ffi::c_char = b"target-specific order-only second-expansion else-if shortest-stem undefine oneshell nocomment grouped-target extra-prereqs notintermediate shell-export archives jobserver jobserver-fifo output-sync check-symlink maintainer\0"
         as *const u8 as *const ::core::ffi::c_char;
     crate::variable::define_named(&ctx, b".FEATURES\0", features, o_default, 0)?;
-    guile_gmake_setup(NILF);
     let mut i: ::core::ffi::c_uint;
     i = 0;
     while !(*envp.offset(i as isize)).is_null() {
