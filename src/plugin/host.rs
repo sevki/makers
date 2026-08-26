@@ -38,7 +38,7 @@ pub use self::makers::plugin::types::{
 };
 
 pub use self::exports::makers::plugin::plugin::{
-    Capability, FailurePolicy, OutputDecl, Phase, PluginInfo,
+    Capability, FailurePolicy, OutputDecl, OutputKind as OutputKindWit, Phase, PluginInfo,
 };
 
 /// A graph node, as the guest holds it. Only the id: everything else is a
@@ -49,7 +49,8 @@ pub struct NodeHandle(pub NodeId);
 /// A nested set, as the guest holds it — an index into [`PluginStore::sets`].
 pub struct SetHandle(pub SetId);
 
-/// An open declared output, as the guest holds it.
+/// An open output stream, as the guest holds it — an index into
+/// [`PluginStore::streams`].
 pub struct OutputHandle(pub usize);
 
 // ─── Capabilities ────────────────────────────────────────────────────────
@@ -141,13 +142,47 @@ impl Caps {
 /// One declared output, resolved to a real path.
 pub struct OutputSlot {
     pub logical: String,
+    /// The file, for a `file` output; the root directory, for a `directory`
+    /// one.
     pub path: PathBuf,
-    /// Buffered bytes. Nothing reaches the filesystem before `finish`, so a
-    /// plugin that traps mid-write leaves the previous artifact intact.
-    pub buf: Vec<u8>,
-    pub open: bool,
+    pub kind: OutputKind,
+    /// `file` only: one `open` per run, so a second call is an error rather
+    /// than a silent truncation of the first.
+    pub opened: bool,
+    /// True once at least one entry has landed. For a `file` output that is
+    /// the file; for a `directory` one it means the plugin wrote something,
+    /// which is what the end-of-run report is actually asking.
     pub published: bool,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputKind {
+    File,
+    Directory,
+}
+
+/// One open stream: a resolved path and the bytes buffered for it.
+///
+/// Separate from [`OutputSlot`] because a `directory` output has many
+/// streams over its lifetime and the declaration has one identity. Nothing
+/// reaches the filesystem before `finish`, so a plugin that traps mid-write
+/// leaves the previous artifact intact.
+pub struct OutputStream {
+    pub slot: usize,
+    pub path: PathBuf,
+    pub buf: Vec<u8>,
+    pub open: bool,
+}
+
+/// Ceiling on entries in one `directory` output.
+///
+/// Each entry costs the host a buffer and an inode, and the guest can ask
+/// for them in a loop far more cheaply than the host can serve them — fuel
+/// bounds guest *work*, not host memory. The Linux kernel tree, which is the
+/// large real case this was measured against, has on the order of five
+/// thousand directories carrying targets, so this is roughly ten times the
+/// biggest legitimate dump and still a bound.
+pub const MAX_DIRECTORY_ENTRIES: usize = 50_000;
 
 // ─── Store state ─────────────────────────────────────────────────────────
 
@@ -164,6 +199,8 @@ pub struct PluginStore {
     pub settings: BTreeMap<String, String>,
     pub granted: Caps,
     pub outputs: Vec<OutputSlot>,
+    /// Streams opened against those slots, indexed by `OutputHandle`.
+    pub streams: Vec<OutputStream>,
     pub digest: String,
     pub working_dir: String,
     pub makefiles: Vec<String>,
@@ -757,27 +794,65 @@ impl self::makers::plugin::artifacts::Host for PluginStore {
         if !self.granted.contains(Caps::WRITE_OUTPUTS) {
             return Ok(Err(denied("write-outputs", "artifacts.open")));
         }
-        let Some(idx) = self.outputs.iter().position(|o| o.logical == logical_name) else {
-            return Ok(Err(WitError {
-                message: format!(
-                    "`{logical_name}` is not a declared output of this plugin (declared: {})",
-                    self.outputs
-                        .iter()
-                        .map(|o| o.logical.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                location: None,
-            }));
+        let Some(idx) = self.slot_named(&logical_name) else {
+            return Ok(Err(self.undeclared(&logical_name)));
         };
-        if self.outputs[idx].open || self.outputs[idx].published {
-            return Ok(Err(WitError {
-                message: format!("output `{logical_name}` has already been opened"),
-                location: None,
-            }));
+        if self.outputs[idx].kind != OutputKind::File {
+            return Ok(Err(err(format!(
+                "output `{logical_name}` is a directory; use `artifacts.open-in` \
+                 to open an entry inside it"
+            ))));
         }
-        self.outputs[idx].open = true;
-        Ok(Ok(self.table.push(OutputHandle(idx))?))
+        if self.outputs[idx].opened {
+            return Ok(Err(err(format!(
+                "output `{logical_name}` has already been opened"
+            ))));
+        }
+        self.outputs[idx].opened = true;
+        let path = self.outputs[idx].path.clone();
+        Ok(Ok(self.push_stream(idx, path)?))
+    }
+
+    fn open_in(
+        &mut self,
+        logical_name: String,
+        relative_path: String,
+    ) -> wasmtime::Result<Result<Resource<OutputHandle>, WitError>> {
+        if !self.granted.contains(Caps::WRITE_OUTPUTS) {
+            return Ok(Err(denied("write-outputs", "artifacts.open-in")));
+        }
+        let Some(idx) = self.slot_named(&logical_name) else {
+            return Ok(Err(self.undeclared(&logical_name)));
+        };
+        if self.outputs[idx].kind != OutputKind::Directory {
+            return Ok(Err(err(format!(
+                "output `{logical_name}` is a single file; use `artifacts.open`"
+            ))));
+        }
+        let path = match entry_path(&self.outputs[idx].path, &relative_path) {
+            Ok(path) => path,
+            Err(why) => {
+                return Ok(Err(err(format!(
+                    "entry `{relative_path}` in output `{logical_name}` {why}"
+                ))))
+            }
+        };
+        let entries = self
+            .streams
+            .iter()
+            .filter(|stream| stream.slot == idx)
+            .count();
+        if entries >= MAX_DIRECTORY_ENTRIES {
+            return Ok(Err(err(format!(
+                "output `{logical_name}` is limited to {MAX_DIRECTORY_ENTRIES} entries"
+            ))));
+        }
+        if self.streams.iter().any(|stream| stream.path == path) {
+            return Ok(Err(err(format!(
+                "entry `{relative_path}` in output `{logical_name}` has already been opened"
+            ))));
+        }
+        Ok(Ok(self.push_stream(idx, path)?))
     }
 
     fn path_of(&mut self, logical_name: String) -> wasmtime::Result<Option<String>> {
@@ -789,6 +864,37 @@ impl self::makers::plugin::artifacts::Host for PluginStore {
     }
 }
 
+impl PluginStore {
+    fn slot_named(&self, logical_name: &str) -> Option<usize> {
+        self.outputs.iter().position(|o| o.logical == logical_name)
+    }
+
+    fn undeclared(&self, logical_name: &str) -> WitError {
+        err(format!(
+            "`{logical_name}` is not a declared output of this plugin (declared: {})",
+            self.outputs
+                .iter()
+                .map(|o| o.logical.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+    }
+
+    fn push_stream(
+        &mut self,
+        slot: usize,
+        path: PathBuf,
+    ) -> wasmtime::Result<Resource<OutputHandle>> {
+        self.streams.push(OutputStream {
+            slot,
+            path,
+            buf: Vec::new(),
+            open: true,
+        });
+        Ok(self.table.push(OutputHandle(self.streams.len() - 1))?)
+    }
+}
+
 impl self::makers::plugin::artifacts::HostOutput for PluginStore {
     fn write(
         &mut self,
@@ -796,35 +902,30 @@ impl self::makers::plugin::artifacts::HostOutput for PluginStore {
         bytes: Vec<u8>,
     ) -> wasmtime::Result<Result<(), WitError>> {
         let idx = self.table.get(&this)?.0;
-        if !self.outputs[idx].open {
-            return Ok(Err(WitError {
-                message: "write after finish".to_string(),
-                location: None,
-            }));
+        if !self.streams[idx].open {
+            return Ok(Err(err("write after finish".to_string())));
         }
-        self.outputs[idx].buf.extend_from_slice(&bytes);
+        self.streams[idx].buf.extend_from_slice(&bytes);
         Ok(Ok(()))
     }
 
     fn finish(&mut self, this: Resource<OutputHandle>) -> wasmtime::Result<Result<(), WitError>> {
         let idx = self.table.get(&this)?.0;
-        if !self.outputs[idx].open {
-            return Ok(Err(WitError {
-                message: "output already finished".to_string(),
-                location: None,
-            }));
+        if !self.streams[idx].open {
+            return Ok(Err(err("output already finished".to_string())));
         }
-        self.outputs[idx].open = false;
-        let slot = &self.outputs[idx];
-        Ok(match publish(&slot.path, &slot.buf) {
+        self.streams[idx].open = false;
+        let stream = &self.streams[idx];
+        Ok(match publish(&stream.path, &stream.buf) {
             Ok(()) => {
-                self.outputs[idx].published = true;
+                let slot = stream.slot;
+                self.outputs[slot].published = true;
+                // The bytes are on disk; holding them costs host memory for
+                // nothing, and a directory dump can have thousands of these.
+                self.streams[idx].buf = Vec::new();
                 Ok(())
             }
-            Err(e) => Err(WitError {
-                message: e,
-                location: None,
-            }),
+            Err(e) => Err(err(e)),
         })
     }
 
@@ -833,10 +934,31 @@ impl self::makers::plugin::artifacts::HostOutput for PluginStore {
         // An abandoned stream publishes nothing: a half-written
         // compile_commands.json breaks every editor that reads it, so the
         // previous one is left in place instead.
-        self.outputs[idx].open = false;
+        self.streams[idx].open = false;
+        self.streams[idx].buf = Vec::new();
         self.table.delete(this)?;
         Ok(())
     }
+}
+
+fn err(message: String) -> WitError {
+    WitError {
+        message,
+        location: None,
+    }
+}
+
+/// Resolve one entry of a `directory` output against its root.
+///
+/// The argument arrives from running guest code rather than from a manifest
+/// read once, so this is the check that keeps a declared root a root: a
+/// plugin that has been granted `write-outputs` — which is granted by
+/// default — otherwise reaches any file the invoking user can write, and the
+/// host performs the write on its behalf. Reuses the same syntactic rule as
+/// manifest paths so there is one definition of "confined" to reason about.
+fn entry_path(root: &std::path::Path, relative: &str) -> Result<PathBuf, &'static str> {
+    crate::plugin::confined(relative)?;
+    Ok(root.join(relative))
 }
 
 /// Write `bytes` to `path` atomically: a sibling temporary file, then a
@@ -870,3 +992,45 @@ impl self::makers::plugin::diagnostics::Host for PluginStore {
 }
 
 impl self::makers::plugin::types::Host for PluginStore {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `open-in` is the one place a *running* plugin chooses a path the host
+    /// then writes. `write-outputs` is in `DEFAULT_GRANT`, so without this
+    /// check loading any plugin at all would be enough to overwrite an
+    /// arbitrary file — the same hole the manifest's `default-path` had, but
+    /// reachable from guest code rather than from a manifest.
+    #[test]
+    fn directory_entries_cannot_escape_their_root() {
+        let root = std::path::Path::new("/work/generated");
+        for escape in [
+            "../../.ssh/authorized_keys",
+            "/etc/cron.d/pwn",
+            "pkg/../../outside",
+            "",
+            "   ",
+        ] {
+            assert!(
+                entry_path(root, escape).is_err(),
+                "`{escape}` must be refused as a directory entry"
+            );
+        }
+    }
+
+    /// An ordinary nested entry — which is the whole point, since a
+    /// `BUILD.bazel` dump mirrors the source tree's own shape.
+    #[test]
+    fn directory_entries_resolve_under_their_root() {
+        let root = std::path::Path::new("/work/generated");
+        assert_eq!(
+            entry_path(root, "src/util/BUILD.bazel").expect("accepted"),
+            PathBuf::from("/work/generated/src/util/BUILD.bazel")
+        );
+        assert_eq!(
+            entry_path(root, "BUILD.bazel").expect("accepted"),
+            PathBuf::from("/work/generated/BUILD.bazel")
+        );
+    }
+}

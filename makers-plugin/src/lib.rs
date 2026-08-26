@@ -50,7 +50,7 @@ pub use crate::makers::plugin::graph::{
 pub use crate::makers::plugin::types::{Diagnostic, Error, Location, Provider, Severity};
 
 pub use crate::exports::makers::plugin::plugin::{
-    Capability, FailurePolicy, OutputDecl, Phase, PluginInfo,
+    Capability, FailurePolicy, OutputDecl, OutputKind, Phase, PluginInfo,
 };
 
 /// Everything a typical plugin wants in scope.
@@ -142,9 +142,19 @@ impl std::io::Write for Output {
     }
 }
 
-/// Open one of the outputs this plugin declared in its manifest.
+/// Open one of the `file` outputs this plugin declared in its manifest.
 pub fn open_output(logical_name: &str) -> Result<Output, Error> {
     crate::makers::plugin::artifacts::open(logical_name).map(Output)
+}
+
+/// Open one entry inside a declared `directory` output.
+///
+/// `relative_path` is resolved under the declared root and confined to it:
+/// absolute paths and any `..` component are refused by the host. Use this
+/// for a generator whose file set follows the project's own layout — one
+/// `BUILD.bazel` per package — and so cannot be declared up front.
+pub fn open_output_in(logical_name: &str, relative_path: &str) -> Result<Output, Error> {
+    crate::makers::plugin::artifacts::open_in(logical_name, relative_path).map(Output)
 }
 
 /// The absolute path a declared output will be written to.
@@ -204,6 +214,27 @@ impl Manifest {
             logical_name: logical_name.into(),
             default_path: default_path.into(),
             description: description.into(),
+            kind: OutputKind::File,
+        });
+        self
+    }
+
+    /// Declare a directory the plugin fills with entries it names at
+    /// runtime, opened with [`open_output_in`]. `default_path` is the root,
+    /// relative to make's working directory; `"."` is the working directory
+    /// itself, which is what a generator writing into the tree it describes
+    /// wants.
+    pub fn output_directory(
+        mut self,
+        logical_name: impl Into<String>,
+        default_path: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        self.0.outputs.push(OutputDecl {
+            logical_name: logical_name.into(),
+            default_path: default_path.into(),
+            description: description.into(),
+            kind: OutputKind::Directory,
         });
         self
     }

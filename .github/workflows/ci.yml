@@ -482,6 +482,10 @@ jobs:
               working-directory: plugins/compile-commands
               run: cargo component build
 
+            - name: Build the bazel-export plugin component
+              working-directory: plugins/bazel-export
+              run: cargo component build
+
             - name: Run the test suite with the wasmtime feature
               run: cargo test --features wasmtime
 

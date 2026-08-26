@@ -56,7 +56,13 @@ pub fn workdir(fixture: &str, sources: &[&str]) -> PathBuf {
     )
     .expect("copy fixture");
     for source in sources {
-        std::fs::write(dir.join(source), "").expect("write source");
+        let path = dir.join(source);
+        // Sources may sit in subdirectories: a fixture with targets in more
+        // than one package needs them to exercise cross-package labels.
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("create source directory");
+        }
+        std::fs::write(path, "").expect("write source");
     }
     dir
 }

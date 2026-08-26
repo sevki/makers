@@ -346,6 +346,7 @@ fn run_instance(
             settings: spec.settings.clone(),
             granted,
             outputs,
+            streams: Vec::new(),
             digest,
             working_dir: session.working_dir.clone(),
             makefiles: session.makefiles.clone(),
@@ -440,6 +441,7 @@ fn describe(
             settings: BTreeMap::new(),
             granted: Caps::empty(),
             outputs: Vec::new(),
+            streams: Vec::new(),
             digest: String::new(),
             working_dir: String::new(),
             makefiles: Vec::new(),
@@ -540,7 +542,7 @@ fn coherent(info: &PluginInfo, requested: Caps) -> Result<(), String> {
 /// confining *them* to the working directory would only stop the legitimate
 /// case (`out.database=/tmp/cc.json`). The asymmetry is the point — the
 /// manifest proposes a default, the operator decides.
-fn confined(path: &str) -> Result<(), &'static str> {
+pub(crate) fn confined(path: &str) -> Result<(), &'static str> {
     use std::path::Component;
     if path.trim().is_empty() {
         return Err("is empty");
@@ -580,8 +582,11 @@ fn resolve_outputs(info: &PluginInfo, spec: &InstanceSpec, cwd: &str) -> Vec<Out
                 } else {
                     PathBuf::from(cwd).join(path)
                 },
-                buf: Vec::new(),
-                open: false,
+                kind: match decl.kind {
+                    host::OutputKindWit::File => host::OutputKind::File,
+                    host::OutputKindWit::Directory => host::OutputKind::Directory,
+                },
+                opened: false,
                 published: false,
             }
         })
@@ -1213,6 +1218,7 @@ mod tests {
             logical_name: "database".to_string(),
             default_path: "db.json".to_string(),
             description: String::new(),
+            kind: host::OutputKindWit::File,
         };
         let mut info = manifest(&[]);
         info.outputs = vec![decl.clone()];
@@ -1259,6 +1265,7 @@ mod tests {
             logical_name: "db".to_string(),
             default_path: "../../etc/shadow".to_string(),
             description: String::new(),
+            kind: host::OutputKindWit::File,
         }];
         let err = coherent(&info, caps_of(&info)).expect_err("must be refused");
         assert!(err.contains("escape"), "unexpected message: {err}");

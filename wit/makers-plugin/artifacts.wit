@@ -32,11 +32,42 @@ interface artifacts {
         finish: func() -> result<_, error>;
     }
 
-    /// Open a declared output by logical name. Fails if the name is not in
-    /// the manifest's `outputs`, or if `write-outputs` was not granted.
+    /// Open a declared `file` output by logical name. Fails if the name is
+    /// not in the manifest's `outputs`, if it names a `directory` output
+    /// (use `open-in`), or if `write-outputs` was not granted.
     open: func(logical-name: string) -> result<output, error>;
 
-    /// Where a declared output will land, absolute. Useful for a plugin that
-    /// wants to embed its own path in its output, or log it.
+    /// Open one entry inside a declared `directory` output.
+    ///
+    /// The case this exists for is a generator whose *shape* is the
+    /// project's own layout rather than a single document. Emitting a
+    /// `BUILD.bazel` per package is the worked example: Bazel's unit of
+    /// organisation is the directory, so a translation of a make project has
+    /// to write one file per directory that owns targets — and which
+    /// directories those are is not known until the graph has been walked.
+    /// A manifest cannot name those outputs in advance, and the alternative
+    /// of handing the plugin a filesystem write capability gives up
+    /// everything declaring outputs bought.
+    ///
+    /// So the manifest declares the *root* and the plugin names entries
+    /// under it. `relative-path` is confined to that root: it must be
+    /// relative, non-empty, and free of `..` components. This check matters
+    /// more here than for a manifest's `default-path`, because this argument
+    /// arrives from running guest code rather than from a manifest read
+    /// once — `open-in("build-files", "../../.ssh/authorized_keys")` is the
+    /// obvious move for a hostile plugin, and it is refused.
+    ///
+    /// Publication is per entry, not per tree: each entry lands atomically
+    /// by rename, but the directory itself is never swapped wholesale. That
+    /// is deliberate — the root of a `BUILD.bazel` dump is the source tree,
+    /// which is full of files that are not this plugin's to replace. It
+    /// costs the guarantee that the entry *set* changes all at once, which
+    /// no consumer of a generated build tree depends on, and keeps the one
+    /// that matters: no reader ever sees half a file.
+    open-in: func(logical-name: string, relative-path: string) -> result<output, error>;
+
+    /// Where a declared output will land, absolute — the file for a `file`
+    /// output, the root directory for a `directory` one. Useful for a plugin
+    /// that wants to embed its own path in its output, or log it.
     path-of: func(logical-name: string) -> option<string>;
 }

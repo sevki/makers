@@ -289,6 +289,47 @@ authority they already hold, and confining them would only break the
 legitimate case (`out.database=/tmp/cc.json`). The manifest proposes; the
 operator decides.
 
+#### Directory outputs
+
+Some generators do not produce a document; they produce a *shape*. An output
+is therefore either a `file` or a `directory`, and a directory's entries are
+named by the plugin at runtime through `artifacts.open-in`.
+
+> *Use case: `BUILD.bazel` per package.* Bazel's unit of organisation is the
+> directory, so translating a make project means writing one build file into
+> every directory that owns targets — and which directories those are is not
+> known until the graph has been walked. A manifest cannot list them. This
+> is the case that [#632][pr632] solved by putting a `--dump-bazel` flag and
+> a `std::fs::write` loop in `src/depgraph.rs`; `plugins/bazel-export`
+> (§5) does the same job as a plugin.
+
+[pr632]: https://github.com/sevki/makers/pull/632
+
+Two things about a directory output are worth stating because the obvious
+guesses are wrong.
+
+**The entry path is the hostile input.** A manifest's `default-path` is read
+once from a component that has not run yet; an `open-in` argument is chosen
+by running guest code. `open-in("build-files", "../../.ssh/authorized_keys")`
+is the first thing to try, and it is refused by the same rule that governs
+manifest paths — relative, non-empty, no `..`. This is the check that keeps
+"declared output" meaning anything at all once entry names are dynamic.
+
+**Publication is per entry, not per tree.** The tempting design is to build
+the whole directory in a temporary location and rename it into place, which
+is what Bazel does for a tree artifact. It is wrong here: the root of a
+`BUILD.bazel` dump is the *source tree*, and swapping it wholesale would
+delete every file in it that the plugin did not write. So each entry lands
+atomically by rename and the entry set changes incrementally. The guarantee
+given up — that the set of files changes all at once — is one no consumer of
+a generated build tree relies on. The guarantee kept is the one that matters:
+no reader ever sees half a file.
+
+The entry count is capped (50 000, about ten times the number of directories
+in the Linux kernel tree). Fuel bounds what the guest computes, not what the
+host allocates on its behalf, and `open-in` is much cheaper to call than to
+serve.
+
 ### 3.8 Diagnostics and a declared failure policy
 
 `diagnostics.emit` takes a severity, a message and an optional makefile
@@ -429,7 +470,7 @@ analyses, policy gates, caches) are programs, not scripts.
 
 ---
 
-## 5. The two example plugins
+## 5. The example plugins
 
 **`plugins/compile-commands`** produces `compile_commands.json`. This is the
 plugin that justifies the interface: a JSON Compilation Database is what
@@ -476,6 +517,36 @@ it.
 
 ---
 
+
+**`plugins/bazel-export`** is [#632][pr632-5] rebuilt as a plugin, and the
+reason `directory` outputs exist. It emits the same per-package genrules that
+version emitted from `src/depgraph.rs` behind a `--dump-bazel` flag. Three
+differences are the interface earning its keep rather than a rewrite for its
+own sake:
+
+* **Order-only prerequisites stay out of `srcs`.** `foo.o: foo.c | build/`
+  names `build/` as an ordering constraint, not an input. The in-core version
+  walked a graph whose edges carried no flags, so `build/` came out as a
+  `srcs` entry and Bazel then demanded a target producing a directory nobody
+  declared. This is the same flags-on-edges argument as the DOT export, with
+  a build that fails rather than a picture that misleads.
+* **It cannot write outside its root.** The in-core version called
+  `std::fs::write` on a path derived from a target name, so a makefile with a
+  target named `../../etc/thing` wrote there. The plugin declares a root and
+  the host confines every entry to it.
+* **Recipe access is a grant.** This plugin copies recipe text verbatim into
+  files that get committed, which is exactly the text that carries tokens and
+  internal hostnames. Withholding `read-recipes` is a supported mode, not an
+  error.
+
+It also shows where the *interface* is still short. It has to substitute
+plain variables — Bazel has no `CC`, so `$(CC)` left alone becomes a genrule
+that runs a command called `CC` — while leaving `$@` and `$(SRCS)` for Bazel
+to fill. `node.variable()` does that in the target's scope. But it therefore
+reads the global variable set, which `session.input-digest` does not cover,
+so it cannot honestly declare `deterministic`. See §9.
+
+[pr632-5]: https://github.com/sevki/makers/pull/632
 ## 6. Configuration
 
 Environment variables are the surface for this slice. The command-line and
@@ -621,12 +692,30 @@ capability that would let it substitute compilers.
   beside published outputs, so nothing is skipped yet. The mechanism is
   small; the interaction with `--always-make`, `-B` and remade makefiles is
   the part worth thinking about.
+* **The digest does not cover global variables, and `deterministic` does not
+  know that.** It covers per-target variables, so `debug.o: CFLAGS := -O0`
+  moves it — but `make CC=gcc` and `make CC=clang` over one makefile produce
+  the same digest with an identical graph and identical *unexpanded* recipe
+  text, while any plugin reading `$(CC)` correctly produces different output.
+  `plugins/bazel-export` declines `deterministic` for exactly this reason and
+  says so in its source, which is a plugin author working around an interface
+  defect rather than a design.
+
+  Two fixes, and the choice is not obvious. Adding `read-variables` to the
+  set `deterministic` refuses (beside `wall-clock`, `read-environment` and
+  `expand-variables`) is one line and makes the promise sound, but it rules
+  out the combination for every plugin that only reads *per-target*
+  variables, which the digest does cover. Hashing the global set into the
+  digest is the better answer and needs the same hash-table iteration path
+  as the entry below, which is why the two are listed together.
 * **Provider payload conventions.** Namespacing is enforced; encoding is not
   suggested. A recommended encoding (and an SDK helper for it) would make
   cross-plugin composition much likelier to actually happen.
 * **Enumerating global variables.** `vars.get` is by name. A plugin
   exporting a `.env` or a `BUILD` file wants the whole set, which needs an
-  iteration path over the C hash table that does not exist yet.
+  iteration path over the C hash table that does not exist yet. The same
+  path would let the digest cover globals and close the soundness gap above,
+  so it is worth more than its size suggests.
 * **Non-UTF-8 target names.** They arrive lossily converted, as make's own
   display path converts them; `node.id()` stays byte-exact. Byte-exact
   *names* would need `list<u8>` accessors, which is worth doing only if a

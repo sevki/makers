@@ -82,9 +82,24 @@ interface plugin {
         fatal,
     }
 
-    /// An output file this plugin may open, declared up front.
+    /// Whether a declared output is one file or a directory the plugin
+    /// fills with entries it names at runtime.
+    enum output-kind {
+        /// One file at the declared path, opened with `artifacts.open`.
+        file,
+        /// A root directory whose entries are opened with
+        /// `artifacts.open-in`, for a generator whose shape follows the
+        /// project's own layout rather than being a single document — one
+        /// `BUILD.bazel` per package is the case this exists for. See
+        /// `artifacts.open-in` for why those entry paths cannot be declared
+        /// up front, and what confining them to this root costs.
+        directory,
+    }
+
+    /// An output this plugin may open, declared up front.
     record output-decl {
-        /// The name the plugin passes to `artifacts.open`.
+        /// The name the plugin passes to `artifacts.open` or
+        /// `artifacts.open-in`.
         logical-name: string,
         /// Path relative to make's working directory, used unless the host
         /// is told otherwise by `--plugin-arg <instance>:out.<name>=<path>`.
@@ -98,9 +113,15 @@ interface plugin {
         /// it declared", not "may write any file". An operator naming a path
         /// through `--plugin-arg` is not constrained this way; they are
         /// spending authority they already hold.
+        ///
+        /// For a `directory` output this is the root the entries land under,
+        /// and `.` — make's working directory — is the useful default for a
+        /// generator that writes into the source tree it is describing.
         default-path: string,
         /// One line, for `--plugin-list` and for error messages.
         description: string,
+        /// One file, or a directory of entries named at runtime.
+        kind: output-kind,
     }
 
     record plugin-info {
