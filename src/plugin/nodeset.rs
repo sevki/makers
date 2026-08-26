@@ -82,9 +82,12 @@ impl Sets {
                     stack.push(*b);
                 }
                 // A closure is non-empty iff the node has at least one
-                // outgoing dependency edge — no need to walk it.
+                // outgoing dependency edge to something other than itself —
+                // no need to walk it. The self-edge exclusion matters
+                // because the closure excludes its own root, so a node whose
+                // only prerequisite is itself has an *empty* closure.
                 Some(SetNode::Transitive(n)) => {
-                    if child_edges(graph, *n).next().is_some() {
+                    if child_edges(graph, *n).any(|c| c != *n) {
                         return false;
                     }
                 }
@@ -178,8 +181,18 @@ fn closure_into(
     seen: &mut FxHashSet<NodeId>,
     out: &mut Vec<NodeId>,
 ) {
-    let mut queue: std::collections::VecDeque<NodeId> = child_edges(graph, root).collect();
-    let mut queued: FxHashSet<NodeId> = queue.iter().copied().collect();
+    // `root` is seeded as already-queued without being emitted: a
+    // dependency cycle that leads back to it (`a: b`, `b: a`) would
+    // otherwise enqueue it like any other node and list a target as its own
+    // transitive dependency.
+    let mut queued: FxHashSet<NodeId> = FxHashSet::default();
+    queued.insert(root);
+    let mut queue: std::collections::VecDeque<NodeId> = std::collections::VecDeque::new();
+    for child in child_edges(graph, root) {
+        if queued.insert(child) {
+            queue.push_back(child);
+        }
+    }
     while let Some(n) = queue.pop_front() {
         if seen.insert(n) {
             out.push(n);
@@ -290,5 +303,61 @@ mod tests {
             *sets.flatten(closure, &graph),
             vec![NodeId::File(obj), NodeId::File(src)]
         );
+    }
+
+    /// A cycle that leads back to the root must not put the root in its own
+    /// transitive closure. make drops circular prerequisites and carries on,
+    /// so a plugin can be handed a graph with `a: b` and `b: a` in it; a
+    /// closure that lists `a` as a dependency of `a` makes any consumer that
+    /// turns the set into a link line or a build description emit a
+    /// self-referential rule.
+    #[test]
+    fn closure_excludes_its_root_through_a_cycle() {
+        let mut graph = DepGraph::new();
+        let a = graph.add_file(FileNode::new(b"a".to_vec()));
+        let b = graph.add_file(FileNode::new(b"b".to_vec()));
+        graph.add_dep(
+            a,
+            crate::dep::DepNode {
+                name: "b".to_string(),
+                file: Some(b),
+                ..Default::default()
+            },
+        );
+        graph.add_dep(
+            b,
+            crate::dep::DepNode {
+                name: "a".to_string(),
+                file: Some(a),
+                ..Default::default()
+            },
+        );
+
+        let mut sets = Sets::default();
+        let closure = sets.transitive(NodeId::File(a));
+        assert_eq!(*sets.flatten(closure, &graph), vec![NodeId::File(b)]);
+    }
+
+    /// A node whose only prerequisite is itself has an empty closure, and
+    /// `is-empty` has to agree with `to-list` about that without walking the
+    /// graph — otherwise a plugin that guards on `is-empty` proceeds to
+    /// iterate an empty set.
+    #[test]
+    fn self_edge_closure_is_empty() {
+        let mut graph = DepGraph::new();
+        let a = graph.add_file(FileNode::new(b"a".to_vec()));
+        graph.add_dep(
+            a,
+            crate::dep::DepNode {
+                name: "a".to_string(),
+                file: Some(a),
+                ..Default::default()
+            },
+        );
+
+        let mut sets = Sets::default();
+        let closure = sets.transitive(NodeId::File(a));
+        assert!(sets.is_empty(closure, &graph));
+        assert!(sets.flatten(closure, &graph).is_empty());
     }
 }

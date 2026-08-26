@@ -88,6 +88,16 @@ interface plugin {
         logical-name: string,
         /// Path relative to make's working directory, used unless the host
         /// is told otherwise by `--plugin-arg <instance>:out.<name>=<path>`.
+        ///
+        /// "Relative" is enforced, not assumed: a manifest naming an
+        /// absolute path or one that climbs out with `..` is refused and the
+        /// plugin does not run. The host performs the write with the
+        /// invoking user's privileges, so a destination chosen by the
+        /// component would make the sandbox pointless — `write-outputs` is
+        /// granted by default, and that has to mean "may write the artifact
+        /// it declared", not "may write any file". An operator naming a path
+        /// through `--plugin-arg` is not constrained this way; they are
+        /// spending authority they already hold.
         default-path: string,
         /// One line, for `--plugin-list` and for error messages.
         description: string,
@@ -170,9 +180,11 @@ interface analyzer {
 
     /// Called once per node reachable from the goals, in dependency order:
     /// every prerequisite of `target` has already been analysed, and among
-    /// siblings the makefile's own edge order is preserved. Returned
-    /// providers are published on `target` and become visible to its
-    /// dependents, to later plugins, and to this plugin's own `finish`.
+    /// siblings the makefile's own edge order is preserved — except under
+    /// `--shuffle`, which permutes the graph before the pass runs and is
+    /// reported when it does (see `graph.node.deps`). Returned providers are
+    /// published on `target` and become visible to its dependents, to later
+    /// plugins, and to this plugin's own `finish`.
     analyze: func(target: borrow<node>) -> result<list<provider>, error>;
 
     /// Called once after the walk, whether or not anything was analysed.

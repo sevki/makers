@@ -29,7 +29,7 @@ pub mod host;
 mod nodeset;
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -208,6 +208,22 @@ pub fn run_plugins_if_requested(ctx: &ExecContext, goals: &[GoalDepNode]) -> boo
     let specs = configured_instances();
     if specs.is_empty() {
         return false;
+    }
+
+    // `--shuffle` deliberately perturbs order to smoke out missing
+    // prerequisites, and this port applies that reordering to
+    // `FileNode::deps` and the goal list in place — by the time the pass
+    // runs, `shuffle_goals_recursive` has already been through them and the
+    // makefile's own order is gone. The `graph` interface promises makefile
+    // order, so say plainly that this run cannot keep that promise rather
+    // than let a plugin write a compile database or a build description in
+    // scheduler order and look reproducible.
+    if crate::shuffle::reorders_the_graph(ctx) {
+        eprintln!(
+            "make: plugin analysis: --shuffle reordered the graph; \
+             `graph.goals`, `node.dep-edges` and analysis order are in shuffled \
+             order, not makefile order"
+        );
     }
 
     let graph = DepGraph::from_context(ctx, goals);
@@ -486,11 +502,57 @@ fn coherent(info: &PluginInfo, requested: Caps) -> Result<(), String> {
         if !seen.insert(out.logical_name.as_str()) {
             return Err(format!("declares output `{}` twice", out.logical_name));
         }
+        if let Err(why) = confined(&out.default_path) {
+            return Err(format!(
+                "declares output `{}` at `{}`, which {why}",
+                out.logical_name, out.default_path
+            ));
+        }
     }
     if !info.outputs.is_empty() && !requested.contains(Caps::WRITE_OUTPUTS) {
         return Err(
             "declares outputs without requesting the `write-outputs` capability".to_string(),
         );
+    }
+    Ok(())
+}
+
+/// A path a *manifest* may name for an output.
+///
+/// The WIT calls `default-path` "relative to make's working directory"; this
+/// is what makes that a rule rather than a hope. The component is untrusted
+/// code — that is the entire premise of running it in a sandbox with no
+/// preopens — but the host writes its outputs, with the invoking user's
+/// privileges. Without this check a manifest saying `/etc/cron.d/plugin` or
+/// `../../.ssh/authorized_keys` gets exactly that file written, and since
+/// `write-outputs` is part of `DEFAULT_GRANT`, *running* the plugin at all
+/// would be enough. Mediating the write is worth nothing if the destination
+/// comes from the same place as the bytes.
+///
+/// The check is deliberately syntactic and deliberately not applied to
+/// `--plugin-arg <instance>:out.<logical>=<path>`: an operator typing a path
+/// on the command line is exercising authority they already have, and
+/// confining *them* to the working directory would only stop the legitimate
+/// case (`out.database=/tmp/cc.json`). The asymmetry is the point — the
+/// manifest proposes a default, the operator decides.
+fn confined(path: &str) -> Result<(), &'static str> {
+    use std::path::Component;
+    if path.trim().is_empty() {
+        return Err("is empty");
+    }
+    for component in Path::new(path).components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir => {
+                return Err("must be relative to make's working directory, not absolute");
+            }
+            // Rejected without normalising first: `a/../b` is harmless but
+            // indistinguishable here from `a/../../b` without resolving
+            // symlinks, and a manifest has no reason to need either.
+            Component::ParentDir => {
+                return Err("must not escape make's working directory with `..`");
+            }
+            Component::CurDir | Component::Normal(_) => {}
+        }
     }
     Ok(())
 }
@@ -501,6 +563,8 @@ fn resolve_outputs(info: &PluginInfo, spec: &InstanceSpec, cwd: &str) -> Vec<Out
     info.outputs
         .iter()
         .map(|decl| {
+            // `decl.default_path` has been through `confined` already;
+            // `configured` deliberately has not — see that function.
             let configured = spec.settings.get(&format!("out.{}", decl.logical_name));
             let raw = configured.map(String::as_str).unwrap_or(&decl.default_path);
             let path = PathBuf::from(raw);
@@ -668,6 +732,13 @@ pub(crate) fn analysis_order(graph: &DepGraph) -> (Vec<NodeId>, Option<String>) 
 /// It deliberately does not cover file *contents* or mtimes: a plugin that
 /// needs those must request `read-file-content`, and a plugin that requests
 /// it should not claim `deterministic`.
+///
+/// The goal list is hashed as well, in order, and it has to be: the analysis
+/// walk starts from the goals, so `make lib` and `make tests` over one
+/// unchanged makefile hand the plugin different `graph.goals`, different
+/// `session.goal-names`, and a different set of reachable nodes. Hashing
+/// only the file arena would give those two runs the same digest, and a
+/// cache keyed on it would serve the artifact built for the wrong goals.
 fn input_digest(graph: &DepGraph, settings: &BTreeMap<String, String>) -> String {
     use crate::content_hash::ContentHash as _;
 
@@ -679,6 +750,11 @@ fn input_digest(graph: &DepGraph, settings: &BTreeMap<String, String>) -> String
     }
 
     let mut hasher = Blake3(blake3::Hasher::new());
+    for (_, goal) in graph.goals() {
+        hasher.0.update(goal.dep.name.as_bytes());
+        hasher.0.update(b"\0");
+    }
+    hasher.0.update(b"--goals--");
     let mut ids: Vec<_> = graph.files().map(|(id, _)| id).collect();
     ids.sort();
     for id in ids {
@@ -881,5 +957,393 @@ pub(crate) fn expand_global(text: &str) -> Result<String, String> {
             .into_owned();
         libc::free(expanded as *mut libc::c_void);
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::file::FileNode;
+
+    fn spec_named(specs: &[InstanceSpec], name: &str) -> InstanceSpec {
+        let s = specs
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("no instance named {name}"));
+        InstanceSpec {
+            name: s.name.clone(),
+            path: s.path.clone(),
+            settings: s.settings.clone(),
+            allowed: s.allowed,
+        }
+    }
+
+    /// A three-node chain plus a second prerequisite, so that both
+    /// dependency order and sibling order are observable.
+    fn chain_graph() -> DepGraph {
+        let mut graph = DepGraph::new();
+        let prog = graph.add_file(FileNode::new(b"prog".to_vec()));
+        let main_o = graph.add_file(FileNode::new(b"main.o".to_vec()));
+        let util_o = graph.add_file(FileNode::new(b"util.o".to_vec()));
+        let main_c = graph.add_file(FileNode::new(b"main.c".to_vec()));
+        for (from, name, to) in [
+            (prog, "main.o", main_o),
+            (prog, "util.o", util_o),
+            (main_o, "main.c", main_c),
+        ] {
+            graph.add_dep(
+                from,
+                crate::dep::DepNode {
+                    name: name.to_string(),
+                    file: Some(to),
+                    ..Default::default()
+                },
+            );
+        }
+        graph.add_goal(crate::dep::GoalDepNode {
+            dep: crate::dep::DepNode {
+                file: Some(prog),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        graph
+    }
+
+    fn names(graph: &DepGraph, order: &[NodeId]) -> Vec<String> {
+        order.iter().map(|&n| graph.display_name(n)).collect()
+    }
+
+    /// Every prerequisite is analysed before the target that needs it, and
+    /// siblings keep the makefile's own edge order — the two properties the
+    /// aspect model depends on (a hook can only read `dep.providers()` if
+    /// the dep already ran, and artifacts are only reproducible if sibling
+    /// order is fixed).
+    #[test]
+    fn analysis_order_is_dependency_order_with_stable_siblings() {
+        let graph = chain_graph();
+        let (order, cycle) = analysis_order(&graph);
+        assert!(cycle.is_none());
+        assert_eq!(
+            names(&graph, &order),
+            ["main.c", "main.o", "util.o", "prog"]
+        );
+    }
+
+    /// The synthetic root is not a target and is never handed to a plugin.
+    #[test]
+    fn analysis_order_excludes_the_root() {
+        let graph = chain_graph();
+        let (order, _) = analysis_order(&graph);
+        assert!(!order.contains(&NodeId::Root));
+    }
+
+    /// A cycle is described and dropped rather than propagated, matching
+    /// make's own "Circular X <- Y dependency dropped" — a plugin pass that
+    /// refused to run on such a graph would be useless on exactly the
+    /// makefiles most worth inspecting.
+    #[test]
+    fn analysis_order_drops_cycles_and_reports_them() {
+        let mut graph = DepGraph::new();
+        let a = graph.add_file(FileNode::new(b"a".to_vec()));
+        let b = graph.add_file(FileNode::new(b"b".to_vec()));
+        graph.add_dep(
+            a,
+            crate::dep::DepNode {
+                name: "b".to_string(),
+                file: Some(b),
+                ..Default::default()
+            },
+        );
+        graph.add_dep(
+            b,
+            crate::dep::DepNode {
+                name: "a".to_string(),
+                file: Some(a),
+                ..Default::default()
+            },
+        );
+        graph.add_goal(crate::dep::GoalDepNode {
+            dep: crate::dep::DepNode {
+                file: Some(a),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let (order, cycle) = analysis_order(&graph);
+        assert!(cycle.is_some_and(|c| c.contains("a") && c.contains("b")));
+        // Both nodes still reach the plugin exactly once.
+        assert_eq!(order.len(), 2);
+    }
+
+    /// The digest is stable across two builds of the same graph and moves
+    /// when the graph does — the whole basis of the `deterministic` promise.
+    #[test]
+    fn input_digest_is_stable_and_structure_sensitive() {
+        let settings = BTreeMap::new();
+        let base = input_digest(&chain_graph(), &settings);
+        assert_eq!(base, input_digest(&chain_graph(), &settings));
+
+        let mut changed = chain_graph();
+        let extra = changed.add_file(FileNode::new(b"extra.h".to_vec()));
+        let main_o = crate::file::FileId::from_bytes(b"main.o");
+        changed.add_dep(
+            main_o,
+            crate::dep::DepNode {
+                name: "extra.h".to_string(),
+                file: Some(extra),
+                ..Default::default()
+            },
+        );
+        assert_ne!(base, input_digest(&changed, &settings));
+    }
+
+    /// The digest has to move when the requested goals move. `make prog`
+    /// and `make main.o` read one unchanged makefile into one identical file
+    /// arena, but the analysis walk starts from the goals, so the plugin
+    /// sees a different `graph.goals`, a different `session.goal-names` and
+    /// a different set of analysed nodes. A digest blind to that would let a
+    /// cache hand back the artifact built for the other invocation.
+    #[test]
+    fn input_digest_covers_the_requested_goals() {
+        let settings = BTreeMap::new();
+        let prog = input_digest(&chain_graph(), &settings);
+
+        let mut other = chain_graph();
+        other.add_goal(crate::dep::GoalDepNode {
+            dep: crate::dep::DepNode {
+                name: "main.o".to_string(),
+                file: Some(crate::file::FileId::from_bytes(b"main.o")),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        assert_ne!(
+            prog,
+            input_digest(&other, &settings),
+            "a second goal must change the digest"
+        );
+    }
+
+    /// Settings are part of the digest: the same graph analysed with a
+    /// different configuration is a different question and must not hit a
+    /// cache entry for the first one.
+    #[test]
+    fn input_digest_covers_instance_settings() {
+        let graph = chain_graph();
+        let mut settings = BTreeMap::new();
+        let base = input_digest(&graph, &settings);
+        settings.insert("out.database".to_string(), "elsewhere.json".to_string());
+        assert_ne!(base, input_digest(&graph, &settings));
+    }
+
+    /// Unnamespaced provider ids are rejected, so two unrelated plugins
+    /// cannot collide on `"info"`.
+    #[test]
+    fn provider_ids_must_be_namespaced() {
+        assert!(valid_provider_id("makers:cc/compile-command").is_ok());
+        assert!(valid_provider_id("info").is_err());
+        assert!(valid_provider_id("makers:cc").is_err());
+        assert!(valid_provider_id(":cc/x").is_err());
+    }
+
+    fn manifest(caps: &[host::Capability]) -> PluginInfo {
+        PluginInfo {
+            name: "p".to_string(),
+            version: "0".to_string(),
+            description: String::new(),
+            phases: vec![Phase::Analyze],
+            capabilities: caps.to_vec(),
+            outputs: Vec::new(),
+            deterministic: false,
+            failure_policy: FailurePolicy::Advisory,
+        }
+    }
+
+    fn caps_of(info: &PluginInfo) -> Caps {
+        info.capabilities
+            .iter()
+            .fold(Caps::empty(), |acc, c| acc | Caps::from_wit(*c))
+    }
+
+    /// A plugin that declares `fatal` without asking for `fail-build` is
+    /// refused rather than silently downgraded: a policy gate that stops
+    /// gating without saying so is worse than one that refuses to start.
+    #[test]
+    fn fatal_without_fail_build_is_refused() {
+        let mut info = manifest(&[]);
+        info.failure_policy = FailurePolicy::Fatal;
+        assert!(coherent(&info, caps_of(&info)).is_err());
+
+        let mut ok = manifest(&[host::Capability::FailBuild]);
+        ok.failure_policy = FailurePolicy::Fatal;
+        assert!(coherent(&ok, caps_of(&ok)).is_ok());
+    }
+
+    /// `deterministic` is checked, not merely trusted: a clock or the
+    /// environment are both ways to depend on state the input digest does
+    /// not cover.
+    #[test]
+    fn deterministic_rejects_the_nondeterministic_capabilities() {
+        for cap in [
+            host::Capability::WallClock,
+            host::Capability::ReadEnvironment,
+        ] {
+            let mut info = manifest(&[cap]);
+            info.deterministic = true;
+            assert!(
+                coherent(&info, caps_of(&info)).is_err(),
+                "{cap:?} should be incompatible with `deterministic`"
+            );
+        }
+    }
+
+    /// Declaring an output without asking for the capability to write one
+    /// would fail later, at `artifacts.open`, after the plugin had already
+    /// done its work. Catching it at load turns a confusing runtime error
+    /// into a load-time one.
+    #[test]
+    fn declared_outputs_require_write_outputs() {
+        let decl = host::OutputDecl {
+            logical_name: "database".to_string(),
+            default_path: "db.json".to_string(),
+            description: String::new(),
+        };
+        let mut info = manifest(&[]);
+        info.outputs = vec![decl.clone()];
+        assert!(coherent(&info, caps_of(&info)).is_err());
+
+        let mut ok = manifest(&[host::Capability::WriteOutputs]);
+        ok.outputs = vec![decl.clone(), decl];
+        assert!(
+            coherent(&ok, caps_of(&ok)).is_err(),
+            "a duplicated logical name is ambiguous and must be refused"
+        );
+    }
+
+    /// A manifest may not name a path outside make's working directory. The
+    /// host does the writing, so an unchecked `default-path` turns "load
+    /// this plugin" into "overwrite this file" — and `write-outputs` is in
+    /// `DEFAULT_GRANT`, so loading it is all an attacker would need.
+    #[test]
+    fn manifest_output_paths_are_confined_to_the_working_directory() {
+        for bad in [
+            "/etc/cron.d/pwn",
+            "../../.ssh/authorized_keys",
+            "build/../../escape",
+            "   ",
+        ] {
+            assert!(
+                confined(bad).is_err(),
+                "`{bad}` must be refused as an output path"
+            );
+        }
+        for good in ["compile_commands.json", "build/graph.dot", "./out/db.json"] {
+            assert!(confined(good).is_ok(), "`{good}` must be accepted");
+        }
+    }
+
+    /// The refusal happens at manifest validation, so the plugin never runs
+    /// — the path is not silently rewritten into the working directory,
+    /// which would leave the operator with an artifact where they did not
+    /// ask for one and no indication why.
+    #[test]
+    fn an_escaping_output_path_refuses_the_manifest() {
+        let mut info = manifest(&[host::Capability::WriteOutputs]);
+        info.outputs = vec![host::OutputDecl {
+            logical_name: "db".to_string(),
+            default_path: "../../etc/shadow".to_string(),
+            description: String::new(),
+        }];
+        let err = coherent(&info, caps_of(&info)).expect_err("must be refused");
+        assert!(err.contains("escape"), "unexpected message: {err}");
+    }
+
+    /// Instances are named, settings are addressed by instance, and dotted
+    /// keys survive the split.
+    #[test]
+    fn instances_take_names_paths_and_settings() {
+        let specs = parse_instances(
+            Some("compdb=./cc.wasm, graph=./g.wasm"),
+            None,
+            Some("compdb.out.database=build/db.json;graph.rankdir=TB;absent.k=v"),
+            None,
+            None,
+        );
+        assert_eq!(specs.len(), 2);
+        let compdb = spec_named(&specs, "compdb");
+        assert_eq!(compdb.path, PathBuf::from("./cc.wasm"));
+        assert_eq!(
+            compdb.settings.get("out.database").map(String::as_str),
+            Some("build/db.json")
+        );
+        assert_eq!(
+            spec_named(&specs, "graph").settings.get("rankdir"),
+            Some(&"TB".to_string())
+        );
+    }
+
+    /// A bare path is still an addressable instance, named after its stem.
+    #[test]
+    fn a_bare_path_is_named_after_its_stem() {
+        let specs = parse_instances(Some("./tools/lint.wasm"), None, None, None, None);
+        assert_eq!(specs[0].name, "lint");
+    }
+
+    /// The single-anonymous-plugin tap this interface grew out of keeps
+    /// working, as the instance `default`.
+    #[test]
+    fn the_legacy_extension_variable_becomes_an_instance() {
+        let specs = parse_instances(None, Some("./old.wasm"), None, None, None);
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "default");
+        assert_eq!(specs[0].allowed, Caps::DEFAULT_GRANT);
+    }
+
+    /// Grants and denials are per instance, `*` reaches all of them, and
+    /// denial is applied after grant so it always wins.
+    #[test]
+    fn capability_policy_is_per_instance_and_deny_wins() {
+        let specs = parse_instances(
+            Some("a=./a.wasm,b=./b.wasm"),
+            None,
+            None,
+            Some("a:expand-variables,read-file-content;*:wall-clock"),
+            Some("a:read-recipes"),
+        );
+        let a = spec_named(&specs, "a");
+        let b = spec_named(&specs, "b");
+        assert!(a.allowed.contains(Caps::EXPAND_VARIABLES));
+        assert!(a.allowed.contains(Caps::READ_FILE_CONTENT));
+        assert!(!a.allowed.contains(Caps::READ_RECIPES), "deny must win");
+        assert!(a.allowed.contains(Caps::WALL_CLOCK), "`*` reaches a");
+        assert!(b.allowed.contains(Caps::WALL_CLOCK), "`*` reaches b");
+        assert!(!b.allowed.contains(Caps::EXPAND_VARIABLES));
+        assert!(b.allowed.contains(Caps::READ_RECIPES), "b was not denied");
+    }
+
+    /// Nothing configured means nothing runs — the plugin pass must be
+    /// invisible to every build that does not ask for it.
+    #[test]
+    fn no_configuration_means_no_instances() {
+        assert!(parse_instances(None, None, None, None, None).is_empty());
+        assert!(parse_instances(Some(""), Some(""), Some(""), None, None).is_empty());
+    }
+
+    /// The default grant is the read-only view of what make already read,
+    /// plus a declared output. Everything that reaches further is opt-in.
+    #[test]
+    fn the_default_grant_withholds_the_reaching_capabilities() {
+        let d = Caps::DEFAULT_GRANT;
+        assert!(d.contains(Caps::READ_RECIPES | Caps::READ_VARIABLES | Caps::WRITE_OUTPUTS));
+        for withheld in [
+            Caps::EXPAND_VARIABLES,
+            Caps::READ_ENVIRONMENT,
+            Caps::READ_FILE_CONTENT,
+            Caps::WALL_CLOCK,
+            Caps::FAIL_BUILD,
+        ] {
+            assert!(!d.intersects(withheld), "{withheld:?} must be opt-in");
+        }
     }
 }

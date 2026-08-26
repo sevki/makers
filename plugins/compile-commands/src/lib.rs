@@ -56,11 +56,97 @@ const SOURCE_EXTENSIONS: &[&str] = &["c", "cc", "cpp", "cxx", "c++", "m", "mm", 
 /// read.
 const OBJECT_EXTENSIONS: &[&str] = &["o", "obj", "a", "lo", "la", "so", "dylib"];
 
+/// Characters that mean a `$(...)` span is a function call or a
+/// substitution reference rather than a plain variable name.
+fn is_plain_name(inner: &str) -> bool {
+    !inner.is_empty()
+        && !inner.chars().any(|c| {
+            c.is_whitespace() || matches!(c, ',' | '$' | '(' | ')' | '{' | '}' | ':' | '=')
+        })
+}
+
+/// Every plain variable reference in `text`, descending into function calls:
+/// `$(addprefix -l,$(LIBS))` yields `LIBS`.
+///
+/// Iterative rather than recursive because `text` is makefile-supplied and
+/// nesting depth is not bounded by anything this plugin controls; in a
+/// component a stack overflow is a trap that loses the entire run.
+fn referenced_variables(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut work = vec![text];
+    while let Some(cur) = work.pop() {
+        let bytes = cur.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] != b'$' {
+                i += 1;
+                continue;
+            }
+            let (open, close) = match bytes.get(i + 1) {
+                Some(b'(') => (b'(', b')'),
+                Some(b'{') => (b'{', b'}'),
+                // `$$` is a literal dollar and `$X` is an automatic, which
+                // `expand_recipe_line` has already substituted. Neither can
+                // introduce a target-scoped reference here.
+                _ => {
+                    i += 1;
+                    continue;
+                }
+            };
+            let mut depth = 1;
+            let mut j = i + 2;
+            while j < bytes.len() && depth > 0 {
+                if bytes[j] == open {
+                    depth += 1;
+                } else if bytes[j] == close {
+                    depth -= 1;
+                }
+                j += 1;
+            }
+            if depth != 0 {
+                break;
+            }
+            // `$`, `(`, `)`, `{` and `}` are ASCII, so these indices are
+            // always on character boundaries.
+            let inner = &cur[i + 2..j - 1];
+            if is_plain_name(inner) {
+                out.push(inner.to_string());
+            } else {
+                work.push(inner);
+            }
+            i = j;
+        }
+    }
+    out
+}
+
+/// The first reference in `text` that make's *global* expander would resolve
+/// differently from `target`.
+///
+/// This is the seam between the two expanders. `expand_recipe_line`
+/// substitutes what it can in the target's scope and leaves balanced
+/// function calls alone, so what reaches `vars::expand` is a call whose
+/// arguments have never been looked at — and `vars::expand` runs in global
+/// scope by design (there is deliberately no `expand-for`; see
+/// `wit/makers-plugin/vars.wit`). For `debug.o: LIBS := debug` and a recipe
+/// saying `$(addprefix -l,$(LIBS))`, that hands back the *global* `LIBS`,
+/// and the result looks fully expanded, so nothing downstream can tell it is
+/// wrong. A compile database that is confidently wrong about a flag is worse
+/// than one missing an entry: clangd reports errors against source that
+/// compiles.
+fn globally_misexpanded(target: &Node, text: &str) -> Option<String> {
+    referenced_variables(text).into_iter().find(|name| {
+        let scoped = target.variable(name).map(|v| v.value);
+        scoped.is_some() && scoped != makers_plugin::vars::get(name).map(|v| v.value)
+    })
+}
+
 struct CompileCommands;
 
 thread_local! {
     static ENTRIES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     static UNRESOLVED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static TARGET_SCOPED: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
 }
 
 fn json_escape(s: &str) -> String {
@@ -159,6 +245,12 @@ impl Analyzer for CompileCommands {
         // entry, because a half-expanded command line makes clangd report
         // phantom errors for the whole translation unit.
         let command = if command.contains('$') {
+            // Refuse before asking the global expander a question whose
+            // answer would be silently wrong for this target.
+            if let Some(name) = globally_misexpanded(target, command) {
+                TARGET_SCOPED.with(|t| t.borrow_mut().push((target.name(), name)));
+                return Ok(Vec::new());
+            }
             match makers_plugin::vars::expand(command) {
                 Ok(expanded) if !expanded.contains('$') => expanded,
                 _ => {
@@ -201,6 +293,17 @@ impl Analyzer for CompileCommands {
         if let Some(path) = makers_plugin::output_path("database") {
             makers_plugin::note(&format!("wrote {count} entries to {path}"));
         }
+        TARGET_SCOPED.with(|t| {
+            let scoped = t.borrow();
+            if let Some((target, name)) = scoped.first() {
+                makers_plugin::warn(&format!(
+                    "{} recipe(s) were skipped because a function argument reads a \
+                     target-specific variable make's global expander would resolve \
+                     differently (first: `{name}` in {target})",
+                    scoped.len()
+                ));
+            }
+        });
         UNRESOLVED.with(|u| {
             let unresolved = u.borrow();
             if !unresolved.is_empty() {

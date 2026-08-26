@@ -176,6 +176,12 @@ interface graph {
 
         /// Direct prerequisites, in makefile order. Order is load-bearing —
         /// it is `$^`, and `$<` is its first element.
+        ///
+        /// One documented exception: under `--shuffle` (with a mode that
+        /// reorders, and a parallel build) make has already permuted these
+        /// lists in place before any plugin runs, and the original order is
+        /// not recoverable. The host says so on stderr when it happens. It
+        /// is not a mode to generate artifacts in.
         deps: func() -> node-set;
         /// The same edges with their flags and as-written names.
         dep-edges: func() -> list<dep-edge>;

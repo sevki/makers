@@ -247,10 +247,59 @@ fn granting_expand_variables_completes_the_command() {
     );
     let db = run.artifact("compile_commands.json");
     let command = "cc -Wall -c -o lib.o lib.c -lm -lpthread";
-    assert!(db.contains(command), "expected the fully expanded command:\n{db}");
+    assert!(
+        db.contains(command),
+        "expected the fully expanded command:\n{db}"
+    );
     assert!(
         run.stdout.contains(command),
         "and it should be exactly what make printed:\n{}",
         run.stdout
+    );
+}
+
+/// A function argument that reads a *target-specific* variable is skipped
+/// rather than expanded in the wrong scope.
+///
+/// `vars.expand` is make's expander running in make's global scope — there is
+/// deliberately no `expand-for` — so `$(addprefix -l,$(LIBS))` under
+/// `debug.o: LIBS := debug` would come back as the global `-lm -lpthread`.
+/// The result contains no `$`, so nothing downstream can tell it is wrong,
+/// and clangd would report errors against source that compiles. The entry is
+/// dropped and the reason is reported instead.
+///
+/// The sibling target in the same fixture, whose `LIBS` is the global one,
+/// still comes out fully expanded — the guard has to be about scope, not
+/// about the presence of a function call.
+#[test]
+fn a_target_scoped_variable_inside_a_function_is_not_expanded_globally() {
+    let plugin = component("compile-commands", "compile_commands");
+    let dir = workdir("plugin_expand_scoped.mk", &["lib.c", "debug.c"]);
+    let spec = format!("compdb={}", plugin.display());
+    let run = run_make(
+        &dir,
+        &[
+            ("MAKERS_PLUGINS", &spec),
+            ("MAKERS_PLUGIN_ALLOW", "compdb:expand-variables"),
+        ],
+    );
+    assert_clean(&run);
+    let db = run.artifact("compile_commands.json");
+    assert!(
+        db.contains("cc -Wall -c -o lib.o lib.c -lm -lpthread"),
+        "the globally-scoped target still expands:\n{db}"
+    );
+    assert!(
+        !db.contains("debug.o"),
+        "the target-scoped one must be skipped, not guessed at:\n{db}"
+    );
+    assert!(
+        !db.contains("-ldebug"),
+        "and certainly not emitted with either scope's value:\n{db}"
+    );
+    assert!(
+        run.stderr.contains("target-specific variable") && run.stderr.contains("LIBS"),
+        "the plugin has to say which variable made it stop:\n{}",
+        run.stderr
     );
 }

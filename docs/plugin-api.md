@@ -163,7 +163,22 @@ cacheable — see 3.9.
 A dependency cycle is reported and dropped rather than propagated, matching
 make's own `Circular X <- Y dependency dropped`. A plugin pass that refused
 to run on graphs make itself builds happily would be useless on exactly the
-makefiles most worth inspecting.
+makefiles most worth inspecting. The dropped edge also does not leak into
+the sets: a cycle that leads back to a node must not put that node in its own
+`transitive-deps`, or a consumer turning the set into a link line emits a
+self-referential rule.
+
+The one case where the order guarantee does not hold is `--shuffle`, and it
+is worth being precise about why. That flag exists to permute prerequisite
+order and expose missing dependencies; this port applies the permutation to
+`FileNode::deps` and the goal list *in place*, where the C implementation
+kept the original `->next` chain beside a separate `->shuf` link. By the
+time the analysis pass runs, makefile order is therefore not recoverable.
+The host detects this and says so on stderr rather than letting a plugin
+emit a compile database in scheduler order and call it reproducible.
+Restoring the guarantee would mean making the shuffle non-destructive, which
+is a change to make's own scheduling code and does not belong in the
+interface change.
 
 ### 3.5 Providers
 
@@ -261,6 +276,19 @@ things: the plugin needs no write capability at all, the artifact set is
 knowable *before* the plugin runs (so make can report or clean it), and the
 host can in principle serve a cache hit without instantiating the component.
 
+It buys none of them if the *destination* comes from the component. The host
+performs the write, with the invoking user's privileges, so a manifest
+naming `/etc/cron.d/x` or `../../.ssh/authorized_keys` would turn "load this
+plugin" into "overwrite this file" — and `write-outputs` is granted by
+default, so loading it would be the whole attack. A declared `default-path`
+is therefore required to be relative and non-escaping, and a manifest that
+breaks the rule is refused before the component is instantiated rather than
+having its path quietly rewritten. A path an *operator* supplies through
+`--plugin-arg out.<name>=<path>` is not constrained: they are spending
+authority they already hold, and confining them would only break the
+legitimate case (`out.database=/tmp/cc.json`). The manifest proposes; the
+operator decides.
+
 ### 3.8 Diagnostics and a declared failure policy
 
 `diagnostics.emit` takes a severity, a message and an optional makefile
@@ -287,7 +315,13 @@ stops gating is worse than one that refuses to start.
 
 `session.input-digest()` is BLAKE3 over everything the analysis phase can
 observe about the graph — node identity, dependency structure, edge flags,
-recipe text, per-target variables — plus this instance's settings. A plugin
+recipe text, per-target variables — plus the ordered goal list and this
+instance's settings. The goals belong in it because the walk *starts* from
+them: `make lib` and `make tests` read one unchanged makefile into one
+identical file arena but hand the plugin a different `graph.goals`, a
+different `session.goal-names`, and a different set of analysed nodes. A
+digest blind to that would let the cache below serve the artifact built for
+the other invocation. A plugin
 may declare `deterministic: true`, promising its declared outputs are a
 function of what it read through these interfaces; the host may then skip it
 entirely when the digest matches the one recorded beside its previous
@@ -420,6 +454,18 @@ doubles as the discovery path for switching it on, and skips such recipes —
 saying so — when it is not granted, rather than writing a half-expanded
 command line that would make clangd report phantom errors for the whole
 translation unit.
+
+The seam between the two expanders is where the interesting bug lives, and
+it is worth stating because it is the price of not having `expand-for`.
+Target-scoped substitution leaves a balanced function call alone, so what
+reaches `vars.expand` is a call whose *arguments* have never been looked at
+— and `vars.expand` runs in make's global scope. Under `debug.o: LIBS :=
+debug`, expanding `$(addprefix -l,$(LIBS))` globally yields the global
+`LIBS`, and the answer contains no `$`, so nothing downstream can tell it is
+wrong. The plugin therefore checks the references left in the text against
+the target's own scope first and skips the entry when they disagree. A
+compile database that is confidently wrong about a flag is worse than one
+missing an entry: clangd reports errors against source that compiles.
 
 **`plugins/graphviz-export`** is the #647 plugin rebuilt. It writes a
 declared artifact instead of stderr, draws order-only prerequisites as the
