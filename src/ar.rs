@@ -1,20 +1,8 @@
 use crate::output::FmtArg;
+#[cfg(target_family = "wasm")]
+use crate::compat::fnmatch;
 #[cfg(unix)]
 use libc::fnmatch;
-
-/// wasm has no `fnmatch(3)`: archive-member glob matching (`ar` `$(...)`
-/// patterns) is part of the same not-yet-portable filesystem surface as the
-/// rest of this module. Report "no match" rather than panicking, so the
-/// call sites that only need this crate to compile on wasm still behave
-/// sanely if ever reached.
-#[cfg(target_family = "wasm")]
-unsafe fn fnmatch(
-    _pattern: *const ::core::ffi::c_char,
-    _string: *const ::core::ffi::c_char,
-    _flags: i32,
-) -> i32 {
-    1
-}
 
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
 use crate::file::{Dep, File, SeqNode};

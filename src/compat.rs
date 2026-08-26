@@ -10,9 +10,10 @@
 //! are an accepted, tracked architectural gap on wasm (make cannot fork or
 //! exec a recipe there); every stand-in below reports failure or a inert
 //! default rather than doing real work, and is compiled in only for wasm —
-//! unix keeps using the real `libc` items unchanged. `stpcpy` is the one
-//! exception: it is a pure buffer-copy with no OS dependency, so it is
-//! implemented for real rather than stubbed out.
+//! unix keeps using the real `libc` items unchanged. `stpcpy` and `fnmatch`
+//! are the exceptions: both are pure, OS-independent computations (a buffer
+//! copy and a glob matcher), so they are implemented for real rather than
+//! stubbed out.
 
 use ::core::ffi::{c_char, c_double, c_int, c_long, c_short};
 
@@ -170,9 +171,148 @@ pub unsafe fn stpcpy(dst: *mut c_char, src: *const c_char) -> *mut c_char {
     }
 }
 
+// ---------------------------------------------------------------------------
+// `fnmatch` — a pure glob matcher, not OS-dependent, so implemented for real.
+//
+// Supports the subset of POSIX fnmatch(3) this crate's callers actually use:
+// `*`, `?`, and `[...]`/`[!...]` bracket expressions (with `a-z` ranges), plus
+// the `FNM_PATHNAME` and `FNM_PERIOD` flags. No `FNM_NOESCAPE`/`FNM_CASEFOLD`
+// support since no caller passes them.
+
+/// Returned by [`fnmatch`] when `string` does not match `pattern`, matching
+/// glibc's `FNM_NOMATCH`.
+pub const FNM_NOMATCH: c_int = 1;
+
+const FNM_PATHNAME: c_int = 1 << 0;
+const FNM_PERIOD: c_int = 1 << 2;
+
+/// `string` is "at a leading position" for [`FNM_PERIOD`] purposes: the very
+/// start of the string, or (under `FNM_PATHNAME`) right after a `/`.
+fn is_leading(text: &[u8], pos: usize, flags: c_int) -> bool {
+    pos == 0 || (flags & FNM_PATHNAME != 0 && pos > 0 && text[pos - 1] == b'/')
+}
+
+fn bracket_match(class: &[u8], c: u8) -> bool {
+    let (negate, class) = match class.first() {
+        Some(b'!') | Some(b'^') => (true, &class[1..]),
+        _ => (false, class),
+    };
+    let mut i = 0;
+    let mut hit = false;
+    while i < class.len() {
+        if i + 2 < class.len() && class[i + 1] == b'-' {
+            if class[i] <= c && c <= class[i + 2] {
+                hit = true;
+            }
+            i += 3;
+        } else {
+            if class[i] == c {
+                hit = true;
+            }
+            i += 1;
+        }
+    }
+    hit != negate
+}
+
+/// `pi`/`ti` are absolute indices into `pat`/`text` (never re-sliced on
+/// recursion) so [`is_leading`]'s `/`-lookback stays correct at every depth.
+fn do_match(pat: &[u8], mut pi: usize, text: &[u8], mut ti: usize, flags: c_int) -> bool {
+    while pi < pat.len() {
+        match pat[pi] {
+            b'*' => {
+                while pi < pat.len() && pat[pi] == b'*' {
+                    pi += 1;
+                }
+                // A leading period can't be absorbed into a `*`'s wildcard
+                // span; only a zero-length expansion (leaving the dot for
+                // the rest of the pattern to match explicitly) is allowed.
+                let dot_blocks_star = flags & FNM_PERIOD != 0
+                    && ti < text.len()
+                    && text[ti] == b'.'
+                    && is_leading(text, ti, flags);
+                let end_k = if dot_blocks_star { ti } else { text.len() };
+                for k in ti..=end_k {
+                    if flags & FNM_PATHNAME != 0 && text[ti..k].contains(&b'/') {
+                        break;
+                    }
+                    if do_match(pat, pi, text, k, flags) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            b'?' => {
+                if ti >= text.len() || (flags & FNM_PATHNAME != 0 && text[ti] == b'/') {
+                    return false;
+                }
+                if flags & FNM_PERIOD != 0 && text[ti] == b'.' && is_leading(text, ti, flags) {
+                    return false;
+                }
+                pi += 1;
+                ti += 1;
+            }
+            b'[' => {
+                let Some(close) = pat[pi + 1..].iter().position(|&b| b == b']').map(|i| i + pi + 1)
+                else {
+                    // No closing `]`: treat `[` as a literal, like glibc does.
+                    if ti >= text.len() || text[ti] != b'[' {
+                        return false;
+                    }
+                    pi += 1;
+                    ti += 1;
+                    continue;
+                };
+                if ti >= text.len() || (flags & FNM_PATHNAME != 0 && text[ti] == b'/') {
+                    return false;
+                }
+                if flags & FNM_PERIOD != 0 && text[ti] == b'.' && is_leading(text, ti, flags) {
+                    return false;
+                }
+                if !bracket_match(&pat[pi + 1..close], text[ti]) {
+                    return false;
+                }
+                pi = close + 1;
+                ti += 1;
+            }
+            c => {
+                if ti >= text.len() || text[ti] != c {
+                    return false;
+                }
+                pi += 1;
+                ti += 1;
+            }
+        }
+    }
+    ti == text.len()
+}
+
+/// Match `string` against the glob `pattern`, returning `0` on a match and
+/// [`FNM_NOMATCH`] otherwise — the subset of glibc's `fnmatch(3)` that
+/// archive-member glob matching (`ar.rs`) actually exercises.
+///
+/// # Safety
+/// `pattern` and `string` must be valid NUL-terminated C strings.
+pub unsafe fn fnmatch(pattern: *const c_char, string: *const c_char, flags: c_int) -> c_int {
+    let pat = ::core::ffi::CStr::from_ptr(pattern).to_bytes();
+    let text = ::core::ffi::CStr::from_ptr(string).to_bytes();
+    if do_match(pat, 0, text, 0, flags) {
+        0
+    } else {
+        FNM_NOMATCH
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::stpcpy;
+    use super::{fnmatch, stpcpy, FNM_NOMATCH, FNM_PATHNAME, FNM_PERIOD};
+    use std::ffi::CString;
+
+    fn matches(pattern: &str, text: &str, flags: ::core::ffi::c_int) -> bool {
+        let pattern = CString::new(pattern).unwrap();
+        let text = CString::new(text).unwrap();
+        unsafe { fnmatch(pattern.as_ptr(), text.as_ptr(), flags) == 0 }
+    }
 
     /// Copies `src` (as a NUL-terminated C string) into a same-sized `dst`
     /// buffer via `stpcpy`, returning `(dst contents, offset of the
@@ -199,5 +339,51 @@ mod tests {
         let (dst, offset) = run(b"");
         assert_eq!(dst, b"\0");
         assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn fnmatch_literal_and_star_and_question() {
+        assert!(matches("foo.o", "foo.o", 0));
+        assert!(!matches("foo.o", "foo.c", 0));
+        assert!(matches("*.o", "foo.o", 0));
+        assert!(matches("*.o", "a/b.o", 0));
+        assert!(matches("fo?.o", "foo.o", 0));
+        assert!(!matches("fo?.o", "fooo.o", 0));
+    }
+
+    #[test]
+    fn fnmatch_bracket_expressions() {
+        assert!(matches("[abc].o", "b.o", 0));
+        assert!(!matches("[abc].o", "d.o", 0));
+        assert!(matches("[a-z].o", "m.o", 0));
+        assert!(matches("[!a-z].o", "M.o", 0));
+        assert!(!matches("[!a-z].o", "m.o", 0));
+    }
+
+    #[test]
+    fn fnmatch_pathname_flag_restricts_wildcards_to_path_segment() {
+        assert!(matches("*.o", "a/b.o", 0));
+        assert!(!matches("*.o", "a/b.o", FNM_PATHNAME));
+        assert!(matches("*/*.o", "a/b.o", FNM_PATHNAME));
+        assert!(matches("?/b.o", "a/b.o", FNM_PATHNAME));
+        assert!(!matches("a?b.o", "a/b.o", FNM_PATHNAME));
+    }
+
+    #[test]
+    fn fnmatch_period_flag_requires_explicit_leading_dot() {
+        assert!(matches(".*", ".hidden", FNM_PERIOD));
+        assert!(!matches("*", ".hidden", FNM_PERIOD));
+        assert!(matches("*", ".hidden", 0));
+        assert!(!matches("?hidden", ".hidden", FNM_PERIOD));
+    }
+
+    #[test]
+    fn fnmatch_returns_fnm_nomatch_constant_on_mismatch() {
+        let pattern = CString::new("*.o").unwrap();
+        let text = CString::new("foo.c").unwrap();
+        assert_eq!(
+            unsafe { fnmatch(pattern.as_ptr(), text.as_ptr(), 0) },
+            FNM_NOMATCH
+        );
     }
 }
