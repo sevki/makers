@@ -701,21 +701,41 @@ capability that would let it substitute compilers.
   says so in its source, which is a plugin author working around an interface
   defect rather than a design.
 
-  Two fixes, and the choice is not obvious. Adding `read-variables` to the
-  set `deterministic` refuses (beside `wall-clock`, `read-environment` and
-  `expand-variables`) is one line and makes the promise sound, but it rules
-  out the combination for every plugin that only reads *per-target*
-  variables, which the digest does cover. Hashing the global set into the
-  digest is the better answer and needs the same hash-table iteration path
-  as the entry below, which is why the two are listed together.
+  The obvious first fix is to add `read-variables` to the set
+  `deterministic` refuses (beside `wall-clock`, `read-environment` and
+  `expand-variables`): one line, and it makes the promise sound. It also
+  rules out the combination for every plugin that only reads *per-target*
+  variables, which the digest does cover, so it buys soundness by forbidding
+  the useful case.
+
+  Hashing the global set into the digest is the better answer, and it is
+  *cheap* — an earlier draft of this section claimed it needed the hash-table
+  iteration path from the entry below, and that was wrong. `.VARIABLES` is a
+  special variable this port already implements (`lookup_special_var`,
+  memoised, in `src/variable.rs`), so the inventory is reachable through the
+  existing by-name lookup with no new traversal at all.
+
+  What the cost estimate was hiding is a real question about *which* globals.
+  `.VARIABLES` includes environment-origin variables, because make imports
+  the environment into the variable set, and `vars.get` is gated on
+  `read-variables` alone — `read-environment` gates `session.env`. So hashing
+  everything is sound but makes the digest turn over with `TERM` and
+  `SSH_AUTH_SOCK`, leaving `deterministic` correct and never cacheable;
+  hashing only the non-environment globals keeps the cache useful but is
+  unsound, because a plugin holding only `read-variables` can still read an
+  environment-origin value. The coherent version is to gate environment-origin
+  reads behind `read-environment` — which is already in the set
+  `deterministic` refuses — and hash the rest. That is a change to what an
+  existing capability governs, so it is recorded here rather than assumed.
 * **Provider payload conventions.** Namespacing is enforced; encoding is not
   suggested. A recommended encoding (and an SDK helper for it) would make
   cross-plugin composition much likelier to actually happen.
 * **Enumerating global variables.** `vars.get` is by name. A plugin
-  exporting a `.env` or a `BUILD` file wants the whole set, which needs an
-  iteration path over the C hash table that does not exist yet. The same
-  path would let the digest cover globals and close the soundness gap above,
-  so it is worth more than its size suggests.
+  exporting a `.env` or a `BUILD` file wants the whole set. A `vars.all`
+  returning name/value/origin triples would serve that directly; note that
+  `.VARIABLES` already provides the *names* without any new traversal (see
+  the digest entry above), so this is a matter of shaping an interface rather
+  than of reaching the data.
 * **Non-UTF-8 target names.** They arrive lossily converted, as make's own
   display path converts them; `node.id()` stays byte-exact. Byte-exact
   *names* would need `list<u8>` accessors, which is worth doing only if a
