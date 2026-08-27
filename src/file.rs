@@ -985,7 +985,7 @@ pub fn push_double_colon_entry(ctx: &crate::execctx::ExecContext, head: FileId) 
 /// leading `./` (or `.//`, `././`, …) segments. An all-`./` name canonicalizes
 /// to `"./"`. Operates on the raw name bytes (no NUL, no `c_char`) and returns
 /// the canonical key bytes, so it is usable from safe code.
-fn normalize_lookup_name_bytes(name: &[u8]) -> &[u8] {
+pub(crate) fn normalize_lookup_name_bytes(name: &[u8]) -> &[u8] {
     let n = name.len();
     let mut pos = 0usize;
     // Mirror the c2rust loop, which reads `name[pos+2]` against the NUL

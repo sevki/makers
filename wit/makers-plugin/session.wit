@@ -1,0 +1,66 @@
+package makers:plugin@1.0.0;
+
+/// Facts about *this* invocation of make, and this plugin instance's own
+/// configuration.
+///
+/// A plugin is not a script that ships with one makefile; it is a binary
+/// several projects load with different settings. `--plugin compdb=...` and
+/// `--plugin-arg compdb:output=build/compile_commands.json` is the same
+/// separation Bazel draws between a `.bzl` rule and the attributes a
+/// `BUILD` file passes it, and it is what lets one compiled artefact be
+/// reused rather than forked per project.
+interface session {
+    /// The name this instance was configured under (`compdb` above), not
+    /// the name the plugin gave itself in its manifest. Two instances of one
+    /// component can run with different settings; this is how a plugin tells
+    /// them apart when it labels output.
+    instance-name: func() -> string;
+
+    /// One setting, from `--plugin-arg <instance>:<key>=<value>`.
+    setting: func(key: string) -> option<string>;
+    /// All of them, sorted by key — sorted so that a plugin hashing its own
+    /// configuration gets a stable answer.
+    settings: func() -> list<tuple<string, string>>;
+
+    /// Absolute path of the directory make is running in. Compile databases
+    /// are required to carry it (`"directory"` in the LSP/clangd schema),
+    /// and it is the only way a plugin can turn make's relative target names
+    /// into paths a different tool can open.
+    working-directory: func() -> string;
+
+    /// Makefiles read for this session, in read order — including files
+    /// pulled in by `include`, and the built-in database unless `-r`.
+    /// A plugin that regenerates a build description needs this to know
+    /// what it must re-run for.
+    makefiles: func() -> list<string>;
+
+    /// Goals as written on the command line. Empty means the default goal.
+    goal-names: func() -> list<string>;
+
+    /// `-n`/`--just-print`. A plugin that would otherwise touch the world
+    /// must honour this the same way recipes do.
+    dry-run: func() -> bool;
+    /// `-j N`; `0` for unlimited, `1` for serial.
+    job-slots: func() -> u32;
+
+    /// BLAKE3 (hex) over the resolved graph and this instance's settings.
+    ///
+    /// This is the interface's answer to incrementality, and it is the piece
+    /// Starlark structurally cannot offer. Bazel gets cheap re-analysis by
+    /// making Starlark pure and memoising the evaluation graph in-process;
+    /// the moment a rule needs to look at the outside world it has to become
+    /// a `repository_rule`, whose invalidation is famously hand-managed. A
+    /// wasm plugin does not need to be pure to be cacheable, because every
+    /// input it can reach comes through this host: the host can therefore
+    /// *name* the inputs, and a plugin that finds its previous output tagged
+    /// with the same digest can skip its work outright.
+    input-digest: func() -> string;
+
+    /// One process environment variable. Requires `read-environment`:
+    /// the environment is where credentials live, and a plugin that walks a
+    /// dependency graph has no business reading `AWS_SECRET_ACCESS_KEY`.
+    /// Note that makefile variables of environment origin are *not* covered
+    /// by this — those come through `vars.get`, because make has already
+    /// decided they are part of the build.
+    env: func(name: string) -> option<string>;
+}

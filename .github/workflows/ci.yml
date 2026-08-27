@@ -418,17 +418,30 @@ jobs:
             - name: Run the test suite (unit + fixture smoke)
               run: cargo test
 
+            # `cargo test` in the root runs the root *package* only, so the
+            # workspace members are invisible to it. `makers-plugin` is the
+            # plugin SDK: its expander decides what a compile database
+            # actually says, and it builds for the host target fine, so its
+            # tests belong on every PR rather than only in the wasm job.
+            - name: Run the plugin SDK's tests
+              run: cargo test -p makers-plugin
+
     # ─────────────────────────────────────────────────────────────────────
-    # The `wasmtime` feature (#633/#636: the component-model introspection
-    # host) is optional and off by default, so the plain `test` job above
-    # never compiles it — a regression there would only surface once someone
+    # The `wasmtime` feature (#633/#636: the `makers:plugin` component host)
+    # is optional and off by default, so the plain `test` job above never
+    # compiles it — a regression there would only surface once someone
     # happened to build with `--features wasmtime` locally. This job builds
-    # the `wit/introspection` guest component and the `plugins/` components
-    # via `cargo component build` (needs the `wasm32-wasip1` target and the
-    # `cargo-component` subcommand, neither of which the default
-    # toolchain/job has) and then runs the full suite with the feature on,
-    # which exercises them end-to-end in tests/wasm_ext.rs and
-    # tests/plugin_*.rs against a real makefile.
+    # every component under `plugins/` via `cargo component build` (needs the
+    # `wasm32-wasip1` target and the `cargo-component` subcommand, neither of
+    # which the default toolchain/job has) and then runs the full suite with
+    # the feature on, which exercises them end-to-end in tests/plugin_*.rs
+    # against a real makefile.
+    #
+    # Each plugin is its own workspace and relies on a directory-local
+    # `.cargo/config.toml` to redirect its output into the shared `target/`,
+    # so each must be built from *inside* its directory — Cargo discovers
+    # that config by walking up from the working directory, not from
+    # `--manifest-path`.
     # ─────────────────────────────────────────────────────────────────────
     test-wasm-feature:
         name: test (--features wasmtime)
@@ -461,12 +474,16 @@ jobs:
               if: steps.cargo-component-cache.outputs.cache-hit != 'true'
               run: cargo install cargo-component --locked
 
-            - name: Build the introspection guest component
-              working-directory: wit/introspection
-              run: cargo component build
-
             - name: Build the graphviz-export plugin component
               working-directory: plugins/graphviz-export
+              run: cargo component build
+
+            - name: Build the compile-commands plugin component
+              working-directory: plugins/compile-commands
+              run: cargo component build
+
+            - name: Build the bazel-export plugin component
+              working-directory: plugins/bazel-export
               run: cargo component build
 
             - name: Run the test suite with the wasmtime feature

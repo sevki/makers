@@ -1,0 +1,37 @@
+package makers:plugin@1.0.0;
+
+/// An analysis-phase plugin.
+///
+/// Note what the imports do *not* include: no `wasi:filesystem`, no
+/// `wasi:sockets`, no `wasi:cli/environment` in the world itself. A plugin
+/// reaches the outside world only through interfaces this package defines
+/// and this host mediates. Where a plugin genuinely needs the filesystem
+/// (`read-file-content`), the host satisfies WASI's own imports with a
+/// read-only preopen of make's working directory and nothing else — the
+/// capability is granted as a scoped handle, not as an ambient right, which
+/// is the property `dlopen` plugins can never have and Starlark achieves
+/// only by having no filesystem at all.
+world analyzer-plugin {
+    import types;
+    import graph;
+    import vars;
+    import session;
+    import artifacts;
+    import diagnostics;
+
+    export plugin;
+    export analyzer;
+}
+
+/// The host side, for a runtime that wants to *provide* this interface —
+/// notably the JS/`jco` shim in the "make is itself a wasm guest" shape from
+/// docs/wasm-extension-system.md. Naming it keeps that shape honest: if the
+/// browser host cannot implement this world, the split is wrong.
+world plugin-host {
+    export types;
+    export graph;
+    export vars;
+    export session;
+    export artifacts;
+    export diagnostics;
+}
