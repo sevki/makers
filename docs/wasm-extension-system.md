@@ -25,6 +25,15 @@ The two axes compose: `make` must work as a component host whether it is
 running natively or running as a wasm guest itself. That composition is the
 main design pressure in this doc — see [Two deployment shapes](#two-deployment-shapes-native-vs-wasm-guest).
 
+> **Update.** The interface sketched below as "read-only introspection"
+> shipped as `makers:introspection@0.1.0` in
+> [#647](https://github.com/sevki/makers/pull/647) and has since been
+> redesigned. The current contract is `makers:plugin@1.0.0` — see
+> [`docs/plugin-api.md`](plugin-api.md), which supersedes this document's
+> "Open questions" on interface shape. The architecture below (two
+> deployment shapes, one WIT contract, runtime choice deferred) is unchanged
+> and still governs.
+
 ## Motivating context
 
 This codebase already has two prior extension mechanisms, both dead ends:

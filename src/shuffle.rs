@@ -41,6 +41,21 @@ pub fn get_mode(ctx: &crate::execctx::ExecContext) -> Option<String> {
     }
 }
 
+/// Whether this run's shuffling will actually reorder the graph.
+///
+/// Distinct from [`get_mode`], which reports what was *configured*:
+/// `--shuffle=identity` is a mode but not a reorder, and any mode is a no-op
+/// under `.NOTPARALLEL`. Callers that read dep or goal order out of the
+/// graph after [`shuffle_goals_recursive`] has run — the `makers:plugin`
+/// analysis pass is the one that does — need the narrower question, because
+/// this port applies the reordering to `FileNode::deps` in place. The C
+/// implementation kept the original `->next` chain alongside a separate
+/// `->shuf` link, so there the makefile order remained recoverable; here it
+/// does not survive.
+pub fn reorders_the_graph(ctx: &crate::execctx::ExecContext) -> bool {
+    matches!(config(ctx).mode, Mode::Random | Mode::Reverse) && !not_parallel(ctx)
+}
+
 /// Configure shuffle behavior from a textual argument (typically the value of
 /// the `--shuffle=` command-line flag). Aborts via `fatal` on a malformed
 /// numeric seed, matching the original C behavior.
@@ -539,6 +554,30 @@ mod tests {
             names,
             vec!["a", "b", "c"],
             "not_parallel must short-circuit even though mode requests a reorder"
+        );
+        set_mode(&ctx, "none");
+    }
+
+    /// `reorders_the_graph` answers the question a consumer of graph order
+    /// has to ask: not "was `--shuffle` passed" but "did anything move".
+    #[test]
+    fn reorders_the_graph_tracks_effective_reordering() {
+        let ctx = crate::execctx::ExecContext::default();
+        assert!(!reorders_the_graph(&ctx), "no mode set");
+
+        set_mode(&ctx, "identity");
+        assert!(
+            !reorders_the_graph(&ctx),
+            "identity is a mode but never moves anything"
+        );
+
+        set_mode(&ctx, "reverse");
+        assert!(reorders_the_graph(&ctx));
+
+        crate::entry::set_not_parallel(&ctx);
+        assert!(
+            !reorders_the_graph(&ctx),
+            "not_parallel short-circuits the shuffle, so order is intact"
         );
         set_mode(&ctx, "none");
     }

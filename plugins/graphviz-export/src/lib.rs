@@ -1,62 +1,151 @@
-use makers_plugin::{export_plugin, Dep, File, Plugin};
+//! Graphviz export of the resolved build graph.
+//!
+//! Rebuilt on `makers:plugin@1.0.0`. Three things changed from the version
+//! that ran against the old push-based `visitor` interface, and each is the
+//! interface change earning its keep:
+//!
+//! * It writes a **declared artifact** instead of stderr, so the DOT can be
+//!   piped into `dot -Tsvg` without also catching make's diagnostics, and
+//!   the file appears atomically.
+//! * It reads edges from `node.dep-edges()`, so order-only prerequisites
+//!   (`|`) are drawn as the ordering constraints they are rather than as
+//!   ordinary dependencies — the old `dep` record had no flags at all.
+//! * It **consumes another plugin's providers**: any node carrying
+//!   `makers:cc/compile-command` is drawn as a compile step. This plugin has
+//!   no idea how that provider is produced and does not depend on the crate
+//!   that produces it; run `compile-commands` before it and the graph gains
+//!   compile annotations, run it alone and the graph is still correct.
+
+use makers_plugin::prelude::*;
 use std::cell::RefCell;
 use std::collections::BTreeSet;
+use std::io::Write as _;
 
-/// Graphviz DOT export of the resolved build graph, driven by the host's
-/// traversal callbacks (#644): every edge the host follows becomes a
-/// `parent -> child` line, every visited phony target gets a shape
-/// override. Emitted to stderr on `visit_done` — MVP has no dedicated
-/// output channel back to the host (see docs/wasm-extension-system.md).
+/// The provider a C/C++ compile-database plugin publishes. Consumed by id
+/// alone — the payload is not decoded here, only its presence is used.
+const COMPILE_COMMAND: &str = "makers:cc/compile-command";
+
 struct GraphvizExport;
 
+#[derive(Default)]
+struct Accumulated {
+    /// `(from, to, order_only)`, sorted so the DOT is byte-stable.
+    edges: BTreeSet<(String, String, bool)>,
+    phony: BTreeSet<String>,
+    compiled: BTreeSet<String>,
+    missing: BTreeSet<String>,
+}
+
 thread_local! {
-    static EDGES: RefCell<BTreeSet<(String, String)>> = RefCell::new(BTreeSet::new());
-    static PHONY: RefCell<BTreeSet<String>> = RefCell::new(BTreeSet::new());
+    static STATE: RefCell<Accumulated> = RefCell::new(Accumulated::default());
 }
 
 fn dot_escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-impl Plugin for GraphvizExport {
-    fn visit_file(file: File) -> Result<(), String> {
-        if file.phony {
-            PHONY.with(|p| p.borrow_mut().insert(file.name.clone()));
+impl Analyzer for GraphvizExport {
+    fn describe() -> PluginInfo {
+        Manifest::new("graphviz-export", env!("CARGO_PKG_VERSION"))
+            .description("Graphviz DOT export of the resolved build graph")
+            .capability(Capability::WriteOutputs)
+            // The DOT is a pure function of the graph and this instance's
+            // settings, both of which `session.input-digest` covers.
+            .deterministic()
+            .output(
+                "graph",
+                "makers-graph.dot",
+                "the build graph in Graphviz DOT format",
+            )
+            .build()
+    }
+
+    fn analyze(target: &Node) -> Result<Vec<Provider>, Error> {
+        let name = target.name();
+        if target.phony() {
+            STATE.with(|s| s.borrow_mut().phony.insert(name.clone()));
         }
-        Ok(())
+        // A prerequisite that is neither a target nor an existing file is
+        // the single most common real makefile bug; the graph is the natural
+        // place to see it.
+        if !target.is_target() && target.mtime().is_none() && !target.phony() {
+            STATE.with(|s| s.borrow_mut().missing.insert(name.clone()));
+        }
+        if target.provider(COMPILE_COMMAND).is_some() {
+            STATE.with(|s| s.borrow_mut().compiled.insert(name.clone()));
+        }
+        for edge in target.dep_edges() {
+            let order_only = edge.flags.contains(DepFlags::ORDER_ONLY);
+            let child = edge.target.name();
+            STATE.with(|s| {
+                s.borrow_mut()
+                    .edges
+                    .insert((name.clone(), child, order_only))
+            });
+        }
+        Ok(Vec::new())
     }
 
-    fn visiting_child(parent: String, child: Dep) -> Result<(), String> {
-        let parent = if parent.is_empty() {
-            "<root>".to_string()
-        } else {
-            parent
+    fn finish() -> Result<(), Error> {
+        let rankdir = makers_plugin::session::setting("rankdir").unwrap_or("LR".to_string());
+        let mut out = makers_plugin::open_output("graph")?;
+        let write = |out: &mut makers_plugin::Output, s: &str| -> Result<(), Error> {
+            out.write_all(s.as_bytes())
+                .map_err(|e| makers_plugin::fail(e.to_string()))
         };
-        EDGES.with(|e| e.borrow_mut().insert((parent, child.name)));
-        Ok(())
-    }
 
-    fn visit_done() -> Result<(), String> {
-        let mut out = String::from("digraph make {\n    rankdir=LR;\n");
-        PHONY.with(|p| {
-            for name in p.borrow().iter() {
-                out.push_str(&format!(
-                    "    \"{0}\" [shape=box, style=dashed];\n",
-                    dot_escape(name)
-                ));
+        write(&mut out, "digraph make {\n")?;
+        write(&mut out, &format!("    rankdir={rankdir};\n"))?;
+        STATE.with(|s| -> Result<(), Error> {
+            let state = s.borrow();
+            for name in &state.phony {
+                write(
+                    &mut out,
+                    &format!("    \"{}\" [shape=box, style=dashed];\n", dot_escape(name)),
+                )?;
             }
-        });
-        EDGES.with(|e| {
-            for (parent, child) in e.borrow().iter() {
-                out.push_str(&format!(
-                    "    \"{}\" -> \"{}\";\n",
-                    dot_escape(parent),
-                    dot_escape(child)
-                ));
+            for name in &state.compiled {
+                write(
+                    &mut out,
+                    &format!(
+                        "    \"{}\" [shape=component, style=filled, fillcolor=\"#dbeafe\"];\n",
+                        dot_escape(name)
+                    ),
+                )?;
             }
-        });
-        out.push_str("}\n");
-        eprint!("{out}");
+            for name in &state.missing {
+                write(
+                    &mut out,
+                    &format!(
+                        "    \"{}\" [shape=ellipse, color=\"#b91c1c\", fontcolor=\"#b91c1c\"];\n",
+                        dot_escape(name)
+                    ),
+                )?;
+            }
+            for (from, to, order_only) in &state.edges {
+                let style = if *order_only {
+                    " [style=dotted, arrowhead=empty]"
+                } else {
+                    ""
+                };
+                write(
+                    &mut out,
+                    &format!(
+                        "    \"{}\" -> \"{}\"{};\n",
+                        dot_escape(from),
+                        dot_escape(to),
+                        style
+                    ),
+                )?;
+            }
+            Ok(())
+        })?;
+        write(&mut out, "}\n")?;
+        out.finish()?;
+
+        if let Some(path) = makers_plugin::output_path("graph") {
+            makers_plugin::note(&format!("wrote {path}"));
+        }
         Ok(())
     }
 }

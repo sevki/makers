@@ -32,6 +32,8 @@ pub mod makedb;
 pub mod misc;
 pub mod output;
 pub mod parser;
+#[cfg(feature = "wasmtime")]
+pub mod plugin;
 pub mod posixos;
 pub mod read;
 pub mod recipe;
@@ -48,5 +50,3 @@ pub mod variable;
 pub mod version;
 pub mod vpath;
 pub mod warning;
-#[cfg(feature = "wasmtime")]
-pub mod wasm_ext;

@@ -1,0 +1,215 @@
+package makers:plugin@1.0.0;
+
+/// What a plugin says about itself before it is allowed to do anything.
+///
+/// This interface is the load-bearing difference between "wasm instead of
+/// `dlopen`" and an actual plugin *system*. A `dlopen`'d GNU Make plugin
+/// gets the host's entire address space the moment `dlopen` returns; a
+/// Starlark rule gets a language with the dangerous parts amputated, and
+/// buys hermeticity by being unable to read a file at all. A component can
+/// do neither and better than both: it *declares* what it needs, the host
+/// grants a subset, and the grant is data the host can print, audit, pin in
+/// CI, and fold into a cache key.
+interface plugin {
+    /// Which of make's phases a plugin participates in. Declared rather than
+    /// inferred so that the host can refuse to load an analysis-only plugin
+    /// in a `-n` run that never analyses, and so that adding the `read` and
+    /// `execute` worlds later does not change what an existing analyzer
+    /// means.
+    enum phase {
+        /// While makefiles are being read and evaluated. Reserved: the
+        /// `reader` world is designed but not yet hosted.
+        read,
+        /// After deps are snapped and the goal chain is resolved. The
+        /// `analyzer` world in this package.
+        analyze,
+        /// While targets are being updated. Reserved: the `executor` world
+        /// is designed but not yet hosted.
+        execute,
+    }
+
+    /// A distinct authority the host can withhold.
+    ///
+    /// The list is short on purpose. A capability is only worth naming if a
+    /// real plugin genuinely does not need it — a split that nobody ever
+    /// exercises is theatre. Each of these separates plugins that exist:
+    /// a graph exporter needs none of them beyond `write-outputs`; a compile
+    /// database needs `read-recipes`; a header scanner needs
+    /// `read-file-content`; a policy gate needs `fail-build`; a
+    /// build-description generator needs `expand-variables`.
+    enum capability {
+        /// `node.recipe`. Recipe text carries credentials far more often
+        /// than anyone would like.
+        read-recipes,
+        /// `vars.get`, `node.variable`, `node.own-variables`.
+        read-variables,
+        /// `vars.expand`/`vars.expand-for`. Implies the ability to make make
+        /// run `$(shell ...)`, i.e. arbitrary host command execution. Never
+        /// granted implicitly.
+        expand-variables,
+        /// `session.env`.
+        read-environment,
+        /// Read access to make's working directory through WASI, for
+        /// plugins that must look inside source files (include scanners,
+        /// license scanners, checksum functions).
+        read-file-content,
+        /// A real wall clock. Withheld by default because a plugin that
+        /// reads the time cannot be memoised, and because timestamps are the
+        /// most common accidental source of nondeterministic output.
+        wall-clock,
+        /// `artifacts.open`.
+        write-outputs,
+        /// Lets `diagnostics.emit` at `severity.error`, or a returned
+        /// `error`, set make's exit status. See `failure-policy`.
+        fail-build,
+    }
+
+    /// What a plugin's failure means for the build.
+    ///
+    /// Both settings are correct for different plugins, which is why it is
+    /// declared rather than fixed: a build profiler that cannot open its
+    /// trace file must not break the build, and a licence-policy gate that
+    /// cannot read its allowlist must. The interface this replaces hardcoded
+    /// `advisory` — it caught every failure and printed it to stderr — which
+    /// makes every policy or lint plugin unimplementable.
+    enum failure-policy {
+        /// Failures are reported and ignored. Make's exit status is
+        /// unaffected.
+        advisory,
+        /// Failures fail the build. Requires the `fail-build` capability;
+        /// a plugin that declares `fatal` without it is rejected at load
+        /// rather than silently downgraded.
+        fatal,
+    }
+
+    /// Whether a declared output is one file or a directory the plugin
+    /// fills with entries it names at runtime.
+    enum output-kind {
+        /// One file at the declared path, opened with `artifacts.open`.
+        file,
+        /// A root directory whose entries are opened with
+        /// `artifacts.open-in`, for a generator whose shape follows the
+        /// project's own layout rather than being a single document — one
+        /// `BUILD.bazel` per package is the case this exists for. See
+        /// `artifacts.open-in` for why those entry paths cannot be declared
+        /// up front, and what confining them to this root costs.
+        directory,
+    }
+
+    /// An output this plugin may open, declared up front.
+    record output-decl {
+        /// The name the plugin passes to `artifacts.open` or
+        /// `artifacts.open-in`.
+        logical-name: string,
+        /// Path relative to make's working directory, used unless the host
+        /// is told otherwise by `--plugin-arg <instance>:out.<name>=<path>`.
+        ///
+        /// "Relative" is enforced, not assumed: a manifest naming an
+        /// absolute path or one that climbs out with `..` is refused and the
+        /// plugin does not run. The host performs the write with the
+        /// invoking user's privileges, so a destination chosen by the
+        /// component would make the sandbox pointless — `write-outputs` is
+        /// granted by default, and that has to mean "may write the artifact
+        /// it declared", not "may write any file". An operator naming a path
+        /// through `--plugin-arg` is not constrained this way; they are
+        /// spending authority they already hold.
+        ///
+        /// For a `directory` output this is the root the entries land under,
+        /// and `.` — make's working directory — is the useful default for a
+        /// generator that writes into the source tree it is describing.
+        default-path: string,
+        /// One line, for `--plugin-list` and for error messages.
+        description: string,
+        /// One file, or a directory of entries named at runtime.
+        kind: output-kind,
+    }
+
+    record plugin-info {
+        /// Identity of the component itself, distinct from the instance name
+        /// it is configured under.
+        name: string,
+        /// The plugin's own version, for its own diagnostics. The *interface*
+        /// version is not declared here: it is already encoded in the
+        /// component's import names (`makers:plugin/graph@1.0.0`), so a
+        /// mismatch is caught structurally at instantiation with an exact
+        /// message rather than by a version string two parties agreed to
+        /// keep honest.
+        version: string,
+        description: string,
+        phases: list<phase>,
+        /// Everything the plugin needs. The host grants the intersection of
+        /// this and what it was configured to allow, and reports the
+        /// difference; it never silently grants more than was asked for, so
+        /// this doubles as the plugin's own least-privilege statement.
+        capabilities: list<capability>,
+        outputs: list<output-decl>,
+        /// The plugin promises its declared outputs are a pure function of
+        /// what it reads through this package's interfaces. The host may
+        /// then skip running it entirely when `session.input-digest` matches
+        /// the digest recorded alongside its previous outputs.
+        ///
+        /// This is a promise the host partially *checks* rather than merely
+        /// trusts: `wall-clock`, `read-environment` and `expand-variables`
+        /// are all refused in combination with `deterministic`, because each
+        /// is a way to make output depend on something the digest does not
+        /// cover. `expand-variables` is the interesting one — expansion can
+        /// run `$(shell ...)`, so a plugin that needs make's own expander
+        /// cannot promise determinism, and has to choose.
+        deterministic: bool,
+        failure-policy: failure-policy,
+    }
+
+    /// Called once, before the plugin is granted anything.
+    ///
+    /// The host instantiates the component in a store with no capabilities
+    /// at all to make this call, validates the answer, and only then builds
+    /// the real store and instantiates again. That is why this is an export
+    /// rather than a custom section: a manifest baked into the binary at
+    /// build time would describe what the source said, while this describes
+    /// what the shipped component actually decides to ask for.
+    describe: func() -> plugin-info;
+}
+
+/// The analysis-phase hooks: an aspect over the resolved build graph.
+///
+/// The model is Bazel's aspect, and the two properties that make Bazel's
+/// version work are both here:
+///
+/// * **Dependency order.** `analyze` is called on a node only after every
+///   one of its prerequisites has been analysed. That is what lets a hook
+///   read `dep.providers()` and accumulate information *up* the graph — the
+///   shape of essentially every real aspect (link lines, transitive include
+///   paths, licence sets, coverage manifests). A pre-order walk, which is
+///   what the interface this replaces did, can never do that.
+/// * **Publication, not mutation.** A hook returns providers; it does not
+///   write to the graph. Two plugins can therefore run in one pass and
+///   compose, without either being able to change what the other sees about
+///   the build itself.
+///
+/// It is worth being explicit about what is *not* here: no hook can skip a
+/// node, reorder the walk, or add an edge. Analysis observes. Producing
+/// targets is the `reader` world's job and executing them is the `executor`
+/// world's, and keeping those separate is what allows this world's results
+/// to be cached at all.
+interface analyzer {
+    use types.{provider, error};
+    use graph.{node};
+
+    /// Called once before the walk. The place to read settings and open
+    /// outputs.
+    start: func() -> result<_, error>;
+
+    /// Called once per node reachable from the goals, in dependency order:
+    /// every prerequisite of `target` has already been analysed, and among
+    /// siblings the makefile's own edge order is preserved — except under
+    /// `--shuffle`, which permutes the graph before the pass runs and is
+    /// reported when it does (see `graph.node.deps`). Returned providers are
+    /// published on `target` and become visible to its dependents, to later
+    /// plugins, and to this plugin's own `finish`.
+    analyze: func(target: borrow<node>) -> result<list<provider>, error>;
+
+    /// Called once after the walk, whether or not anything was analysed.
+    /// The place to write accumulated artifacts. Not called if `start`
+    /// failed.
+    finish: func() -> result<_, error>;
+}

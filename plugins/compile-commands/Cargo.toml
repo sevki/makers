@@ -1,0 +1,12 @@
+[package]
+name = "compile-commands"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+makers-plugin = { path = "../../makers-plugin" }
+
+[lib]
+crate-type = ["cdylib"]
+
+[workspace]
