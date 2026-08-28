@@ -40,7 +40,6 @@ use {
     libc::{__errno_location, close, free, open, sprintf, strcmp, strcpy, strerror, strrchr},
 };
 extern "C" {
-    fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
     fn fstat(__fd: i32, __buf: *mut stat) -> i32;
     fn lstat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
@@ -2365,56 +2364,33 @@ pub unsafe fn name_mtime(
     ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
 ) -> uintmax_t {
-    let mut mtime: uintmax_t;
-    let mut st: stat = stat {
-        st_dev: 0,
-        st_ino: 0,
-        st_nlink: 0,
-        st_mode: 0,
-        st_uid: 0,
-        st_gid: 0,
-        __pad0: 0,
-        st_rdev: 0,
-        st_size: 0,
-        st_blksize: 0,
-        st_blocks: 0,
-        st_atim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
+    let mut mtime: uintmax_t = match crate::fs::metadata(crate::fs::path_from_c(name)) {
+        Ok(m) => match m.modified() {
+            Some(t) => file_timestamp_cons(ctx, name, system_time_from_unix(t.secs, t.nanos)),
+            // The file is there but carries no timestamp; treat it as
+            // existing-but-unknown rather than missing.
+            None => UNKNOWN_MTIME as uintmax_t,
         },
-        st_mtim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_ctim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        __glibc_reserved: [0; 3],
-    };
-    let mut e: i32;
-    loop {
-        e = stat(name, &raw mut st);
-        if !(e == -1_i32 && *__errno_location() == EINTR) {
-            break;
+        // Simply not there: the ordinary case for a target yet to be built,
+        // and not something to report. `NotADirectory` covers a path whose
+        // parent is a plain file, which cannot name an existing file either.
+        Err(e)
+            if matches!(
+                e.kind(),
+                ::std::io::ErrorKind::NotFound | ::std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            NONEXISTENT_MTIME as uintmax_t
         }
-    }
-    if e == 0 {
-        mtime = file_timestamp_cons(
-            ctx,
-            name,
-            system_time_from_unix(st.st_mtim.tv_sec, st.st_mtim.tv_nsec as u32),
-        );
-    } else if *__errno_location() == ENOENT || *__errno_location() == ENOTDIR {
-        mtime = NONEXISTENT_MTIME as uintmax_t;
-    } else {
-        perror_with_name(
-            ctx,
-            b"stat: \0" as *const u8 as *const ::core::ffi::c_char,
-            name,
-        );
-        return NONEXISTENT_MTIME as uintmax_t;
-    }
+        Err(_) => {
+            perror_with_name(
+                ctx,
+                b"stat: \0" as *const u8 as *const ::core::ffi::c_char,
+                name,
+            );
+            return NONEXISTENT_MTIME as uintmax_t;
+        }
+    };
     if crate::entry::opt_check_symlink(ctx) && strlen(name) <= GET_PATH_MAX as size_t {
         mtime = follow_symlink_mtime(ctx, name, mtime);
     }
