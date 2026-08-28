@@ -105,10 +105,13 @@ fn make_reads_a_makefile_through_the_wasi_filesystem() {
         out.contains("from-the-makefile"),
         "makefile was not read through WASI; got:\n{out}"
     );
-    // Read through WASI's `fd_readdir`: the directory cache only lists
-    // `marker.c` if the guest enumerated the preopened directory.
+    // Read through WASI's `fd_readdir`. `-p` reports directory *counts*, not
+    // names, so the signal is the tally: the preopened directory holds
+    // exactly the two files written above, and the cache can only say so if
+    // the guest really enumerated it. A failed enumeration reports "could
+    // not be opened" or a count of zero, so this distinguishes them.
     assert!(
-        out.contains("marker.c") || out.contains("# Directories"),
+        out.contains("# .: 2 files"),
         "directory was not enumerated through WASI; got:\n{out}"
     );
 
