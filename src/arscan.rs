@@ -5,7 +5,6 @@ pub use crate::ffi_types::{
 use crate::misc::{make_toui, readbuf, writebuf};
 use libc::{__errno_location, close, open, strcmp};
 extern "C" {
-    fn fstat(__fd: i32, __buf: *mut stat) -> i32;
     fn snprintf(
         __s: *mut ::core::ffi::c_char,
         __maxlen: size_t,
@@ -478,32 +477,6 @@ pub unsafe fn ar_member_touch(
     let mut o: off_t;
     let mut r: i32;
     let datelen: i32;
-    let mut statbuf: stat = stat {
-        st_dev: 0,
-        st_ino: 0,
-        st_nlink: 0,
-        st_mode: 0,
-        st_uid: 0,
-        st_gid: 0,
-        __pad0: 0,
-        st_rdev: 0,
-        st_size: 0,
-        st_blksize: 0,
-        st_blocks: 0,
-        st_atim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_mtim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_ctim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        __glibc_reserved: [0; 3],
-    };
     if pos < 0 as intmax_t {
         return pos as i32;
     }
@@ -529,18 +502,19 @@ pub unsafe fn ar_member_touch(
     if !(o < 0 as off_t) {
         r = readbuf(fd, &raw mut ar_hdr as *mut ::core::ffi::c_void, AR_HDR_SIZE) as i32;
         if !(r as usize != AR_HDR_SIZE) {
-            loop {
-                r = fstat(fd, &raw mut statbuf);
-                if !(r == -1_i32 && *__errno_location() == EINTR) {
-                    break;
-                }
-            }
-            if !(r < 0) {
+            // The member's date is stamped from the archive file's own
+            // mtime; a filesystem that reports none leaves the header
+            // untouched, as a failed `fstat` did.
+            let mtime_secs = crate::fs::metadata_of_fd(fd)
+                .ok()
+                .and_then(|m| m.modified())
+                .map(|t| t.secs);
+            if let Some(mtime_secs) = mtime_secs {
                 datelen = snprintf(
                     &raw mut ar_hdr.ar_date as *mut ::core::ffi::c_char,
                     ::core::mem::size_of::<[::core::ffi::c_char; 12]>() as size_t,
                     b"%ld\0" as *const u8 as *const ::core::ffi::c_char,
-                    statbuf.st_mtim.tv_sec as intmax_t,
+                    mtime_secs as intmax_t,
                 );
                 if 0 <= datelen
                     && datelen < ::core::mem::size_of::<[::core::ffi::c_char; 12]>() as i32

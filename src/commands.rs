@@ -47,7 +47,7 @@ use rustc_hash::FxHashMap;
 
 use std::sync::atomic::Ordering;
 
-use libc::{__errno_location, exit, EINTR, ENOENT, S_IFMT, S_IFREG};
+use libc::{__errno_location, exit, ENOENT};
 
 #[cfg(target_family = "wasm")]
 use crate::compat::{kill, signal, SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIG_DFL};
@@ -728,27 +728,18 @@ fn delete_target(
             return Ok(());
         }
 
-        let mut st: libc::stat = ::core::mem::zeroed();
-        let mut e: i32;
-        loop {
-            e = libc::stat(name_ptr, &mut st);
-            if !(e == -1 && *__errno_location() == EINTR) {
-                break;
-            }
-        }
-        // glibc's `libc::stat` exposes `st_mtime`/`st_mtime_nsec` as
-        // convenience fields; WASI's does not (only the POSIX-standard
-        // `st_mtim: timespec`), so read the mtime through whichever shape
-        // this target's `libc::stat` provides.
-        #[cfg(unix)]
-        let (mtime_secs, mtime_nsec) = (st.st_mtime as i64, st.st_mtime_nsec as u32);
-        #[cfg(not(unix))]
-        let (mtime_secs, mtime_nsec) = (st.st_mtim.tv_sec as i64, st.st_mtim.tv_nsec as u32);
-        if e == 0
-            && st.st_mode & S_IFMT == S_IFREG
-            && file_timestamp_cons(ctx, name_ptr, system_time_from_unix(mtime_secs, mtime_nsec))
-                != last_mtime
-        {
+        // A regular file whose mtime no longer matches what we recorded was
+        // written by the recipe we are cleaning up after, so it is a
+        // half-built target worth deleting. A file we cannot stat, or one
+        // whose filesystem reports no mtime, is left alone.
+        let half_built = match crate::fs::metadata(crate::fs::path_from_c(name_ptr)) {
+            Ok(m) if m.is_file() => m.modified().is_some_and(|t| {
+                file_timestamp_cons(ctx, name_ptr, system_time_from_unix(t.secs, t.nanos))
+                    != last_mtime
+            }),
+            _ => false,
+        };
+        if half_built {
             if !behalf_ptr.is_null() {
                 error(
                     ctx,

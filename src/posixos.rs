@@ -14,10 +14,10 @@ use ::core::{
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location, close, fcntl, free, fstat, open, perror, read, sigset_t, sprintf, sscanf,
+    __errno_location, close, fcntl, free, open, perror, read, sigset_t, sprintf, sscanf,
     strcmp, strerror, strlen, strncmp, timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET,
     FD_ZERO, F_GETFD, F_GETFL, F_SETFD, F_SETFL, O_APPEND, O_EXCL, O_NONBLOCK, O_RDONLY, O_RDWR,
-    O_WRONLY, SEEK_SET, S_IFMT, S_IFREG,
+    O_WRONLY, SEEK_SET,
 };
 // `flock`/`mkfifo`/`pipe`/`pselect`/`sigemptyset` and the `F_SETLKW`/
 // `F_UNLCK`/`F_WRLCK`/`O_TMPFILE` constants are part of the jobserver/
@@ -79,13 +79,21 @@ pub unsafe fn check_io_state(ctx: &crate::execctx::ExecContext) -> c_uint {
     // If stdout and stderr are both usable, check whether they refer to the
     // same file.
     if state & (IO_STDOUT_OK | IO_STDERR_OK) as c_uint == (IO_STDOUT_OK | IO_STDERR_OK) as c_uint {
-        let mut stbuf_o: libc::stat = ::core::mem::zeroed();
-        let mut stbuf_e: libc::stat = ::core::mem::zeroed();
-        if fstat(libc::STDOUT_FILENO, &mut stbuf_o) == 0
-            && fstat(libc::STDERR_FILENO, &mut stbuf_e) == 0
-            && stbuf_o.st_dev == stbuf_e.st_dev
-            && stbuf_o.st_ino == stbuf_e.st_ino
-        {
+        let combined = match (
+            crate::fs::metadata_of_fd(libc::STDOUT_FILENO),
+            crate::fs::metadata_of_fd(libc::STDERR_FILENO),
+        ) {
+            (Ok(out), Ok(err)) => match (out.id(), err.id()) {
+                (Some(a), Some(b)) => a == b,
+                // Without file identity (see `crate::fs::file_id`) there is
+                // no way to tell one destination from two, so assume they
+                // are distinct: the cost is output that is not merged, where
+                // guessing the other way would merge unrelated streams.
+                _ => false,
+            },
+            _ => false,
+        };
+        if combined {
             state |= IO_COMBINED_OUTERR as c_uint;
         }
     }
@@ -939,8 +947,9 @@ pub unsafe fn fd_noinherit(fd: i32) {
 /// `fd` must be an open descriptor.
 pub unsafe fn fd_set_append(fd: i32) -> i32 {
     let mut flags: i32 = -1;
-    let mut stbuf: libc::stat = ::core::mem::zeroed();
-    if fstat(fd, &mut stbuf) == 0 && stbuf.st_mode & S_IFMT == S_IFREG {
+    // Only a regular file can meaningfully be put in append mode; a pipe or
+    // terminal is left as it is.
+    if crate::fs::metadata_of_fd(fd).is_ok_and(|m| m.is_file()) {
         flags = fcntl(fd, F_GETFL, 0);
         if flags >= 0 {
             fcntl_set_retry(fd, F_SETFL, flags | O_APPEND);
