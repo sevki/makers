@@ -1,6 +1,6 @@
 //! Test-only oracle: the original `getopt_long`-based `decode_switches`
 //! implementation, preserved verbatim (per AGENTS.md rule 3) so the clap-based
-//! replacement in `make_main` can be differentially fuzzed against it before
+//! replacement in `entry` can be differentially fuzzed against it before
 //! being trusted. Compiled only for `cargo test` — never part of the shipping
 //! `make`/`libmake` binary, and the only place `optarg`/`optind`/`opterr`/
 //! `getopt_long` are referenced anywhere in this crate.

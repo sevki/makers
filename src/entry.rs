@@ -1,3 +1,5 @@
+#[cfg(target_family = "wasm")]
+use crate::compat::{stpcpy, ttyname};
 pub use crate::ffi_types::{
     __clock_t,
     __off64_t,
@@ -40,16 +42,16 @@ use {
         putenv,
         setlocale,
         sprintf,
-        stpcpy,
         strchr,
         strcmp,
         strerror,
         strrchr,
         tolower,
-        ttyname,
     },
     std::sync::atomic::Ordering,
 };
+#[cfg(unix)]
+use libc::{stpcpy, ttyname};
 
 /// Differential-test oracle for the clap-based `decode_switches`: the
 /// original `getopt_long`-based implementation, preserved verbatim per
@@ -63,11 +65,34 @@ use {
 #[path = "getopt_oracle_test.rs"]
 mod getopt_oracle_test;
 
+// Signal handling has no wasm equivalent (no signal delivery in WASI); see
+// the matching note in job.rs. These four are declared by hand (bypassing
+// `libc`'s per-target gating), so wasm needs its own stand-ins to link.
+#[cfg(unix)]
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> i32;
     fn sigaddset(__set: *mut sigset_t, __signo: i32) -> i32;
     fn sigprocmask(__how: i32, __set: *const sigset_t, __oset: *mut sigset_t) -> i32;
     fn sigaction(__sig: i32, __act: *const Sigaction, __oact: *mut Sigaction) -> i32;
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigemptyset(_set: *mut sigset_t) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigaddset(_set: *mut sigset_t, _signo: i32) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigprocmask(_how: i32, _set: *const sigset_t, _oset: *mut sigset_t) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigaction(_sig: i32, _act: *const Sigaction, _oact: *mut Sigaction) -> i32 {
+    0
+}
+
+extern "C" {
     static mut environ: *mut *mut ::core::ffi::c_char;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
     fn atexit(__func: Option<unsafe extern "C" fn() -> ()>) -> i32;
@@ -390,7 +415,7 @@ pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::
 pub const PATH_MAX: i32 = 4096_i32;
 pub const GET_PATH_MAX: i32 = PATH_MAX;
 pub const EXIT_SUCCESS: i32 = 0;
-pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
+pub const SIZE_MAX: ::core::ffi::c_ulong = ::core::ffi::c_ulong::MAX;
 pub const __LC_ALL: i32 = 6;
 pub const LC_ALL: i32 = __LC_ALL;
 pub const DB_NONE: i32 = 0;
@@ -688,7 +713,7 @@ pub struct Options {
     /// through [`opt_command_count`] to invalidate stat/contents entries
     /// recorded before the latest command. Reached via `ctx.options`
     /// (through [`opt_command_count`]).
-    pub command_count: ::core::cell::Cell<::core::ffi::c_ulong>,
+    pub command_count: ::core::cell::Cell<u64>,
     /// `snap_deps`-complete latch for this run, the former `file::SNAPPED_DEPS`
     /// global. Set once at the end of `snap_deps` via [`mark_snapped_deps`] and
     /// read by `record_files` through [`opt_snapped_deps`] to reject
@@ -1135,7 +1160,7 @@ pub fn opt_job_slots(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_uint {
 /// read through the `with_options` borrow channel by the directory cache
 /// (`find_directory`) and the `update_goal_chain` loop, which carry no
 /// `&Options`.
-pub fn opt_command_count(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_ulong {
+pub fn opt_command_count(ctx: &crate::execctx::ExecContext) -> u64 {
     with_options(ctx, |o| o.command_count.get())
 }
 /// Bump the command-generation counter, once per shell command run
@@ -1918,7 +1943,10 @@ pub unsafe fn reset_jobserver_mirror(ctx: &crate::execctx::ExecContext) {
 /// # Safety
 /// `dir` must be a valid NUL-terminated path.
 unsafe fn chdir_c(dir: *const ::core::ffi::c_char) -> i32 {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let os = ::std::ffi::OsStr::from_bytes(::core::ffi::CStr::from_ptr(dir).to_bytes());
     match ::std::env::set_current_dir(os) {
         Ok(()) => 0,
@@ -1935,7 +1963,10 @@ unsafe fn chdir_c(dir: *const ::core::ffi::c_char) -> i32 {
 /// # Safety
 /// `buf` must be valid for writes of `size` bytes.
 unsafe fn getcwd_into(buf: *mut ::core::ffi::c_char, size: usize) -> bool {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     match ::std::env::current_dir() {
         Ok(p) => {
             let b = p.as_os_str().as_bytes();
@@ -2188,7 +2219,10 @@ pub unsafe fn main_0(
     let env_slots: Option<u32> = options.arg_job_slots.get();
     options.arg_job_slots.set(None);
     let cli_tokens: Vec<::std::ffi::OsString> = {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         (1..argc)
             .map(|i| {
                 let cstr = ::core::ffi::CStr::from_ptr(*argv.offset(i as isize));
@@ -2447,7 +2481,10 @@ pub unsafe fn main_0(
         let inc_paths: Vec<std::path::PathBuf> = include_dirs
             .iter()
             .map(|s| {
+                #[cfg(unix)]
                 use std::os::unix::ffi::OsStrExt;
+                #[cfg(target_os = "wasi")]
+                use std::os::wasi::ffi::OsStrExt;
                 std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
             })
             .collect();
@@ -3698,7 +3735,10 @@ pub unsafe fn reset_makeflags(
         let inc_paths: Vec<std::path::PathBuf> = include_dirs
             .iter()
             .map(|s| {
+                #[cfg(unix)]
                 use std::os::unix::ffi::OsStrExt;
+                #[cfg(target_os = "wasi")]
+                use std::os::wasi::ffi::OsStrExt;
                 std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
             })
             .collect();
@@ -3800,7 +3840,10 @@ fn normalize_argv_for_clap(
     switches: &[CommandSwitch],
     tokens: &[::std::ffi::OsString],
 ) -> Vec<::std::ffi::OsString> {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     // Byte-level `"{a}={b}"` concatenation, avoiding any UTF-8 assumption
     // about `a`/`b` (a switch value like `-l`'s can be arbitrary bytes past
     // its first char -- the original hand-rolled lookahead is byte-based,
@@ -3931,7 +3974,10 @@ fn apply_value_switch(
     origin: variable_origin,
     bad: &mut i32,
 ) -> Result<(), crate::build_result::BuildError> {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     if !doit {
         return Ok(());
     }
@@ -4260,7 +4306,10 @@ fn decode_switches(
             if !doit {
                 continue;
             }
+            #[cfg(unix)]
             use std::os::unix::ffi::OsStrExt;
+            #[cfg(target_os = "wasi")]
+            use std::os::wasi::ffi::OsStrExt;
             let is_sentinel = raw_value.as_os_str() == ::std::ffi::OsStr::new(NOARG_SENTINEL);
             if cs.c == 'j' as i32 {
                 if is_sentinel {
@@ -4313,7 +4362,10 @@ fn decode_switches(
 
     // Non-switch tokens (targets, `VAR=value`), in original relative order.
     if let Some(rest) = matches.get_many::<::std::ffi::OsString>("__rest") {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         let mut found_wait: ::core::ffi::c_uint = 0;
         for tok in rest {
             let ctok = ::std::ffi::CString::new(tok.as_bytes()).unwrap_or_default();
@@ -4416,7 +4468,10 @@ unsafe fn decode_env_switches(
     if bytes.is_empty() {
         return Ok(());
     }
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let words = split_makeflags_value(bytes);
     let mut tokens: Vec<::std::ffi::OsString> = words
         .iter()
@@ -5180,6 +5235,7 @@ unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
 }
 pub const __CHAR_BIT__: i32 = 8;
 pub const __SCHAR_MAX__: i32 = 127;
+
 
 /// The command-line switch table, freshly built with its real contents — the
 /// former `.init_array` `run_static_initializers` body that populated the
@@ -7153,7 +7209,10 @@ mod decode_switches_clap_vs_getopt_tests {
     /// tokens) and asserts directly on the stored bytes.
     #[test]
     fn non_utf8_filename_argument_round_trips_exact_bytes() {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
 
         super::initialize_stopchar_map();
         let ctx = ExecContext::default();

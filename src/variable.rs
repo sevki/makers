@@ -530,22 +530,20 @@ unsafe fn lookup_pattern_var(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> u64 {
     let key: *const variable = keyv as *const variable;
-    let mut _result_: ::core::ffi::c_ulong = 0;
+    let mut _result_: u64 = 0;
     let _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
-    _result_ = _result_.wrapping_add(jhash(::core::slice::from_raw_parts(
-        _key_,
-        (*key).length as usize,
-    )) as ::core::ffi::c_ulong);
+    _result_ = _result_
+        .wrapping_add(jhash(::core::slice::from_raw_parts(_key_, (*key).length as usize)) as u64);
     _result_
 }
 /// Secondary hash for [`variable`] keys; always zero, kept for the callback
 /// ABI. The raw key pointer is accepted to match the signature but never
 /// inspected.
-pub fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> u64 {
     let mut _key: *const variable = keyv as *const variable;
-    let mut _result_: ::core::ffi::c_ulong = 0;
+    let mut _result_: u64 = 0;
     _result_
 }
 /// Order two variable names the way the variable hash table expects: shorter
@@ -646,7 +644,7 @@ unsafe fn check_valid_name(
 pub unsafe fn init_hash_global_variable_set(ctx: &crate::execctx::ExecContext) {
     hash_init(
         &raw mut (*ctx.variable_globals.global_variable_set.as_ptr()).table,
-        VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -1288,7 +1286,7 @@ pub unsafe fn create_new_variable_set(ctx: &crate::execctx::ExecContext) -> *mut
     set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
     hash_init(
         &raw mut (*set).table,
-        SMALL_SCOPE_VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        SMALL_SCOPE_VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -1494,7 +1492,7 @@ pub unsafe fn build_file_setlist(
     let set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
     hash_init(
         &raw mut (*set).table,
-        SMALL_SCOPE_VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        SMALL_SCOPE_VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -1866,7 +1864,7 @@ fn should_export_decision(
 /// Safe wrapper over [`should_export_decision`]: it borrows the variable and
 /// returns a plain `bool`. The `export_all_variables` flag is read from the
 /// owned `Options` through the `with_options` borrow channel
-/// ([`crate::make_main::opt_export_all_variables`]), so this is fully safe —
+/// ([`crate::entry::opt_export_all_variables`]), so this is fully safe —
 /// no `unsafe` and no global remain.
 pub fn should_export(ctx: &crate::execctx::ExecContext, v: &variable) -> bool {
     let export_all = crate::entry::opt_export_all_variables(ctx);
@@ -1934,7 +1932,7 @@ pub unsafe fn target_environment(
     }
     hash_init(
         &raw mut table,
-        VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),

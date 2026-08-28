@@ -1,4 +1,8 @@
-use {crate::output::FmtArg, libc::fnmatch};
+use crate::output::FmtArg;
+#[cfg(target_family = "wasm")]
+use crate::compat::fnmatch;
+#[cfg(unix)]
+use libc::fnmatch;
 
 pub use crate::ffi_types::{__time_t, intmax_t, size_t, time_t, uintmax_t};
 use crate::{

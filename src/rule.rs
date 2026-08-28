@@ -431,13 +431,11 @@ fn null_floc() -> Floc {
 /// Build a `Floc` from a recipe's `defined_lineno`, for warnings.
 fn finfo_of(n: &crate::file::FileNode) -> Floc {
     match &n.recipe {
-        Some(r) => {
-            Floc {
-                filenm: ::core::ptr::null(),
-                lineno: r.defined_lineno as ::core::ffi::c_ulong,
-                offset: 0,
-            }
-        }
+        Some(r) => Floc {
+            filenm: ::core::ptr::null(),
+            lineno: r.defined_lineno,
+            offset: 0,
+        },
         None => null_floc(),
     }
 }

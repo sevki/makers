@@ -8,6 +8,11 @@ pub mod ar;
 pub mod arscan;
 pub mod build_result;
 pub mod commands;
+// Compiled for wasm targets (where it's actually used) and also under
+// `cfg(test)` so its unit tests run as part of the native `cargo test`
+// suite and count toward native coverage.
+#[cfg(any(target_family = "wasm", test))]
+pub mod compat;
 pub mod content_hash;
 pub mod default;
 pub mod dep;
@@ -20,6 +25,7 @@ pub mod ffi_types;
 pub mod file;
 pub mod findprog;
 pub mod floc;
+pub mod fs;
 pub mod function;
 pub mod getopt;
 pub mod getopt1;

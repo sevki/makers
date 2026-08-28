@@ -15,7 +15,7 @@
 //! pattern as [`crate::strcache`].
 //!
 //! Byte classification deliberately consults the process-global `stopchar_map`
-//! (via [`crate::make_main::stopchar_map`]) rather than re-deriving `isspace`,
+//! (via [`crate::entry::stopchar_map`]) rather than re-deriving `isspace`,
 //! so the AST agrees with the C reader byte-for-byte, locale and all.
 
 use std::ops::Range;
