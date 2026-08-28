@@ -1052,8 +1052,10 @@ impl ::core::fmt::Debug for DirNameTable {
     }
 }
 
-/// The directory cache's dev/inode-keyed contents table: an idiomatic Rust
-/// [`rustc_hash::FxHashMap`] from `(dev, ino)` to an owned, heap-stable
+/// The directory cache's identity-keyed contents table: an idiomatic Rust
+/// [`rustc_hash::FxHashMap`] from a [`DirKey`](crate::dir::DirKey) — the
+/// directory's device/inode pair, or its name where the platform reports no
+/// file identity — to an owned, heap-stable
 /// [`DirectoryContents`](crate::dir::DirectoryContents), replacing the
 /// c2rust FFI `HashTable` (and its `directory_contents_hash_*` callbacks).
 ///
@@ -1064,10 +1066,7 @@ impl ::core::fmt::Debug for DirNameTable {
 /// the former `Cell<HashTable>` provided on the shared `&ExecContext`.
 pub struct DirContentsTable(
     pub  ::core::cell::RefCell<
-        rustc_hash::FxHashMap<
-            (crate::ffi_types::dev_t, crate::ffi_types::ino_t),
-            Box<crate::dir::DirectoryContents>,
-        >,
+        rustc_hash::FxHashMap<crate::dir::DirKey, Box<crate::dir::DirectoryContents>>,
     >,
 );
 

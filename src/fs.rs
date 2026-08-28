@@ -148,6 +148,21 @@ pub enum FileKind {
     Other,
 }
 
+impl FileKind {
+    /// Classify a `std::fs::FileType`.
+    pub fn of(ft: fs::FileType) -> Self {
+        if ft.is_symlink() {
+            FileKind::Symlink
+        } else if ft.is_dir() {
+            FileKind::Dir
+        } else if ft.is_file() {
+            FileKind::File
+        } else {
+            FileKind::Other
+        }
+    }
+}
+
 /// What make needs to know about a file.
 ///
 /// Deliberately much narrower than `struct stat`: the whole crate only ever
@@ -165,16 +180,7 @@ pub struct Metadata {
 
 impl Metadata {
     fn from_std(m: &fs::Metadata) -> Self {
-        let ft = m.file_type();
-        let kind = if ft.is_symlink() {
-            FileKind::Symlink
-        } else if ft.is_dir() {
-            FileKind::Dir
-        } else if ft.is_file() {
-            FileKind::File
-        } else {
-            FileKind::Other
-        };
+        let kind = FileKind::of(m.file_type());
         Metadata {
             id: file_id(m),
             len: m.len(),
@@ -322,17 +328,7 @@ pub fn read_dir(p: &Path) -> io::Result<Vec<DirEntry>> {
             // `file_type` is free when the readdir result carried a type and
             // a lookup otherwise; either way a failure here just means the
             // caller has to ask separately.
-            kind: e.file_type().ok().map(|ft| {
-                if ft.is_symlink() {
-                    FileKind::Symlink
-                } else if ft.is_dir() {
-                    FileKind::Dir
-                } else if ft.is_file() {
-                    FileKind::File
-                } else {
-                    FileKind::Other
-                }
-            }),
+            kind: e.file_type().ok().map(FileKind::of),
         });
     }
     Ok(entries)
