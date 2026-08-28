@@ -24,8 +24,6 @@ use {
 
 use libc::{memcpy, strlen};
 
-use crate::fs::OsStringExt;
-
 pub use crate::sys_stat::{stat, timespec};
 
 extern "C" {
@@ -115,11 +113,11 @@ pub struct DirectoryContents {
     pub counter: u64,
     /// Open stream while the directory is still being read lazily.
     ///
-    /// `std::fs::ReadDir` is the same lazy, handle-holding cursor `DIR*` was
-    /// — it yields one entry per `next()` and closes on drop — so the
+    /// [`crate::fs::ReadDir`] is the same lazy, handle-holding cursor `DIR*`
+    /// was — it yields one entry per `next()` and closes on drop — so the
     /// incremental read and the [`MAX_OPEN_DIRECTORIES`] throttle survive the
     /// move off libc unchanged. On wasm it is backed by `fd_readdir`.
-    pub dirstream: Option<::std::fs::ReadDir>,
+    pub dirstream: Option<crate::fs::ReadDir>,
 }
 
 /// Glob cursor handed out by `open_dirstream`: an owned snapshot of the
@@ -265,7 +263,7 @@ pub unsafe fn find_directory(
             clear_directory_contents(ctx, dc);
         }
         dc.counter = crate::entry::opt_command_count(ctx);
-        dc.dirstream = ::std::fs::read_dir(dirpath).ok();
+        dc.dirstream = crate::fs::open_dir(dirpath).ok();
         if dc.dirstream.is_none() {
             // Unreadable: cache that fact with no file map.
             dc.dirfiles = None;
@@ -356,7 +354,7 @@ unsafe fn dir_contents_file_exists_p(
             }
         };
 
-        let name = entry.file_name().into_vec();
+        let name = entry.name;
         // Insert (overwriting), matching the C `hash_insert_at`: actually seeing
         // the file during a scan clears any stale `impossible` marker a prior
         // `file_impossible` recorded for the same name.
@@ -366,7 +364,7 @@ unsafe fn dir_contents_file_exists_p(
             .insert(
                 Box::from(name.as_slice()),
                 DirFileEntry {
-                    kind: entry.file_type().ok().map(crate::fs::FileKind::of),
+                    kind: entry.kind,
                     impossible: false,
                 },
             );

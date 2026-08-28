@@ -150,7 +150,7 @@ pub enum FileKind {
 
 impl FileKind {
     /// Classify a `std::fs::FileType`.
-    pub fn of(ft: fs::FileType) -> Self {
+    fn of(ft: fs::FileType) -> Self {
         if ft.is_symlink() {
             FileKind::Symlink
         } else if ft.is_dir() {
@@ -252,13 +252,8 @@ pub fn metadata(p: &Path) -> io::Result<Metadata> {
     retry_eintr(|| fs::metadata(p)).map(|m| Metadata::from_std(&m))
 }
 
-/// Metadata for `p` itself, not following a final symlink (`lstat`).
-pub fn symlink_metadata(p: &Path) -> io::Result<Metadata> {
-    retry_eintr(|| fs::symlink_metadata(p)).map(|m| Metadata::from_std(&m))
-}
-
 /// Metadata for an already-open file (`fstat`).
-pub fn metadata_of(f: &fs::File) -> io::Result<Metadata> {
+fn metadata_of(f: &fs::File) -> io::Result<Metadata> {
     f.metadata().map(|m| Metadata::from_std(&m))
 }
 
@@ -283,55 +278,47 @@ pub fn exists(p: &Path) -> bool {
     fs::metadata(p).is_ok()
 }
 
-/// Read the target of a symlink.
-pub fn read_link(p: &Path) -> io::Result<Vec<u8>> {
-    fs::read_link(p).map(|t| t.into_os_string().into_vec())
-}
-
-/// Delete a file.
-pub fn remove_file(p: &Path) -> io::Result<()> {
-    fs::remove_file(p)
-}
-
-/// Rename a file, replacing `to` if it exists.
-pub fn rename(from: &Path, to: &Path) -> io::Result<()> {
-    fs::rename(from, to)
-}
-
-/// Read a whole file.
-pub fn read(p: &Path) -> io::Result<Vec<u8>> {
-    fs::read(p)
-}
-
-/// One entry from [`read_dir`].
+/// One entry yielded by a [`ReadDir`].
 #[derive(Clone, Debug)]
 pub struct DirEntry {
     /// The entry's name within its directory, as bytes — never a full path.
     pub name: Vec<u8>,
     /// The entry's type, when the directory listing reported it without a
-    /// second lookup. `None` means the caller must [`symlink_metadata`] the
-    /// name to find out.
+    /// second lookup. `None` means the caller must ask separately.
     pub kind: Option<FileKind>,
 }
 
-/// List a directory.
+/// A lazy cursor over a directory's entries: one per `next()`, with the
+/// handle held open until it is exhausted or dropped.
 ///
-/// Returns the whole listing rather than an iterator: make's directory cache
-/// slurps a directory in one go and then answers questions from the snapshot,
-/// and a materialised listing keeps no descriptor open across that.
-pub fn read_dir(p: &Path) -> io::Result<Vec<DirEntry>> {
-    let mut entries = Vec::new();
-    for e in fs::read_dir(p)? {
-        let e = e?;
-        entries.push(DirEntry {
-            name: e.file_name().into_vec(),
-            // `file_type` is free when the readdir result carried a type and
-            // a lookup otherwise; either way a failure here just means the
-            // caller has to ask separately.
-            kind: e.file_type().ok().map(FileKind::of),
-        });
+/// Lazy rather than a materialised listing because that is the shape make's
+/// directory cache wants — it reads a directory incrementally, stopping as
+/// soon as the name it was asked about turns up, and closes the handle at
+/// the end to bound how many stay open. On wasm the handle is a WASI
+/// descriptor and each `next()` is `fd_readdir`.
+pub struct ReadDir(fs::ReadDir);
+
+impl Iterator for ReadDir {
+    type Item = io::Result<DirEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next().map(|e| {
+            e.map(|e| DirEntry {
+                name: e.file_name().into_vec(),
+                // Free when the listing already carried a type, a lookup
+                // otherwise; either way a failure here only means the caller
+                // has to ask separately, so it is not an error.
+                kind: e.file_type().ok().map(FileKind::of),
+            })
+        })
     }
-    Ok(entries)
+}
+
+/// Open `p` for reading, yielding a lazy cursor over its entries.
+///
+/// Note that `.` and `..` are not among them, where C's `readdir` lists both.
+pub fn open_dir(p: &Path) -> io::Result<ReadDir> {
+    retry_eintr(|| fs::read_dir(p)).map(ReadDir)
 }
 
 #[cfg(test)]
@@ -457,18 +444,19 @@ mod tests {
     }
 
     #[test]
-    fn read_dir_lists_names_with_types() {
+    fn open_dir_yields_names_with_types() {
         let d = TempDir::new("readdir");
         fs::write(d.join("a.o"), b"x").unwrap();
         fs::create_dir(d.join("sub")).unwrap();
 
-        let mut got: Vec<(Vec<u8>, Option<FileKind>)> = read_dir(&d.0)
+        let mut got: Vec<(Vec<u8>, Option<FileKind>)> = open_dir(&d.0)
             .unwrap()
-            .into_iter()
+            .map(|e| e.unwrap())
             .map(|e| (e.name, e.kind))
             .collect();
         got.sort_by(|a, b| a.0.cmp(&b.0));
 
+        // `.` and `..` are not listed, unlike C's `readdir`.
         assert_eq!(
             got,
             vec![
@@ -479,24 +467,23 @@ mod tests {
     }
 
     #[test]
-    fn remove_and_rename_move_files() {
-        let d = TempDir::new("mutate");
-        let (a, b) = (d.join("a.o"), d.join("b.o"));
-        fs::write(&a, b"x").unwrap();
-
-        rename(&a, &b).unwrap();
-        assert!(!exists(&a) && exists(&b));
-
-        remove_file(&b).unwrap();
-        assert!(!exists(&b));
+    fn open_dir_is_lazy_rather_than_a_materialised_listing() {
+        let d = TempDir::new("lazy");
+        for n in ["a.o", "b.o", "c.o"] {
+            fs::write(d.join(n), b"x").unwrap();
+        }
+        // Taking one entry must not require walking the rest: the cursor is
+        // what lets the directory cache stop at the name it wants.
+        let mut cursor = open_dir(&d.0).unwrap();
+        assert!(cursor.next().is_some());
+        drop(cursor);
     }
 
     #[test]
     fn missing_paths_report_an_error_rather_than_a_sentinel() {
         let d = TempDir::new("missing");
         assert!(metadata(&d.join("nope.o")).is_err());
-        assert!(symlink_metadata(&d.join("nope.o")).is_err());
-        assert!(read_dir(&d.join("nope")).is_err());
+        assert!(open_dir(&d.join("nope")).is_err());
     }
 
     #[test]
