@@ -10,7 +10,7 @@ use ::core::{
     ptr::{null, null_mut},
 };
 
-use libc::{__errno_location, free, strcmp, strlen};
+use libc::{free, strcmp, strlen};
 
 use crate::{
     dir::{dir_file_exists_p, dir_name},
@@ -22,12 +22,7 @@ use crate::{
     misc::xmalloc,
     read::find_percent,
     strcache::{strcache_add, strcache_add_len},
-    sys_stat::stat,
 };
-
-extern "C" {
-    fn stat(file: *const c_char, buf: *mut stat) -> i32;
-}
 
 /// Character-class bits in `stopchar_map` (see `makeint.h`).
 const MAP_BLANK: i32 = 0x0002;
@@ -571,25 +566,23 @@ unsafe fn selective_vpath_search(
                 // The directory cache may be out of date; check that the
                 // file really exists in the filesystem, because higher
                 // levels get confused otherwise.
-                let mut st: stat = ::core::mem::zeroed();
-                let mut e: i32;
-                loop {
-                    e = stat(name, &mut st);
-                    if !(e == -1 && *__errno_location() == libc::EINTR) {
-                        break;
-                    }
-                }
-                if e != 0 {
+                match crate::fs::metadata(crate::fs::path_from_c(name)) {
                     // Stale cache entry: keep searching the remaining vpath
                     // entries instead of returning it.
-                    exists = false;
-                } else if let Some(slot) = mtime_ptr.as_mut() {
-                    *slot = file_timestamp_cons(
-                        ctx,
-                        name,
-                        system_time_from_unix(st.st_mtim.tv_sec as i64, st.st_mtim.tv_nsec as u32),
-                    );
-                    mtime_ptr = null_mut();
+                    Err(_) => exists = false,
+                    Ok(m) => {
+                        // A filesystem that reports no mtime leaves the slot
+                        // unset, so the caller records UNKNOWN_MTIME below
+                        // rather than inventing a timestamp.
+                        if let (Some(slot), Some(t)) = (mtime_ptr.as_mut(), m.modified()) {
+                            *slot = file_timestamp_cons(
+                                ctx,
+                                name,
+                                system_time_from_unix(t.secs, t.nanos),
+                            );
+                            mtime_ptr = null_mut();
+                        }
+                    }
                 }
             }
         }

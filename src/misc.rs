@@ -590,16 +590,13 @@ pub unsafe fn free_ns_chain(mut ns: *mut nameseq) {
 /// `type_0` must be a valid NUL-terminated string.
 pub unsafe fn spin(type_0: *const c_char) {
     let mut filenm: [c_char; 256] = [0; 256];
-    let mut dummy: stat = ::core::mem::zeroed();
 
     sprintf(filenm.as_mut_ptr(), c".make-spin-%s".as_ptr(), type_0);
-    if stat(filenm.as_ptr(), &mut dummy) == 0 {
+    let spinfile = crate::fs::path_from_c(filenm.as_ptr());
+    if crate::fs::exists(spinfile) {
         fprintf(stderr, c"SPIN on %s\n".as_ptr(), filenm.as_ptr());
-        loop {
+        while crate::fs::exists(spinfile) {
             sleep(1);
-            if stat(filenm.as_ptr(), &mut dummy) != 0 {
-                break;
-            }
         }
     }
 }

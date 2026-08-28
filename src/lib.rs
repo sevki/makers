@@ -25,6 +25,7 @@ pub mod ffi_types;
 pub mod file;
 pub mod findprog;
 pub mod floc;
+pub mod fs;
 pub mod function;
 pub mod getopt;
 pub mod getopt1;
