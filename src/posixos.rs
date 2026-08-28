@@ -79,21 +79,16 @@ pub unsafe fn check_io_state(ctx: &crate::execctx::ExecContext) -> c_uint {
     // If stdout and stderr are both usable, check whether they refer to the
     // same file.
     if state & (IO_STDOUT_OK | IO_STDERR_OK) as c_uint == (IO_STDOUT_OK | IO_STDERR_OK) as c_uint {
-        let combined = match (
-            crate::fs::metadata_of_fd(libc::STDOUT_FILENO),
-            crate::fs::metadata_of_fd(libc::STDERR_FILENO),
-        ) {
-            (Ok(out), Ok(err)) => match (out.id(), err.id()) {
-                (Some(a), Some(b)) => a == b,
-                // Without file identity (see `crate::fs::file_id`) there is
-                // no way to tell one destination from two, so assume they
-                // are distinct: the cost is output that is not merged, where
-                // guessing the other way would merge unrelated streams.
-                _ => false,
-            },
-            _ => false,
-        };
-        if combined {
+        // They are one destination only if the platform reports a file
+        // identity for both and the two agree. Where it reports none (see
+        // `crate::fs::file_id`) `zip` yields `None` and they count as
+        // distinct: the cost is output that is not merged, where guessing the
+        // other way would merge unrelated streams.
+        let file_id = |fd| unsafe { crate::fs::metadata_of_fd(fd) }.ok().and_then(|m| m.id());
+        if file_id(libc::STDOUT_FILENO)
+            .zip(file_id(libc::STDERR_FILENO))
+            .is_some_and(|(out, err)| out == err)
+        {
             state |= IO_COMBINED_OUTERR as c_uint;
         }
     }
