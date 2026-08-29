@@ -1007,18 +1007,29 @@ pub(crate) fn global_variables() -> Vec<GlobalVar> {
     // SAFETY: `CTX_PTR` is non-null only inside `with_context`, which
     // outlives every host callback a guest can make, so `ctx` points at a
     // live `ExecContext`. `global_variable_set` is make's own long-lived
-    // table; `ht_vec`/`ht_size` delimit it exactly as `lookup_special_var`
-    // reads them, and the two sentinels a slot can hold — null and
-    // `hash_deleted_item` — are skipped before any field is touched. Each
-    // surviving `variable` is owned by that table and outlives this read.
+    // table, and `ht_vec`/`ht_size` delimit it exactly as
+    // `lookup_special_var` reads them — so a non-null `ht_vec` is valid for
+    // `ht_size` slot-sized elements and the slice covers precisely them.
+    // Nothing mutates the table for the slice's lifetime: this runs
+    // synchronously inside the analysis pass, which neither reads makefiles
+    // nor expands anything. The two sentinels a slot can hold — null and
+    // `hash_deleted_item` — are skipped before any field is touched, and
+    // each surviving `variable` is owned by the table and outlives this read.
     unsafe {
-        let gvs = (*ctx).variable_globals.global_variable_set.as_ptr();
-        let mut vp: *mut *mut crate::variable::variable =
-            (*gvs).table.ht_vec as *mut *mut crate::variable::variable;
-        let end: *mut *mut crate::variable::variable = vp.offset((*gvs).table.ht_size as isize);
-        while vp < end {
-            let v: *mut crate::variable::variable = *vp;
-            vp = vp.offset(1);
+        let table = &(*(*ctx).variable_globals.global_variable_set.as_ptr()).table;
+        // A hash table can legitimately hold a null `ht_vec` with `ht_size`
+        // 0 before it is populated (see `ExecContext`'s own initialisers), and
+        // `slice::from_raw_parts` is undefined on a null pointer even for an
+        // empty slice. So the emptiness check is on the pointer, not the size.
+        let slots: &[*mut crate::variable::variable] = if table.ht_vec.is_null() {
+            &[]
+        } else {
+            std::slice::from_raw_parts(
+                table.ht_vec as *const *mut crate::variable::variable,
+                table.ht_size as usize,
+            )
+        };
+        for &v in slots {
             if v.is_null()
                 || std::ptr::eq(
                     v as *const ::core::ffi::c_void,
