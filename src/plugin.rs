@@ -837,14 +837,17 @@ fn input_digest(
         hasher.0.update(&var.name);
         hasher.0.update(&(var.value.len() as u64).to_le_bytes());
         hasher.0.update(&var.value);
-        // Origin and flavor are on the interface, so they are inputs a
+        // Origin and flavor are both on the interface, so both are inputs a
         // plugin can branch on: the same value promoted from a makefile
         // definition to a command-line override is a different answer to
         // `$(origin ...)`, and `value` itself means expanded text for a
-        // `simple` variable and raw text for a `recursive` one.
+        // `simple` variable and raw text for a `recursive` one — so `=` and
+        // `:=` holding the same text are not the same input. `recursive` is
+        // hashed rather than the record's `flavor` field because that field
+        // is not reliably initialised; see `flavor_of`.
         hasher
             .0
-            .update(&[var.origin as u8, var.flavor as u8, var.exported as u8]);
+            .update(&[var.origin as u8, var.recursive as u8, var.exported as u8]);
     }
     hasher.0.finalize().to_hex().to_string()
 }
@@ -970,8 +973,34 @@ pub(crate) struct GlobalVar {
     pub name: Vec<u8>,
     pub value: Vec<u8>,
     pub origin: crate::entry::variable_origin,
-    pub flavor: crate::entry::variable_flavor,
+    /// Whether the value is expanded at use (`=`) rather than at definition
+    /// (`:=`). See [`flavor_of`] for why this, and not the `flavor` field.
+    pub recursive: bool,
     pub exported: bool,
+}
+
+/// A variable's WIT flavor, from make's `recursive` flag.
+///
+/// Deliberately not from the `variable` record's own `flavor` field, which
+/// is not reliably initialised. `define_variable_in_set` allocates with
+/// `xcalloc` and then sets `name`, `length`, `value`, `fileinfo`, `origin`,
+/// `recursive`, `export` and `exportable` — but never `flavor`, which stays
+/// `f_bogus`. Every environment variable, command-line assignment and
+/// built-in is created through that path, so reading `flavor` reports
+/// "undefined" for `$(CC)` after `make CC=gcc`: a variable that plainly
+/// exists, with a flavor make itself is in no doubt about.
+///
+/// `recursive` is set on that path and is the bit make branches on when it
+/// decides whether to expand at use, which is exactly the distinction
+/// `var-flavor` draws and what `value`'s documented meaning turns on. It is
+/// also two-valued, so a global that exists never reports `undefined` —
+/// which is right: an existing variable has one flavor or the other.
+fn flavor_of(recursive: bool) -> host::VarFlavor {
+    if recursive {
+        host::VarFlavor::Recursive
+    } else {
+        host::VarFlavor::Simple
+    }
 }
 
 /// Whether a variable's current value came from the process environment.
@@ -990,9 +1019,9 @@ pub(crate) fn from_environment(origin: crate::entry::variable_origin) -> bool {
 /// reading `.VARIABLES` itself, for two reasons. That special variable
 /// rebuilds its value into an `xrealloc`ed buffer as a side effect of being
 /// read, and a digest has no business mutating what it measures. And one
-/// pass yields each variable's origin and flavor, where a name-only listing
-/// would need a second lookup per name to recover them — origin being the
-/// field the whole exclusion rule turns on.
+/// pass yields each variable's origin and recursive flag, where a name-only
+/// listing would need a second lookup per name to recover them — origin
+/// being the field the whole exclusion rule turns on.
 ///
 /// Sorted because hash-table order is a function of the table's size and
 /// insertion history, not of anything about the build. A digest built in
@@ -1050,7 +1079,7 @@ pub(crate) fn global_variables() -> Vec<GlobalVar> {
                     std::ffi::CStr::from_ptr((*v).value).to_bytes().to_vec()
                 },
                 origin: (*v).origin(),
-                flavor: (*v).flavor(),
+                recursive: (*v).recursive() != 0,
                 exported: (*v).export() == crate::entry::v_export,
             });
         }
@@ -1061,20 +1090,13 @@ pub(crate) fn global_variables() -> Vec<GlobalVar> {
     // order, and "silently falls back to an unstable order" is the one
     // property a digest must not have.
     out.sort_by(|a, b| {
-        (&a.name, &a.value, a.origin, a.flavor).cmp(&(&b.name, &b.value, b.origin, b.flavor))
+        (&a.name, &a.value, a.origin, a.recursive).cmp(&(&b.name, &b.value, b.origin, b.recursive))
     });
     out
 }
 
 /// Value of a global variable with its provenance, or `None` if undefined.
-fn lookup_global_full(
-    name: &str,
-) -> Option<(
-    String,
-    crate::entry::variable_flavor,
-    crate::entry::variable_origin,
-    bool,
-)> {
+fn lookup_global_full(name: &str) -> Option<(String, bool, crate::entry::variable_origin, bool)> {
     let ctx = ctx_ptr();
     if ctx.is_null() {
         return None;
@@ -1096,7 +1118,7 @@ fn lookup_global_full(
             std::ffi::CStr::from_ptr((*v).value)
                 .to_string_lossy()
                 .into_owned(),
-            (*v).flavor(),
+            (*v).recursive() != 0,
             (*v).origin(),
             (*v).export() == crate::entry::v_export,
         ))
@@ -1122,15 +1144,11 @@ fn lookup_global_raw(name: &str) -> Option<String> {
 /// plugin can tell which of the values it just read are outside the digest's
 /// coverage. A hardcoded `file` would hide exactly that.
 pub(crate) fn lookup_global(name: &str) -> Option<host::Variable> {
-    let (value, flavor, origin, exported) = lookup_global_full(name)?;
+    let (value, recursive, origin, exported) = lookup_global_full(name)?;
     Some(host::Variable {
         name: name.to_string(),
         value,
-        flavor: match flavor {
-            crate::entry::f_simple => host::VarFlavor::Simple,
-            crate::entry::f_recursive => host::VarFlavor::Recursive,
-            _ => host::VarFlavor::Undefined,
-        },
+        flavor: flavor_of(recursive),
         origin: match origin {
             crate::entry::o_default => host::VarOrigin::Default,
             crate::entry::o_env => host::VarOrigin::Environment,
@@ -1352,7 +1370,7 @@ mod tests {
             name: name.as_bytes().to_vec(),
             value: value.as_bytes().to_vec(),
             origin,
-            flavor: crate::entry::f_simple,
+            recursive: false,
             exported: false,
         }
     }
@@ -1445,6 +1463,43 @@ mod tests {
                 &graph,
                 &settings,
                 &[global("CC", "gcc", crate::entry::o_override)]
+            ),
+        );
+    }
+
+    /// A global's flavor comes from `recursive`, never from the `variable`
+    /// record's `flavor` field.
+    ///
+    /// That field is left at `f_bogus` by `define_variable_in_set`, which
+    /// `xcalloc`s the record and then sets `origin`, `recursive`, `export`
+    /// and `exportable` but never `flavor` — and that is the path every
+    /// environment variable, command-line assignment and built-in takes.
+    /// Reading it therefore answered "undefined" for `$(CC)` after
+    /// `make CC=gcc`: a variable that plainly exists, whose flavor make
+    /// itself is in no doubt about. Deriving from `recursive` also means the
+    /// answer stays right if `flavor` is ever initialised later.
+    #[test]
+    fn a_globals_flavor_comes_from_its_recursive_flag() {
+        assert!(matches!(flavor_of(true), host::VarFlavor::Recursive));
+        assert!(matches!(flavor_of(false), host::VarFlavor::Simple));
+    }
+
+    /// `=` and `:=` holding the same text are not the same input: `value` is
+    /// raw text for one and expanded text for the other, so a plugin reading
+    /// them sees different things and must not hit one's cached artifact
+    /// with the other's digest.
+    #[test]
+    fn input_digest_separates_a_recursive_global_from_a_simple_one() {
+        let graph = chain_graph();
+        let settings = BTreeMap::new();
+        let mut recursive = global("CC", "gcc", crate::entry::o_file);
+        recursive.recursive = true;
+        assert_ne!(
+            input_digest(&graph, &settings, &[recursive]),
+            input_digest(
+                &graph,
+                &settings,
+                &[global("CC", "gcc", crate::entry::o_file)]
             ),
         );
     }
