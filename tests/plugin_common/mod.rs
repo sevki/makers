@@ -90,8 +90,19 @@ impl Run {
 
 /// Run `make -rn` in `dir` with the given plugin-related environment.
 pub fn run_make(dir: &Path, env: &[(&str, &str)]) -> Run {
+    run_make_with_args(dir, &[], env)
+}
+
+/// As [`run_make`], plus extra command-line arguments.
+///
+/// Exists for command-line variable assignments (`make CC=gcc`), which are a
+/// different `$(origin ...)` from the same name arriving through the
+/// environment — a distinction the input digest turns on and which no
+/// environment-only harness can produce.
+pub fn run_make_with_args(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Run {
     let mut cmd = Command::new(RUST_MAKE);
     cmd.args(["--no-print-directory", "-r", "-n", "-f", "Makefile"])
+        .args(args)
         .env_remove("MAKEFLAGS")
         .env_remove("GNUMAKEFLAGS")
         .env_remove("MAKEFILES")

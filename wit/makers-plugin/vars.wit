@@ -14,6 +14,13 @@ interface vars {
     /// Look up a variable in the global scope. For the value a *target*
     /// sees, use `node.variable` — per-target and pattern-specific
     /// definitions do not appear here.
+    ///
+    /// The returned `origin` is make's own, not a guess, and it carries
+    /// weight beyond `$(origin ...)`: `session.input-digest` covers the
+    /// global set *except* its environment-origin members. A plugin that
+    /// declares `deterministic` and reads variables should check it, because
+    /// an `environment` or `env-override` answer means the value it just
+    /// read is outside what the digest promises about.
     get: func(name: string) -> option<variable>;
 
     /// Expand makefile text as make would.

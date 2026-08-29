@@ -334,7 +334,7 @@ fn run_instance(
     }
 
     // Step 3: the real store, carrying exactly the granted authority.
-    let digest = input_digest(graph, &spec.settings);
+    let digest = input_digest(graph, &spec.settings, &global_variables());
     let outputs = resolve_outputs(&info, spec, &session.working_dir);
     let mut store = wasmtime::Store::new(
         &engine,
@@ -394,13 +394,18 @@ fn run_instance(
             && granted.contains(Caps::FAIL_BUILD));
     }
     if session.verbose {
+        // The digest is reported because it is the one input to the
+        // `deterministic` promise that is otherwise invisible: when a plugin
+        // reruns and its operator expected a cache hit, the only useful
+        // question is which digest each run computed.
         eprintln!(
             "make: {}: {} note(s), {} warning(s), {} error(s); \
-             capabilities: {}; unpublished outputs: {}",
+             digest: {}; capabilities: {}; unpublished outputs: {}",
             spec.name,
             notes,
             warnings,
             errors,
+            data.digest,
             if granted.is_empty() {
                 "none".to_string()
             } else {
@@ -749,7 +754,11 @@ pub(crate) fn analysis_order(graph: &DepGraph) -> (Vec<NodeId>, Option<String>) 
 /// `session.goal-names`, and a different set of reachable nodes. Hashing
 /// only the file arena would give those two runs the same digest, and a
 /// cache keyed on it would serve the artifact built for the wrong goals.
-fn input_digest(graph: &DepGraph, settings: &BTreeMap<String, String>) -> String {
+fn input_digest(
+    graph: &DepGraph,
+    settings: &BTreeMap<String, String>,
+    globals: &[GlobalVar],
+) -> String {
     use crate::content_hash::ContentHash as _;
 
     struct Blake3(blake3::Hasher);
@@ -788,6 +797,54 @@ fn input_digest(graph: &DepGraph, settings: &BTreeMap<String, String>) -> String
         hasher.0.update(b"=");
         hasher.0.update(v.as_bytes());
         hasher.0.update(b"\0");
+    }
+    // Global variables, minus the ones the environment decided.
+    //
+    // Without this the digest covered per-target variables but not the
+    // global set, so `make CC=gcc` and `make CC=clang` over one unchanged
+    // makefile produced an identical graph, identical unexpanded recipe
+    // text, and the same digest — while any plugin reading `$(CC)`
+    // correctly produced different output, and the cache would serve the
+    // wrong one.
+    //
+    // Environment-origin variables are excluded so the digest is stable
+    // enough to be worth having. Every process carries `TERM`,
+    // `SSH_AUTH_SOCK`, `_` and a shell's worth of other noise; folding
+    // those in would turn the digest over between two runs of the same
+    // build in the same tree, and a `deterministic` plugin that never gets
+    // a cache hit has a promise that costs it something and buys nothing.
+    //
+    // The cost is a real hole, and it is worth naming rather than burying:
+    // `vars.get` is gated on `read-variables` alone, so a plugin can read
+    // an environment-origin variable that this digest does not cover, and
+    // a cache keyed on the digest can then serve output built from a
+    // different value. Command-line assignments — `make CC=gcc`, the case
+    // above — are origin `command line`, not `environment`, so the common
+    // way of varying a build *is* covered; what is not is `CC=gcc make`.
+    // Closing it properly means gating environment-origin reads behind
+    // `read-environment`, which changes what an existing capability
+    // governs. `vars.get` reports the true origin, so a plugin that cares
+    // can at least see which of its reads fall outside.
+    hasher.0.update(b"--globals--");
+    for var in globals {
+        if from_environment(var.origin) {
+            continue;
+        }
+        // Length-prefixed rather than delimited: a name and a value are
+        // both arbitrary bytes here, and `name` + `=` + `value` lets
+        // ("A=B", "C") and ("A", "B=C") hash identically.
+        hasher.0.update(&(var.name.len() as u64).to_le_bytes());
+        hasher.0.update(&var.name);
+        hasher.0.update(&(var.value.len() as u64).to_le_bytes());
+        hasher.0.update(&var.value);
+        // Origin and flavor are on the interface, so they are inputs a
+        // plugin can branch on: the same value promoted from a makefile
+        // definition to a command-line override is a different answer to
+        // `$(origin ...)`, and `value` itself means expanded text for a
+        // `simple` variable and raw text for a `recursive` one.
+        hasher
+            .0
+            .update(&[var.origin as u8, var.flavor as u8, var.exported as u8]);
     }
     hasher.0.finalize().to_hex().to_string()
 }
@@ -896,8 +953,117 @@ fn ctx_ptr() -> *const ExecContext {
     CTX_PTR.get()
 }
 
-/// Raw expanded value of a global variable, or `None` if undefined.
-fn lookup_global_raw(name: &str) -> Option<String> {
+/// One entry of make's global variable set.
+///
+/// `value` is what `$(value ...)` would give: the expanded text for a
+/// `simple` variable, the raw unexpanded text for a `recursive` one.
+/// Expanding it here would mean running `$(shell ...)` from inside the
+/// digest, which is both a side effect and exactly the authority
+/// `expand-variables` exists to withhold.
+///
+/// Both are bytes rather than `String`. A variable's value can hold whatever
+/// the makefile put there, and lossy UTF-8 conversion maps distinct byte
+/// sequences onto the same replacement characters — which for a digest is a
+/// collision, not a display wart. The rest of this function hashes target
+/// names byte-exactly for the same reason.
+pub(crate) struct GlobalVar {
+    pub name: Vec<u8>,
+    pub value: Vec<u8>,
+    pub origin: crate::entry::variable_origin,
+    pub flavor: crate::entry::variable_flavor,
+    pub exported: bool,
+}
+
+/// Whether a variable's current value came from the process environment.
+///
+/// The two environment origins are distinct to `$(origin ...)` — plain
+/// `o_env`, and `o_env_override` for the same thing under `-e` — but they
+/// answer the same question here, which is whether the value was decided
+/// outside every file the digest already covers.
+pub(crate) fn from_environment(origin: crate::entry::variable_origin) -> bool {
+    origin == crate::entry::o_env || origin == crate::entry::o_env_override
+}
+
+/// Make's entire global variable set, sorted by name.
+///
+/// This walks the global hash table the way `.VARIABLES` does rather than
+/// reading `.VARIABLES` itself, for two reasons. That special variable
+/// rebuilds its value into an `xrealloc`ed buffer as a side effect of being
+/// read, and a digest has no business mutating what it measures. And one
+/// pass yields each variable's origin and flavor, where a name-only listing
+/// would need a second lookup per name to recover them — origin being the
+/// field the whole exclusion rule turns on.
+///
+/// Sorted because hash-table order is a function of the table's size and
+/// insertion history, not of anything about the build. A digest built in
+/// that order would change when nothing had, which is precisely the failure
+/// a digest exists to prevent.
+pub(crate) fn global_variables() -> Vec<GlobalVar> {
+    let ctx = ctx_ptr();
+    if ctx.is_null() {
+        return Vec::new();
+    }
+    let mut out: Vec<GlobalVar> = Vec::new();
+    // SAFETY: `CTX_PTR` is non-null only inside `with_context`, which
+    // outlives every host callback a guest can make, so `ctx` points at a
+    // live `ExecContext`. `global_variable_set` is make's own long-lived
+    // table; `ht_vec`/`ht_size` delimit it exactly as `lookup_special_var`
+    // reads them, and the two sentinels a slot can hold — null and
+    // `hash_deleted_item` — are skipped before any field is touched. Each
+    // surviving `variable` is owned by that table and outlives this read.
+    unsafe {
+        let gvs = (*ctx).variable_globals.global_variable_set.as_ptr();
+        let mut vp: *mut *mut crate::variable::variable =
+            (*gvs).table.ht_vec as *mut *mut crate::variable::variable;
+        let end: *mut *mut crate::variable::variable = vp.offset((*gvs).table.ht_size as isize);
+        while vp < end {
+            let v: *mut crate::variable::variable = *vp;
+            vp = vp.offset(1);
+            if v.is_null()
+                || std::ptr::eq(
+                    v as *const ::core::ffi::c_void,
+                    crate::hash::hash_deleted_item,
+                )
+                || (*v).name.is_null()
+            {
+                continue;
+            }
+            out.push(GlobalVar {
+                name: std::ffi::CStr::from_ptr((*v).name).to_bytes().to_vec(),
+                // A defined variable with a null value is an empty one, not
+                // a missing one: `FOO :=` is a perfectly ordinary
+                // definition and must still reach the digest.
+                value: if (*v).value.is_null() {
+                    Vec::new()
+                } else {
+                    std::ffi::CStr::from_ptr((*v).value).to_bytes().to_vec()
+                },
+                origin: (*v).origin(),
+                flavor: (*v).flavor(),
+                exported: (*v).export() == crate::entry::v_export,
+            });
+        }
+    }
+    // By the whole tuple, not by name alone. Names are unique within one
+    // hash table, so ordering by name is already total in practice — but
+    // `sort_by` is stable, so a tie would silently fall back to hash-table
+    // order, and "silently falls back to an unstable order" is the one
+    // property a digest must not have.
+    out.sort_by(|a, b| {
+        (&a.name, &a.value, a.origin, a.flavor).cmp(&(&b.name, &b.value, b.origin, b.flavor))
+    });
+    out
+}
+
+/// Value of a global variable with its provenance, or `None` if undefined.
+fn lookup_global_full(
+    name: &str,
+) -> Option<(
+    String,
+    crate::entry::variable_flavor,
+    crate::entry::variable_origin,
+    bool,
+)> {
     let ctx = ctx_ptr();
     if ctx.is_null() {
         return None;
@@ -915,28 +1081,63 @@ fn lookup_global_raw(name: &str) -> Option<String> {
         if v.is_null() || (*v).value.is_null() {
             return None;
         }
-        Some(
+        Some((
             std::ffi::CStr::from_ptr((*v).value)
                 .to_string_lossy()
                 .into_owned(),
-        )
+            (*v).flavor(),
+            (*v).origin(),
+            (*v).export() == crate::entry::v_export,
+        ))
     }
 }
 
+/// Raw expanded value of a global variable, or `None` if undefined.
+fn lookup_global_raw(name: &str) -> Option<String> {
+    lookup_global_full(name).map(|(value, ..)| value)
+}
+
 /// A global variable as the WIT interface describes it.
+///
+/// Provenance is read from make's own record rather than assumed. It used to
+/// report `recursive`/`file` for everything, which was a guess wearing the
+/// clothes of an answer: `value` means different things for the two flavors,
+/// so calling a `simple` variable `recursive` misdescribes the field beside
+/// it, and `origin` is the field a toolchain plugin uses to decide whether it
+/// may override a value at all.
+///
+/// It is also load-bearing for the digest. `session.input-digest` covers the
+/// global set except its environment-origin members, so `origin` is how a
+/// plugin can tell which of the values it just read are outside the digest's
+/// coverage. A hardcoded `file` would hide exactly that.
 pub(crate) fn lookup_global(name: &str) -> Option<host::Variable> {
-    let value = lookup_global_raw(name)?;
+    let (value, flavor, origin, exported) = lookup_global_full(name)?;
     Some(host::Variable {
         name: name.to_string(),
         value,
-        // The legacy `variable` record's flavor/origin fields are private to
-        // `variable.rs`; the graph-side `TargetVariable` carries them and is
-        // what `node.variable` reports. Global lookups report the value and
-        // leave provenance unknown rather than guessing it.
-        flavor: host::VarFlavor::Recursive,
-        origin: host::VarOrigin::File,
+        flavor: match flavor {
+            crate::entry::f_simple => host::VarFlavor::Simple,
+            crate::entry::f_recursive => host::VarFlavor::Recursive,
+            _ => host::VarFlavor::Undefined,
+        },
+        origin: match origin {
+            crate::entry::o_default => host::VarOrigin::Default,
+            crate::entry::o_env => host::VarOrigin::Environment,
+            crate::entry::o_env_override => host::VarOrigin::EnvOverride,
+            crate::entry::o_command => host::VarOrigin::CommandLine,
+            crate::entry::o_override => host::VarOrigin::Override,
+            crate::entry::o_automatic => host::VarOrigin::Automatic,
+            _ => host::VarOrigin::File,
+        },
+        // `defined_at` stays `None`: the global record carries a `fileinfo`,
+        // but for anything make itself defined it points into make's own
+        // built-ins rather than the user's makefiles, and a location a
+        // plugin cannot open is worse than no location.
         defined_at: None,
-        exported: false,
+        exported,
+        // Private is a per-target notion — `private` on a global definition
+        // controls inheritance *into* target scopes, which `node.variable`
+        // already resolves before it answers.
         private: false,
     })
 }
@@ -1091,8 +1292,8 @@ mod tests {
     #[test]
     fn input_digest_is_stable_and_structure_sensitive() {
         let settings = BTreeMap::new();
-        let base = input_digest(&chain_graph(), &settings);
-        assert_eq!(base, input_digest(&chain_graph(), &settings));
+        let base = input_digest(&chain_graph(), &settings, &[]);
+        assert_eq!(base, input_digest(&chain_graph(), &settings, &[]));
 
         let mut changed = chain_graph();
         let extra = changed.add_file(FileNode::new(b"extra.h".to_vec()));
@@ -1105,7 +1306,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_ne!(base, input_digest(&changed, &settings));
+        assert_ne!(base, input_digest(&changed, &settings, &[]));
     }
 
     /// The digest has to move when the requested goals move. `make prog`
@@ -1117,7 +1318,7 @@ mod tests {
     #[test]
     fn input_digest_covers_the_requested_goals() {
         let settings = BTreeMap::new();
-        let prog = input_digest(&chain_graph(), &settings);
+        let prog = input_digest(&chain_graph(), &settings, &[]);
 
         let mut other = chain_graph();
         other.add_goal(crate::dep::GoalDepNode {
@@ -1130,8 +1331,132 @@ mod tests {
         });
         assert_ne!(
             prog,
-            input_digest(&other, &settings),
+            input_digest(&other, &settings, &[]),
             "a second goal must change the digest"
+        );
+    }
+
+    fn global(name: &str, value: &str, origin: crate::entry::variable_origin) -> GlobalVar {
+        GlobalVar {
+            name: name.as_bytes().to_vec(),
+            value: value.as_bytes().to_vec(),
+            origin,
+            flavor: crate::entry::f_simple,
+            exported: false,
+        }
+    }
+
+    /// The defect this closes: `make CC=gcc` and `make CC=clang` over one
+    /// unchanged makefile build an identical graph with identical unexpanded
+    /// recipe text, so before globals entered the digest the two invocations
+    /// shared one. Any plugin reading `$(CC)` correctly produces different
+    /// output for them, and a cache keyed on the digest would serve whichever
+    /// ran first.
+    #[test]
+    fn input_digest_covers_global_variables() {
+        let graph = chain_graph();
+        let settings = BTreeMap::new();
+        let gcc = input_digest(
+            &graph,
+            &settings,
+            &[global("CC", "gcc", crate::entry::o_command)],
+        );
+        let clang = input_digest(
+            &graph,
+            &settings,
+            &[global("CC", "clang", crate::entry::o_command)],
+        );
+        assert_ne!(gcc, clang, "a command-line CC must reach the digest");
+
+        // And a variable appearing at all is a change, not just its value.
+        assert_ne!(
+            gcc,
+            input_digest(&graph, &settings, &[]),
+            "defining a global must change the digest"
+        );
+    }
+
+    /// Environment-origin variables are deliberately excluded, so that the
+    /// digest does not turn over between two runs of the same build in the
+    /// same tree because `TERM` or `SSH_AUTH_SOCK` differed. This pins the
+    /// exclusion, including the part that is a known hole: an environment
+    /// variable a plugin can still read through `vars.get` changing value
+    /// does *not* move the digest.
+    #[test]
+    fn input_digest_ignores_environment_origin_globals() {
+        let graph = chain_graph();
+        let settings = BTreeMap::new();
+        let bare = input_digest(&graph, &settings, &[]);
+
+        for origin in [crate::entry::o_env, crate::entry::o_env_override] {
+            assert_eq!(
+                bare,
+                input_digest(&graph, &settings, &[global("TERM", "xterm", origin)]),
+                "an environment-origin variable must not enter the digest"
+            );
+            assert_eq!(
+                bare,
+                input_digest(&graph, &settings, &[global("TERM", "dumb", origin)]),
+                "nor must changing its value move it"
+            );
+        }
+    }
+
+    /// Origin is itself hashed, so the same name and value carry a different
+    /// digest depending on where make got them. That matters because origin
+    /// is on the interface — `vars.get` reports it and `$(origin ...)`
+    /// branches on it — and because it is the field that decides whether a
+    /// variable is in the digest at all: `CC=gcc make` (environment) and
+    /// `make CC=gcc` (command line) must not be confusable.
+    #[test]
+    fn input_digest_separates_a_command_line_global_from_an_environment_one() {
+        let graph = chain_graph();
+        let settings = BTreeMap::new();
+        assert_ne!(
+            input_digest(
+                &graph,
+                &settings,
+                &[global("CC", "gcc", crate::entry::o_command)]
+            ),
+            input_digest(
+                &graph,
+                &settings,
+                &[global("CC", "gcc", crate::entry::o_env)]
+            ),
+        );
+        assert_ne!(
+            input_digest(
+                &graph,
+                &settings,
+                &[global("CC", "gcc", crate::entry::o_file)]
+            ),
+            input_digest(
+                &graph,
+                &settings,
+                &[global("CC", "gcc", crate::entry::o_override)]
+            ),
+        );
+    }
+
+    /// Names and values are length-prefixed rather than delimited. With a
+    /// `name` + `=` + `value` encoding these two sets of globals would hash
+    /// identically, which is a collision an ordinary makefile could reach by
+    /// accident rather than a contrived one.
+    #[test]
+    fn input_digest_cannot_confuse_a_global_name_with_its_value() {
+        let graph = chain_graph();
+        let settings = BTreeMap::new();
+        assert_ne!(
+            input_digest(
+                &graph,
+                &settings,
+                &[global("A=B", "C", crate::entry::o_file)]
+            ),
+            input_digest(
+                &graph,
+                &settings,
+                &[global("A", "B=C", crate::entry::o_file)]
+            ),
         );
     }
 
@@ -1142,9 +1467,9 @@ mod tests {
     fn input_digest_covers_instance_settings() {
         let graph = chain_graph();
         let mut settings = BTreeMap::new();
-        let base = input_digest(&graph, &settings);
+        let base = input_digest(&graph, &settings, &[]);
         settings.insert("out.database".to_string(), "elsewhere.json".to_string());
-        assert_ne!(base, input_digest(&graph, &settings));
+        assert_ne!(base, input_digest(&graph, &settings, &[]));
     }
 
     /// Unnamespaced provider ids are rejected, so two unrelated plugins
