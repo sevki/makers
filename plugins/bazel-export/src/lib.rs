@@ -35,15 +35,27 @@
 //! those are substituted in the *target's* scope through `node.variable()`,
 //! which needs only `read-variables`.
 //!
-//! It deliberately does **not** declare `deterministic`, even though its
-//! output is a pure function of what it reads. `session.input-digest` now
-//! covers the global variable set, so the `make CC=gcc` / `make CC=clang`
-//! collision that first forced this decision is gone — but the digest
-//! excludes environment-origin variables, and `node.variable()` falls back
-//! to the global set, so `CC=gcc make` against a makefile that does not
-//! define `CC` still changes this plugin's output without changing the
-//! digest. A narrower hole is still a hole, and `deterministic` is a promise
-//! or it is nothing. See `docs/plugin-api.md` §9 for what closing it takes.
+//! It declares `deterministic`, and the declaration is now sound rather
+//! than merely plausible. Two things had to be true for it. First
+//! `session.input-digest` had to cover the global variable set, or `make
+//! CC=gcc` and `make CC=clang` would share a digest while this plugin —
+//! which substitutes `$(CC)` — produced different output for them. Second,
+//! and the part that took longer: the digest deliberately *excludes*
+//! environment-origin globals, because hashing `TERM` and `SSH_AUTH_SOCK`
+//! would turn it over between two runs of an identical build and leave
+//! `deterministic` correct but never cacheable. That exclusion only holds
+//! up if a plugin cannot read what the digest does not cover, so
+//! environment-origin values are now gated behind `read-environment` — a
+//! capability this plugin does not request.
+//!
+//! What that buys: everything this plugin can see is either in the digest
+//! or not readable by it. `node.variable()` still falls back to the global
+//! set, but an environment-origin answer comes back as `none` now rather
+//! than as a value the digest never saw, so `CC=gcc make` against a
+//! makefile that does not define `CC` leaves the reference quoted instead
+//! of silently baking in a value. It never requests `expand-variables`
+//! either, which is the remaining way to reach an environment value without
+//! naming it. See `docs/plugin-api.md` §9.
 
 use makers_plugin::prelude::*;
 use std::cell::RefCell;
@@ -257,9 +269,11 @@ impl Analyzer for BazelExport {
             // `$(shell ...)`.
             .capability(Capability::ReadVariables)
             .capability(Capability::WriteOutputs)
-            // No `deterministic`: see the module docs. The digest covers
-            // globals now, but not environment-origin ones, and this plugin
-            // reads through to the global set.
+            // `deterministic`: everything this plugin reads is covered by
+            // `session.input-digest`. Not `read-environment` — and that is
+            // what makes the promise true, since environment-origin values
+            // are the ones the digest excludes. See the module docs.
+            .deterministic()
             .output_directory(
                 "build-files",
                 ".",

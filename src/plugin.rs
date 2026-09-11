@@ -819,17 +819,20 @@ fn input_digest(
     // build in the same tree, and a `deterministic` plugin that never gets
     // a cache hit has a promise that costs it something and buys nothing.
     //
-    // The cost is a real hole, and it is worth naming rather than burying:
-    // `vars.get` is gated on `read-variables` alone, so a plugin can read
-    // an environment-origin variable that this digest does not cover, and
-    // a cache keyed on the digest can then serve output built from a
-    // different value. Command-line assignments — `make CC=gcc`, the case
-    // above — are origin `command line`, not `environment`, so the common
-    // way of varying a build *is* covered; what is not is `CC=gcc make`.
-    // Closing it properly means gating environment-origin reads behind
-    // `read-environment`, which changes what an existing capability
-    // governs. `vars.get` reports the true origin, so a plugin that cares
-    // can at least see which of its reads fall outside.
+    // An exclusion is only sound if a plugin cannot read what it excludes,
+    // so the capability boundary is drawn to match: environment-origin
+    // values are withheld from `vars.get`, `node.variable` and
+    // `node.own-variables` unless `read-environment` was granted (see
+    // `PluginStore::environment_permitting`). What stays readable is what
+    // this loop hashes, which is the property the whole arrangement turns
+    // on. Command-line assignments — `make CC=gcc`, the case above — are
+    // origin `command line`, not `environment`, so the common way of
+    // varying a build is both covered here and readable there.
+    //
+    // One route is open by construction: `vars.expand` runs make's expander,
+    // so `$(HOME)` can reach a plugin holding `expand-variables` without
+    // naming an origin the host could gate on. That capability is refused
+    // alongside `deterministic` for exactly this reason.
     hasher.0.update(b"--globals--");
     for var in globals {
         if from_environment(var.origin) {
