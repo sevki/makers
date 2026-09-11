@@ -25,12 +25,19 @@ use plugin_common::{assert_clean, component, run_make, workdir};
 const SOURCES: &[&str] = &["main.c", "src/util.c"];
 
 fn bazel_run(env_extra: &[(&str, &str)]) -> plugin_common::Run {
+    bazel_run_with_args(&[], env_extra)
+}
+
+/// As [`bazel_run`], plus extra command-line arguments — for `--shuffle`,
+/// the one flag that can tell the makefile's structure apart from the order
+/// make happened to walk it in.
+fn bazel_run_with_args(args: &[&str], env_extra: &[(&str, &str)]) -> plugin_common::Run {
     let plugin = component("bazel-export", "bazel_export");
     let dir = workdir("plugin_bazel.mk", SOURCES);
     let spec = format!("bazel={}", plugin.display());
     let mut env: Vec<(&str, &str)> = vec![("MAKERS_PLUGINS", &spec)];
     env.extend_from_slice(env_extra);
-    run_make(&dir, &env)
+    plugin_common::run_make_with_args(&dir, args, &env)
 }
 
 /// One `BUILD.bazel` per directory that owns targets — which is the whole
@@ -384,5 +391,48 @@ fn an_environment_variable_does_not_reach_the_digest() {
         digest_with("gcc"),
         digest_with("clang"),
         "an environment-origin variable is excluded from the digest"
+    );
+}
+
+/// Shuffling the build does not change what this plugin writes.
+///
+/// Worth stating plainly: this passes against the unfixed scheduler too,
+/// because `bazel-export` sorts its packages, targets and `srcs` before
+/// emitting them, so it is order-insensitive by construction. That is a
+/// property worth pinning — these files get committed, and a generator that
+/// reshuffled them would produce a diff for every run — but it is *not*
+/// evidence about the graph's order promise. The test that carries that
+/// weight is `shuffle_analysis_order_follows_the_makefile` in
+/// `tests/plugin_compile_commands.rs`, over a plugin whose output preserves
+/// analysis order.
+#[test]
+fn shuffling_the_build_does_not_change_the_generated_files() {
+    let plain = bazel_run(&[]);
+    assert_clean(&plain);
+    let shuffled = bazel_run_with_args(&["--shuffle=reverse"], &[]);
+    assert_clean(&shuffled);
+
+    for name in ["BUILD.bazel", "src/BUILD.bazel"] {
+        assert_eq!(
+            plain.artifact(name),
+            shuffled.artifact(name),
+            "{name} must not depend on the order make happened to build in"
+        );
+    }
+}
+
+/// And the host no longer tells the operator otherwise.
+///
+/// The warning was honest while the graph really was permuted. Leaving it in
+/// after the fix would be worse than useless: it would train people to
+/// discard artifacts that are in fact correct.
+#[test]
+fn shuffling_does_not_warn_about_graph_order() {
+    let shuffled = bazel_run_with_args(&["--shuffle=reverse"], &[("MAKERS_PLUGIN_VERBOSE", "1")]);
+    assert_clean(&shuffled);
+    assert!(
+        !shuffled.stderr.contains("--shuffle reordered the graph"),
+        "the graph is no longer reordered, so nothing should say it was:\n{}",
+        shuffled.stderr
     );
 }
