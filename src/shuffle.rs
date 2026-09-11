@@ -260,7 +260,11 @@ pub fn shuffle_goals_recursive(
     // Ranks are recorded on each goal's own edge, exactly as for a dep list,
     // so the goal vector stays in the order the command line and makefile
     // put it — which is what `session.goal-names` and `graph.goals` report.
-    if !goals.iter().any(|g| g.dep.wait_here) && !goals.is_empty() {
+    //
+    // No emptiness guard: every step below is already a no-op on an empty
+    // list, so one would be unreachable weight rather than protection —
+    // `cargo-mutants` proved it by surviving a mutation of it.
+    if !goals.iter().any(|g| g.dep.wait_here) {
         let mut order: Vec<u32> = (0..goals.len() as u32).collect();
         match mode {
             Mode::None => {}
@@ -614,6 +618,51 @@ mod tests {
             file_dep_names(&ctx, p2),
             "re-seeding must make the two shuffles reproduce the same order"
         );
+        set_mode(&ctx, "none");
+    }
+
+    /// A `wait_here` marker on any goal disables shuffling for the goal list,
+    /// the same rule dep lists follow.
+    ///
+    /// `.WAIT` is an ordering the makefile asked for explicitly, so it is the
+    /// one thing `--shuffle` must not perturb: the flag exists to break
+    /// orderings nobody declared. The deps equivalent has been covered since
+    /// this module was written; the goal equivalent had not, which is how a
+    /// mutation of this guard survived CI.
+    #[test]
+    fn shuffle_goals_recursive_wait_here_marker_disables_shuffle() {
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+
+        let mut goals = vec![goal_named("a"), goal_named("b"), goal_named("c")];
+        goals[1].dep.wait_here = true;
+        shuffle_goals_recursive(&ctx, &mut goals);
+
+        assert!(
+            goals.iter().all(|g| g.dep.shuf.is_none()),
+            "no goal may be ranked when the list carries a `.WAIT`"
+        );
+        let walk: Vec<String> = build_order(goals.iter().map(|g| g.dep.shuf))
+            .into_iter()
+            .map(|i| goals[i].dep.name.clone())
+            .collect();
+        assert_eq!(
+            walk,
+            vec!["a", "b", "c"],
+            "so the walk is the order the command line gave"
+        );
+        set_mode(&ctx, "none");
+    }
+
+    /// An empty goal list is a no-op rather than a panic — the case the
+    /// removed emptiness guard was standing in for.
+    #[test]
+    fn shuffle_goals_recursive_handles_an_empty_list() {
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+        let mut goals: Vec<crate::dep::GoalDepNode> = Vec::new();
+        shuffle_goals_recursive(&ctx, &mut goals);
+        assert!(goals.is_empty());
         set_mode(&ctx, "none");
     }
 
