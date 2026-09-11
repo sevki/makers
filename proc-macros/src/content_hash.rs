@@ -24,11 +24,32 @@ pub fn add_trait_bounds(mut generics: Generics) -> Generics {
     generics
 }
 
+/// Whether a field carries `#[content_hash(skip)]`.
+///
+/// Deliberately narrow: `skip` is the only word accepted, and anything else
+/// inside `content_hash(...)` is ignored rather than erroring, so adding a
+/// second option later is not a breaking change for the parser.
+fn is_skipped(f: &Field) -> bool {
+    f.attrs.iter().any(|attr| {
+        if !attr.path().is_ident("content_hash") {
+            return false;
+        }
+        let mut skip = false;
+        let _ = attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("skip") {
+                skip = true;
+            }
+            Ok(())
+        });
+        skip
+    })
+}
+
 pub fn generate_hash_impl(data: &Data) -> TokenStream {
     match data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(fields) => {
-                let hash_statements = fields.named.iter().map(|f| {
+                let hash_statements = fields.named.iter().filter(|f| !is_skipped(f)).map(|f| {
                     let field_name = &f.ident;
                     let ty = &f.ty;
                     quote_spanned! {ty.span()=>
@@ -41,13 +62,19 @@ pub fn generate_hash_impl(data: &Data) -> TokenStream {
                 }
             }
             Fields::Unnamed(fields) => {
-                let hash_statements = fields.unnamed.iter().enumerate().map(|(i, f)| {
-                    let index = Index::from(i);
-                    let ty = &f.ty;
-                    quote_spanned! {ty.span() =>
-                        <#ty as ::make_sys::content_hash::ContentHash>::hash(&self.#index, state);
-                    }
-                });
+                let hash_statements = fields
+                    .unnamed
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| !is_skipped(f))
+                    .map(|(i, f)| {
+                        let index = Index::from(i);
+                        let ty = &f.ty;
+                        quote_spanned! {ty.span() =>
+                            <#ty as ::make_sys::content_hash::ContentHash>::hash(
+                                &self.#index, state);
+                        }
+                    });
                 quote! {
                     #(#hash_statements)*
                 }

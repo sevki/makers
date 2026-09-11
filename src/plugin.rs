@@ -215,22 +215,6 @@ pub fn run_plugins_if_requested(ctx: &ExecContext, goals: &[GoalDepNode]) -> boo
         return false;
     }
 
-    // `--shuffle` deliberately perturbs order to smoke out missing
-    // prerequisites, and this port applies that reordering to
-    // `FileNode::deps` and the goal list in place — by the time the pass
-    // runs, `shuffle_goals_recursive` has already been through them and the
-    // makefile's own order is gone. The `graph` interface promises makefile
-    // order, so say plainly that this run cannot keep that promise rather
-    // than let a plugin write a compile database or a build description in
-    // scheduler order and look reproducible.
-    if crate::shuffle::reorders_the_graph(ctx) {
-        eprintln!(
-            "make: plugin analysis: --shuffle reordered the graph; \
-             `graph.goals`, `node.dep-edges` and analysis order are in shuffled \
-             order, not makefile order"
-        );
-    }
-
     let graph = DepGraph::from_context(ctx, goals);
     let session = SessionFacts::collect(ctx, goals);
     let mut providers: FxHashMap<NodeId, Vec<host::Provider>> = FxHashMap::default();
