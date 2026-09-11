@@ -36,11 +36,14 @@
 //! which needs only `read-variables`.
 //!
 //! It deliberately does **not** declare `deterministic`, even though its
-//! output is a pure function of what it reads. `session.input-digest` covers
-//! per-target variables but not the global set, so `make CC=gcc` and
-//! `make CC=clang` over one makefile produce the same digest and different
-//! correct output. Until the digest covers globals, any plugin reading them
-//! has to decline the promise; see the note in `docs/plugin-api.md` §9.
+//! output is a pure function of what it reads. `session.input-digest` now
+//! covers the global variable set, so the `make CC=gcc` / `make CC=clang`
+//! collision that first forced this decision is gone — but the digest
+//! excludes environment-origin variables, and `node.variable()` falls back
+//! to the global set, so `CC=gcc make` against a makefile that does not
+//! define `CC` still changes this plugin's output without changing the
+//! digest. A narrower hole is still a hole, and `deterministic` is a promise
+//! or it is nothing. See `docs/plugin-api.md` §9 for what closing it takes.
 
 use makers_plugin::prelude::*;
 use std::cell::RefCell;
@@ -254,8 +257,9 @@ impl Analyzer for BazelExport {
             // `$(shell ...)`.
             .capability(Capability::ReadVariables)
             .capability(Capability::WriteOutputs)
-            // No `deterministic`: see the module docs. The digest does not
-            // cover global variables, and this plugin reads them.
+            // No `deterministic`: see the module docs. The digest covers
+            // globals now, but not environment-origin ones, and this plugin
+            // reads through to the global set.
             .output_directory(
                 "build-files",
                 ".",

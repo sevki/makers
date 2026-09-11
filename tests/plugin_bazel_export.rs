@@ -291,3 +291,98 @@ fn genrule_named(document: &str, name: &str) -> String {
         .unwrap_or(document.len());
     document[block_start..end].to_string()
 }
+
+// ─── the input digest ────────────────────────────────────────────────────
+
+/// The digest a run computed, from the verbose summary.
+fn digest_of(run: &plugin_common::Run) -> String {
+    let start = run
+        .stderr
+        .find("digest: ")
+        .unwrap_or_else(|| panic!("no digest in:\n{}", run.stderr))
+        + "digest: ".len();
+    let rest = &run.stderr[start..];
+    let end = rest.find(';').unwrap_or(rest.len());
+    rest[..end].trim().to_string()
+}
+
+/// A command-line variable assignment reaches `session.input-digest`.
+///
+/// This is the defect that kept `bazel-export` from declaring
+/// `deterministic`: `make CC=gcc` and `make CC=clang` build an identical
+/// graph with identical unexpanded recipe text, so a digest covering only
+/// the file arena was the same for both while the plugin's output — which
+/// substitutes `$(CC)` — differed. A cache keyed on it would have served the
+/// wrong artifact.
+///
+/// Both runs share one working directory on purpose. `CURDIR` and
+/// `MAKEFILE_LIST` are themselves globals, so two runs in two temporary
+/// directories would differ for reasons that have nothing to do with the
+/// variable under test.
+#[test]
+fn a_command_line_variable_reaches_the_digest() {
+    let plugin = component("bazel-export", "bazel_export");
+    let dir = workdir("plugin_bazel.mk", SOURCES);
+    let spec = format!("bazel={}", plugin.display());
+    let env = [
+        ("MAKERS_PLUGINS", spec.as_str()),
+        ("MAKERS_PLUGIN_VERBOSE", "1"),
+    ];
+
+    let gcc = plugin_common::run_make_with_args(&dir, &["PROBE=gcc"], &env);
+    let clang = plugin_common::run_make_with_args(&dir, &["PROBE=clang"], &env);
+    assert_clean(&gcc);
+    assert_clean(&clang);
+
+    assert_ne!(
+        digest_of(&gcc),
+        digest_of(&clang),
+        "a command-line assignment must move the digest"
+    );
+    // Same assignment twice is the same question, or the digest is useless
+    // as a cache key.
+    assert_eq!(
+        digest_of(&gcc),
+        digest_of(&plugin_common::run_make_with_args(
+            &dir,
+            &["PROBE=gcc"],
+            &env
+        )),
+        "and the same assignment must reproduce it"
+    );
+}
+
+/// An environment variable does not, and that is the deliberate hole.
+///
+/// Every process carries `TERM`, `SSH_AUTH_SOCK` and a shell's worth of
+/// other noise, all of which make imports into the global set. Folding those
+/// in would turn the digest over between two runs of the same build in the
+/// same tree, leaving `deterministic` correct and never cacheable. The cost
+/// is that a plugin holding only `read-variables` can still read an
+/// environment-origin value the digest does not cover — which is why
+/// `vars.get` reports the true origin, so a plugin that cares can tell.
+///
+/// The test uses the same variable name as the command-line case above, so
+/// the only difference between them is `$(origin ...)`.
+#[test]
+fn an_environment_variable_does_not_reach_the_digest() {
+    let plugin = component("bazel-export", "bazel_export");
+    let dir = workdir("plugin_bazel.mk", SOURCES);
+    let spec = format!("bazel={}", plugin.display());
+
+    let digest_with = |probe: &str| {
+        digest_of(&run_make(
+            &dir,
+            &[
+                ("MAKERS_PLUGINS", spec.as_str()),
+                ("MAKERS_PLUGIN_VERBOSE", "1"),
+                ("PROBE", probe),
+            ],
+        ))
+    };
+    assert_eq!(
+        digest_with("gcc"),
+        digest_with("clang"),
+        "an environment-origin variable is excluded from the digest"
+    );
+}
