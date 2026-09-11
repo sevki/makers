@@ -15,15 +15,31 @@ interface vars {
     /// sees, use `node.variable` — per-target and pattern-specific
     /// definitions do not appear here.
     ///
-    /// The returned `origin` is make's own, not a guess, and it carries
-    /// weight beyond `$(origin ...)`: `session.input-digest` covers the
-    /// global set *except* its environment-origin members. A plugin that
-    /// declares `deterministic` and reads variables should check it, because
-    /// an `environment` or `env-override` answer means the value it just
-    /// read is outside what the digest promises about.
+    /// The returned `origin` is make's own, not a guess.
+    ///
+    /// An `environment` or `env-override` value requires `read-environment`
+    /// in addition to `read-variables`, and answers `none` without it. Make
+    /// imports the process environment into the same set a makefile assigns
+    /// into, so `$(HOME)` is reachable by name here and not only through
+    /// `session.env` — gating one and not the other would make
+    /// `read-environment` a capability a plugin could route around by
+    /// asking a different question.
+    ///
+    /// It is also what keeps `session.input-digest` honest: the digest
+    /// covers the global set *except* its environment-origin members, and
+    /// that exclusion is only sound while a plugin cannot read them. A
+    /// withheld value is indistinguishable from an undefined one — there is
+    /// no separate "denied" answer, because that is a fact about the grant
+    /// rather than about the build.
     get: func(name: string) -> option<variable>;
 
     /// Expand makefile text as make would.
+    ///
+    /// This is the one way an environment-origin value reaches a plugin
+    /// without `read-environment`: the expander resolves `$(HOME)` into the
+    /// result with no origin left for the host to gate on. That is a
+    /// consequence of expansion being expansion, not an oversight — and it
+    /// is why `deterministic` refuses this capability outright.
     ///
     /// Requires the `expand-variables` capability, and it is the one
     /// capability the host does not grant by default even to a plugin that
