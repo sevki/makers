@@ -20,7 +20,25 @@ use crate::floc::Floc;
 pub struct DepNode {
     pub name: String,
     pub file: Option<FileId>,
-    pub shuf: Option<DepId>,
+    /// Where `--shuffle` scheduled this edge: a rank within its own dep
+    /// list, or `None` when nothing shuffled it.
+    ///
+    /// This is C's `->shuf` link in the shape a `Vec` can use. C kept the
+    /// makefile order in `->next` and threaded the shuffled order through a
+    /// separate `->shuf` chain, so both were available at once; this port
+    /// used to permute the `deps` vector in place, which meant the
+    /// makefile's order was gone by the time anything read the graph. The
+    /// rank rides on the edge rather than on the file, so the prerequisites
+    /// an implicit rule adds *after* the shuffle — `implicit.rs` inserts at
+    /// the front — cannot invalidate it the way a stored permutation of
+    /// indices would.
+    ///
+    /// Not part of this edge's identity: it is skipped by `ContentHash`, so
+    /// the same edge scheduled in a different position keeps one [`DepId`].
+    /// Otherwise `--shuffle` would silently re-key every interned edge in
+    /// `depgraph`, which is the opposite of what this field exists to fix.
+    #[content_hash(skip)]
+    pub shuf: Option<u32>,
     pub stem: Option<String>,
     pub flags: DepFlags,
     pub changed: bool,
@@ -326,5 +344,56 @@ impl Default for GoalDep {
                 offset: 0,
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod shuf_identity_tests {
+    use super::{DepId, DepNode};
+
+    /// Two edges differing only in where `--shuffle` scheduled them share
+    /// one [`DepId`].
+    ///
+    /// `shuf` is scheduling state, not identity: the same prerequisite
+    /// walked third rather than first is the same prerequisite. Hashing it
+    /// would re-key every interned edge in `depgraph` the moment `--shuffle`
+    /// was passed, which is the opposite of what the field exists to fix —
+    /// the whole point is that the graph reads the same either way.
+    #[test]
+    fn shuf_is_not_part_of_a_dep_edges_identity() {
+        let unscheduled = DepNode {
+            name: "main.o".to_string(),
+            ..Default::default()
+        };
+        let mut scheduled = unscheduled.clone();
+        scheduled.shuf = Some(3);
+        let mut scheduled_elsewhere = unscheduled.clone();
+        scheduled_elsewhere.shuf = Some(0);
+
+        assert_eq!(DepId::from(&unscheduled), DepId::from(&scheduled));
+        assert_eq!(DepId::from(&scheduled), DepId::from(&scheduled_elsewhere));
+    }
+
+    /// The fields that *are* identity still are, so the skip is narrow
+    /// rather than a hole in the hash.
+    #[test]
+    fn every_other_field_still_changes_it() {
+        let base = DepNode {
+            name: "main.o".to_string(),
+            shuf: Some(1),
+            ..Default::default()
+        };
+
+        let mut renamed = base.clone();
+        renamed.name = "util.o".to_string();
+        assert_ne!(DepId::from(&base), DepId::from(&renamed));
+
+        let mut order_only = base.clone();
+        order_only.ignore_mtime = true;
+        assert_ne!(DepId::from(&base), DepId::from(&order_only));
+
+        let mut waited = base.clone();
+        waited.wait_here = true;
+        assert_ne!(DepId::from(&base), DepId::from(&waited));
     }
 }

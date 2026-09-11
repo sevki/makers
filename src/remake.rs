@@ -343,7 +343,17 @@ pub fn update_goal_chain(
         (if opt_rebuilding_makefiles(ctx) { 1 } else { 0 }) as ::core::ffi::c_uint;
     // The c2rust `copy_dep_chain(goaldeps)` punning is gone: clone the goals into
     // an owned, index-addressable Vec we can splice as goals finish.
-    let mut goals: Vec<GoalDepNode> = goaldeps.clone();
+    // Build order, not makefile order. `--shuffle` records a rank per goal
+    // and leaves `goaldeps` — the caller's list, which `graph.goals` and
+    // `session.goal-names` report — as the command line wrote it. `goals` is
+    // a working copy that gets spliced as goals finish, so ordering it once
+    // here is both simpler and safer than carrying an index map through the
+    // removals.
+    let mut goals: Vec<GoalDepNode> =
+        crate::shuffle::build_order(goaldeps.iter().map(|g| g.dep.shuf))
+            .into_iter()
+            .map(|i| goaldeps[i].clone())
+            .collect();
     // `goal_list` (consulted by `show_goal_error`) is the makefile-remaking goal
     // set; populate it only when rebuilding makefiles.
     *ctx.goal_list.borrow_mut() = if opt_rebuilding_makefiles(ctx) {
@@ -1030,17 +1040,24 @@ fn update_file_1(
             .get(amid)
             .map(|node| node.lock().expect("file node lock poisoned").deps.clone())
             .unwrap_or_default();
-        let mut di = 0usize;
+        // Build order, not makefile order: `--shuffle` records a rank per
+        // edge and leaves the vector as the makefile wrote it, so the walk
+        // asks for the order rather than reading it off the vector. `di`
+        // stays the index *into* `deps`, so every writeback below — and
+        // `to_remove` — still addresses the right edge.
+        let order = crate::shuffle::build_order(deps.iter().map(|d| d.shuf));
+        let mut oi = 0usize;
         // Indices to drop (circular deps), removed after the walk.
         let mut to_remove: Vec<usize> = Vec::new();
-        while di < deps.len() {
+        while oi < order.len() {
+            let di = order[oi];
             let wait_here = deps[di].wait_here;
             if wait_here && running != 0 {
                 break;
             }
             // Resolve dep file through renames and write back by index.
             let Some(mut dfile) = deps[di].file else {
-                di += 1;
+                oi += 1;
                 continue;
             };
             dfile = follow_renamed(ctx, dfile);
@@ -1099,7 +1116,7 @@ fn update_file_1(
                 }
                 // Drop this dep from the chain (dropped_list bookkeeping is gone).
                 to_remove.push(di);
-                di += 1;
+                oi += 1;
             } else {
                 // parent <- file; dontcare propagation under -r makefiles.
                 let mut dontcare = false;
@@ -1152,7 +1169,7 @@ fn update_file_1(
                     };
                     deps[di].changed = cur != mtime || mtime == NONEXISTENT_MTIME as uintmax_t;
                 }
-                di += 1;
+                oi += 1;
             }
         }
         // Write back the (rename-resolved, changed-updated) deps minus the dropped
@@ -1169,14 +1186,16 @@ fn update_file_1(
         // Intermediate-dep update pass over the head's deps.
         let mut new_deps: Vec<DepNode> = with_entry!(n, { n.deps.clone() });
         let (file_phony, file_has_recipe) = with_entry!(n, { (n.phony, n.recipe.is_some()) });
-        let mut di = 0usize;
-        while di < new_deps.len() {
+        let order = crate::shuffle::build_order(new_deps.iter().map(|d| d.shuf));
+        let mut oi = 0usize;
+        while oi < order.len() {
+            let di = order[oi];
             let wait_here = new_deps[di].wait_here;
             if wait_here && running != 0 {
                 break;
             }
             let Some(mut dfile) = new_deps[di].file else {
-                di += 1;
+                oi += 1;
                 continue;
             };
             let is_intermediate = ctx
@@ -1242,7 +1261,7 @@ fn update_file_1(
                     new_deps[di].changed = (file_phony && file_has_recipe) || cur != mtime_0;
                 }
             }
-            di += 1;
+            oi += 1;
         }
         with_entry!(n, {
             n.deps = new_deps;
@@ -1770,11 +1789,16 @@ pub fn check_dep(
                 .unwrap_or_default();
             let name = node_name(ctx, file);
             let cn = cname(&name);
-            let mut di = 0usize;
+            // Build order here too: before `--shuffle` became
+            // non-destructive this walk saw the permuted vector, and which
+            // circular dependency gets reported first is observable.
+            let order = crate::shuffle::build_order(deps.iter().map(|d| d.shuf));
+            let mut oi = 0usize;
             let mut to_remove: Vec<usize> = Vec::new();
-            while di < deps.len() {
+            while oi < order.len() {
+                let di = order[oi];
                 let Some(dep_file) = deps[di].file else {
-                    di += 1;
+                    oi += 1;
                     continue;
                 };
                 let dep_updating = ctx
@@ -1799,7 +1823,7 @@ pub fn check_dep(
                         );
                     }
                     to_remove.push(di);
-                    di += 1;
+                    oi += 1;
                 } else {
                     if let Some(node) = ctx.filenodes.get(dep_file) {
                         node.lock().expect("file node lock poisoned").parent = Some(file);
@@ -1828,7 +1852,7 @@ pub fn check_dep(
                     if dep_chain_running(ctx, dfile2) {
                         deps_running = 1;
                     }
-                    di += 1;
+                    oi += 1;
                 }
             }
             for &idx in to_remove.iter().rev() {

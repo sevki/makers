@@ -216,11 +216,11 @@ interface analyzer {
 
     /// Called once per node reachable from the goals, in dependency order:
     /// every prerequisite of `target` has already been analysed, and among
-    /// siblings the makefile's own edge order is preserved — except under
-    /// `--shuffle`, which permutes the graph before the pass runs and is
-    /// reported when it does (see `graph.node.deps`). Returned providers are
-    /// published on `target` and become visible to its dependents, to later
-    /// plugins, and to this plugin's own `finish`.
+    /// siblings the makefile's own edge order is preserved — including
+    /// under `--shuffle`, which reorders the build without rewriting the
+    /// graph (see `graph.node.deps`). Returned providers are published on
+    /// `target` and become visible to its dependents, to later plugins, and
+    /// to this plugin's own `finish`.
     analyze: func(target: borrow<node>) -> result<list<provider>, error>;
 
     /// Called once after the walk, whether or not anything was analysed.

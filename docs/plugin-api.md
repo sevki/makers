@@ -168,17 +168,16 @@ the sets: a cycle that leads back to a node must not put that node in its own
 `transitive-deps`, or a consumer turning the set into a link line emits a
 self-referential rule.
 
-The one case where the order guarantee does not hold is `--shuffle`, and it
-is worth being precise about why. That flag exists to permute prerequisite
-order and expose missing dependencies; this port applies the permutation to
-`FileNode::deps` and the goal list *in place*, where the C implementation
-kept the original `->next` chain beside a separate `->shuf` link. By the
-time the analysis pass runs, makefile order is therefore not recoverable.
-The host detects this and says so on stderr rather than letting a plugin
-emit a compile database in scheduler order and call it reproducible.
-Restoring the guarantee would mean making the shuffle non-destructive, which
-is a change to make's own scheduling code and does not belong in the
-interface change.
+`--shuffle` used to be an exception to that guarantee and no longer is,
+which is worth recording because the fix was in make's scheduler rather
+than in the interface. The flag permutes prerequisite order to expose
+missing dependencies; this port applied the permutation to `FileNode::deps`
+and the goal list *in place*, so by the time the analysis pass ran the
+makefile's own order was gone and the host could only warn about it. It now
+does what the C implementation always did — keep the list as written and
+record the scheduled position separately — so both orders exist at once.
+Build order under `--shuffle=<seed>` is unchanged; the graph the pass reads
+is the makefile's.
 
 ### 3.5 Providers
 
