@@ -230,15 +230,25 @@ of these separates plugins that exist:
 | capability | gates | a plugin that needs it |
 |---|---|---|
 | `read-recipes` | `node.recipe` | a compile database |
-| `read-variables` | `vars.get`, `node.variable` | a toolchain reporter |
+| `read-variables` | `vars.get`, `node.variable`, `node.own-variables` — except environment-origin values | a toolchain reporter |
 | `expand-variables` | `vars.expand` | a Ninja/BUILD generator |
-| `read-environment` | `session.env` | a CI-aware reporter |
+| `read-environment` | `session.env`, and environment-origin values from the three calls above | a CI-aware reporter |
 | `read-file-content` | a read-only WASI preopen of the working directory | a header or licence scanner |
 | `wall-clock` | the WASI clock itself | a profiler |
 | `write-outputs` | `artifacts.open` | anything producing a file |
 | `fail-build` | letting an error set the exit status | a policy gate |
 
-Two of these are worth dwelling on.
+Three of these are worth dwelling on.
+
+`read-variables` and `read-environment` overlap deliberately. Make imports
+the environment into the same variable set a makefile assigns into, so
+`$(HOME)` is reachable by name through `vars.get` and not only through
+`session.env` — which would make `read-environment` a capability a plugin
+could route around by asking a different question. The gate is therefore on
+the value's origin rather than on which call reached it: an
+environment-origin answer needs `read-environment` whichever way it is
+asked for. This is also what keeps `session.input-digest` honest; see
+§3.9.
 
 `expand-variables` is the only one the host does not grant even to a plugin
 that asks politely, because `expand("$(shell curl … | sh)")` is arbitrary
@@ -377,24 +387,36 @@ are on the interface, so a plugin can branch on them, and the same value
 promoted from a makefile definition to a command-line override is a
 different answer to `$(origin ...)`.
 
-**Environment-origin variables are excluded, and that is a trade with a
-sharp edge.** Make imports the whole environment into the variable set, so
-hashing it all would fold in `TERM`, `SSH_AUTH_SOCK` and a shell's worth of
-other noise — and a digest that turns over between two runs of the same
+**Environment-origin variables are excluded, and the capability boundary is
+drawn to match.** Make imports the whole environment into the variable set,
+so hashing it all would fold in `TERM`, `SSH_AUTH_SOCK` and a shell's worth
+of other noise — and a digest that turns over between two runs of the same
 build in the same tree leaves `deterministic` correct and never cacheable, a
-promise that costs its author something and buys nothing. What the exclusion
-costs is that `vars.get` is gated on `read-variables` alone, so a plugin can
-read an environment-origin value the digest does not cover, and a cache
-keyed on the digest can then serve output built from a different one.
+promise that costs its author something and buys nothing.
 
-Two things bound that hole. The common way of varying a build from outside
-the makefile is a command-line assignment — `make CC=gcc` — which is origin
-`command line`, not `environment`, and *is* covered; only `CC=gcc make` is
-not. And `vars.get` reports each variable's true origin, so a plugin that
-cares can see which of its own reads fall outside the digest. Closing it
-properly means gating environment-origin reads behind `read-environment`,
-which is already in the set `deterministic` refuses; that changes what an
-existing capability governs, so it stays in §9 rather than being assumed.
+An exclusion is only sound if a plugin cannot read what it excludes, so
+`vars.get`, `node.variable` and `node.own-variables` answer `none` for an
+environment-origin value unless `read-environment` was granted — the same
+capability that gates `session.env`, now gating the same values reached the
+other way. A withheld read is shaped exactly like an undefined variable;
+there is deliberately no distinct "denied" answer, because that would be a
+fact about the grant rather than about the build.
+
+What that does *not* restrict is the common way of varying a build from
+outside the makefile: `make CC=gcc` is origin `command line`, not
+`environment`, so it is covered by the digest and stays readable. Only
+`CC=gcc make` is withheld. A plugin that genuinely wants ambient
+environment values asks for `read-environment` and says so in its manifest,
+which is the disclosure the capability exists to force — and which
+`deterministic` then refuses, closing the loop.
+
+One route remains open by construction: `vars.expand` runs make's own
+expander, so `$(HOME)` interpolated into expanded text reaches a plugin
+holding `expand-variables` without ever naming an origin. That capability is
+already the most guarded one — it is arbitrary code execution outside the
+sandbox, it is never granted by default, and `deterministic` refuses it —
+so the disclosure requirement holds; there is simply no way to gate it by
+origin short of parsing what the expander did.
 
 `makers` is unusually well placed to do this: the graph is already
 content-addressed (`FileId`, `DepId`, `RuleId` are BLAKE3 hashes) and
@@ -567,15 +589,19 @@ own sake:
   internal hostnames. Withholding `read-recipes` is a supported mode, not an
   error.
 
-It also shows where the *interface* is still short. It has to substitute
+It is also the plugin that forced the digest to get honest, and now the
+first to declare `deterministic` on the strength of it. It has to substitute
 plain variables — Bazel has no `CC`, so `$(CC)` left alone becomes a genrule
 that runs a command called `CC` — while leaving `$@` and `$(SRCS)` for Bazel
 to fill. `node.variable()` does that in the target's scope, which falls back
-to the global set — and the digest now covers that set except its
-environment-origin members (§3.9). So the plugin's exposure narrowed from
-"every global it reads" to "globals the environment supplied", but it is not
-zero, and `deterministic` is a promise or it is nothing. It still declines,
-now for a smaller and precisely stated reason. See §9.
+to the global set, and that fallback is what made the promise unsound
+twice over: first because the digest did not cover globals at all, and then,
+once it did, because it excludes the environment-origin ones. Both are
+closed (§3.9) — the set is hashed, and environment-origin values need
+`read-environment`, which this plugin does not request and which
+`deterministic` would refuse anyway. It requests `read-recipes`,
+`read-variables` and `write-outputs`, and everything those can reach is in
+the digest.
 
 [pr632-5]: https://github.com/sevki/makers/pull/632
 ## 6. Configuration
@@ -723,40 +749,31 @@ capability that would let it substitute compilers.
   beside published outputs, so nothing is skipped yet. The mechanism is
   small; the interaction with `--always-make`, `-B` and remade makefiles is
   the part worth thinking about.
-* **`read-variables` can still reach outside the digest.** The digest now
-  covers the global variable set (§3.9), which closed the `make CC=gcc` /
-  `make CC=clang` collision this entry used to describe. It excludes
-  environment-origin variables so that ambient noise like `TERM` does not
-  turn the digest over between two runs of the same build, and that
-  exclusion is the remaining gap: `vars.get` is gated on `read-variables`
-  alone, while `read-environment` gates only `session.env`, so a plugin
-  holding the weaker capability can read an environment-supplied value that
-  the digest ignores.
+* **`vars.expand` still reaches outside the digest.** The digest covers the
+  global variable set (§3.9) minus its environment-origin members, and
+  reading those members now requires `read-environment`, so the exclusion is
+  sound for every read that names a variable. Expansion is the exception
+  that cannot be closed the same way: `vars.expand` runs make's expander
+  over arbitrary text, so `$(HOME)` reaches the result without any origin
+  for the host to inspect.
 
-  The coherent fix is to make the capability boundary match the digest's:
-  gate environment-origin reads in `vars.get` behind `read-environment`,
-  which is already in the set `deterministic` refuses, and the exclusion
-  becomes sound rather than merely bounded. It is deliberately not done
-  here, because it changes what an existing capability governs — a plugin
-  that reads `$(HOME)` today with only `read-variables` would start getting
-  `none` — and that is a compatibility decision, not an implementation
-  detail.
-
-  The narrower alternative remains available and is one line: add
-  `read-variables` to the set `deterministic` refuses. It is sound, and it
-  forbids the promise for every plugin that only reads *per-target*
-  variables, which the digest has always covered.
-
-  Until then the honest position is the one `plugins/bazel-export` takes: it
-  reads globals, so it declines `deterministic`, and its source says why.
+  This is bounded rather than open. `expand-variables` is never granted by
+  default, it is refused outright alongside `deterministic`, and it is
+  reported prominently when granted — because the same call can run
+  `$(shell ...)`, which is a much larger problem than digest coverage. A
+  plugin that wants both expansion and cacheability has to expand
+  host-side today; the interesting design question is whether a
+  restricted expander — one that resolves variables but refuses `$(shell
+  ...)` and `$(eval ...)` — would be worth the second implementation of
+  make's hardest code path.
 * **Provider payload conventions.** Namespacing is enforced; encoding is not
   suggested. A recommended encoding (and an SDK helper for it) would make
   cross-plugin composition much likelier to actually happen.
 * **Enumerating global variables.** `vars.get` is by name. A plugin
-  exporting a `.env` or a `BUILD` file wants the whole set. The host already
-  walks it — `global_variables()` in `src/plugin.rs`, added for the digest,
-  returns exactly the name/value/origin/flavor tuples such a `vars.all`
-  would — so this is now purely a question of shaping an interface, not of
+  exporting a `.env` or a `BUILD` file wants the whole set. The data is
+  already reachable and already safe to reach:
+  `crate::variable::global_variables()` returns the whole set as owned
+  records, so this is purely a question of shaping an interface, not of
   reaching the data. The shaping question that remains is whether
   enumeration should return environment-origin entries at all, which is the
   same capability-boundary question as the entry above.
