@@ -773,10 +773,10 @@ capability that would let it substitute compilers.
   exporting a `.env` or a `BUILD` file wants the whole set. The data is
   already reachable and already safe to reach:
   `crate::variable::global_variables()` returns the whole set as owned
-  records, so this is purely a question of shaping an interface, not of
-  reaching the data. The shaping question that remains is whether
-  enumeration should return environment-origin entries at all, which is the
-  same capability-boundary question as the entry above.
+  records, so this is purely a question of shaping an interface. The
+  capability question it used to raise is settled — enumeration would filter
+  environment-origin entries exactly as `vars.get` now does, so the shape is
+  the only open part.
 * **Non-UTF-8 target names.** They arrive lossily converted, as make's own
   display path converts them; `node.id()` stays byte-exact. Byte-exact
   *names* would need `list<u8>` accessors, which is worth doing only if a

@@ -41,13 +41,19 @@ interface plugin {
         /// `node.recipe`. Recipe text carries credentials far more often
         /// than anyone would like.
         read-recipes,
-        /// `vars.get`, `node.variable`, `node.own-variables`.
+        /// `vars.get`, `node.variable`, `node.own-variables` — except
+        /// values whose origin is the process environment, which need
+        /// `read-environment` as well.
         read-variables,
         /// `vars.expand`/`vars.expand-for`. Implies the ability to make make
         /// run `$(shell ...)`, i.e. arbitrary host command execution. Never
         /// granted implicitly.
         expand-variables,
-        /// `session.env`.
+        /// `session.env`, and environment-origin values from `vars.get`,
+        /// `node.variable` and `node.own-variables`. Make imports the
+        /// environment into the same variable set a makefile assigns into,
+        /// so gating only `session.env` would leave the same values
+        /// reachable by name.
         read-environment,
         /// Read access to make's working directory through WASI, for
         /// plugins that must look inside source files (include scanners,
@@ -156,15 +162,14 @@ interface plugin {
         /// run `$(shell ...)`, so a plugin that needs make's own expander
         /// cannot promise determinism, and has to choose.
         ///
-        /// One gap the host does *not* check: the digest covers the global
-        /// variable set except its environment-origin members, which are
-        /// excluded so that ambient noise like `TERM` does not turn it over
-        /// between two runs of the same build. `vars.get` is gated on
-        /// `read-variables` alone, so a plugin holding only that capability
-        /// can read an environment-supplied value the digest ignores. It
-        /// reports each variable's true `origin`, so a plugin declaring
-        /// `deterministic` can check whether the values it depends on are
-        /// actually covered — and should, because nothing else will.
+        /// The refusal of `read-environment` is what makes the digest's own
+        /// exclusion sound. The digest covers the global variable set except
+        /// its environment-origin members — excluded so that ambient noise
+        /// like `TERM` does not turn it over between two runs of the same
+        /// build — and those members are precisely what `read-environment`
+        /// gates, in `vars.get` and `node.variable` as well as in
+        /// `session.env`. So a plugin that can promise determinism cannot
+        /// read them, and one that reads them cannot promise it.
         deterministic: bool,
         failure-policy: failure-policy,
     }

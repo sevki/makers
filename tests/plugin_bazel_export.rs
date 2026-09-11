@@ -386,3 +386,99 @@ fn an_environment_variable_does_not_reach_the_digest() {
         "an environment-origin variable is excluded from the digest"
     );
 }
+
+// ─── the `read-environment` gate on variable reads ───────────────────────
+
+/// Run the plugin against the `EXTRA_CFLAGS` fixture, with `args` on the
+/// command line and `env_extra` in the environment.
+fn env_gate_run(args: &[&str], env_extra: &[(&str, &str)]) -> plugin_common::Run {
+    let plugin = component("bazel-export", "bazel_export");
+    let dir = workdir("plugin_bazel_env.mk", &["probe.c"]);
+    let spec = format!("bazel={}", plugin.display());
+    let mut env: Vec<(&str, &str)> = vec![("MAKERS_PLUGINS", &spec)];
+    env.extend_from_slice(env_extra);
+    plugin_common::run_make_with_args(&dir, args, &env)
+}
+
+/// A plugin holding only `read-variables` cannot resolve an
+/// environment-origin value.
+///
+/// This is what makes the digest's environment exclusion sound rather than
+/// merely convenient. The digest deliberately omits environment-origin
+/// globals — hashing `TERM` and `SSH_AUTH_SOCK` would turn it over between
+/// two runs of an identical build — and that omission only holds up if a
+/// plugin cannot read what the digest does not cover. Otherwise a cache
+/// keyed on the digest serves output built from a different `$(HOME)`.
+///
+/// The reference is left quoted, exactly as it is for a plugin denied
+/// `read-variables` outright: an unresolvable reference is preserved, never
+/// guessed at.
+#[test]
+fn an_environment_variable_is_withheld_without_read_environment() {
+    let run = env_gate_run(&[], &[("EXTRA_CFLAGS", "-O2")]);
+    assert_clean(&run);
+    let probe = genrule_named(&run.artifact("BUILD.bazel"), "probe_o");
+
+    assert!(
+        probe.contains("$$(EXTRA_CFLAGS)"),
+        "an environment-origin value is not readable under `read-variables` \
+         alone, so the reference stays quoted:\n{probe}"
+    );
+    assert!(
+        !probe.contains("-O2"),
+        "and its value must not appear anywhere in the output:\n{probe}"
+    );
+}
+
+/// An operator cannot hand the value back by allowing `read-environment`,
+/// because this plugin never asked for it.
+///
+/// The grant is the intersection of what the manifest requests and what the
+/// operator allows (`requested & allowed`), so `MAKERS_PLUGIN_ALLOW` widens
+/// a plugin only up to its own declaration. That is what makes a manifest
+/// worth reading: a plugin's ceiling is fixed by what it admits to needing,
+/// not by the environment it happens to run in.
+///
+/// The other half of the rule — that a plugin which *does* request and
+/// receive `read-environment` sees the value — has no end-to-end case here
+/// because no in-tree plugin requests it. It is covered by
+/// `plugin::host::environment_gate_tests`, which exercises the gate against
+/// both grant states directly.
+#[test]
+fn allowing_read_environment_does_not_widen_a_plugin_that_never_asked() {
+    let run = env_gate_run(
+        &[],
+        &[
+            ("EXTRA_CFLAGS", "-O2"),
+            ("MAKERS_PLUGIN_ALLOW", "bazel:read-environment"),
+        ],
+    );
+    assert_clean(&run);
+    let probe = genrule_named(&run.artifact("BUILD.bazel"), "probe_o");
+
+    assert!(
+        probe.contains("$$(EXTRA_CFLAGS)"),
+        "`bazel-export` does not request `read-environment`, so allowing it \
+         grants nothing:\n{probe}"
+    );
+}
+
+/// The same name assigned on the command line resolves without it.
+///
+/// `make EXTRA_CFLAGS=-O2` is origin `command line`, not `environment`, and
+/// the digest covers it — so there is nothing for the gate to protect and
+/// withholding it would only break the common way of varying a build from
+/// outside the makefile. The two cases differ in `$(origin ...)` and
+/// nothing else, which is precisely the distinction being drawn.
+#[test]
+fn a_command_line_variable_is_not_withheld() {
+    let run = env_gate_run(&["EXTRA_CFLAGS=-O2"], &[]);
+    assert_clean(&run);
+    let probe = genrule_named(&run.artifact("BUILD.bazel"), "probe_o");
+
+    assert!(
+        probe.contains("-O2"),
+        "a command-line assignment is covered by the digest and stays \
+         readable:\n{probe}"
+    );
+}
