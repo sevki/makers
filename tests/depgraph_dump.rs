@@ -36,6 +36,8 @@ struct Dump {
     pre: String,
     /// Post-walk snapshot (`MAKERS_DEPGRAPH_POST`).
     post: String,
+    /// What `-n` printed, i.e. the recipes in the order make would run them.
+    stdout: String,
     status: std::process::ExitStatus,
 }
 
@@ -46,6 +48,16 @@ struct Dump {
 /// implicit rules resolve); MAKEFLAGS-style env is scrubbed so the snapshots
 /// are hermetic.
 fn dump_graph(dump_name: &str) -> Dump {
+    dump_graph_with_args(dump_name, &[])
+}
+
+/// As [`dump_graph`], plus extra command-line arguments.
+///
+/// Exists for `--shuffle`, which is the one flag that deliberately perturbs
+/// the order make walks the graph in — and so the one flag that can tell a
+/// dump reporting the makefile's structure apart from a dump reporting the
+/// scheduler's plan.
+fn dump_graph_with_args(dump_name: &str, args: &[&str]) -> Dump {
     let fixture = manifest_dir().join("tests/fixtures/depgraph.mk");
     let workdir = tempdir();
     std::fs::copy(&fixture, workdir.join("Makefile")).expect("copy fixture");
@@ -57,15 +69,16 @@ fn dump_graph(dump_name: &str) -> Dump {
 
     let pre = workdir.join(dump_name);
     let post = workdir.join(format!("post-{dump_name}"));
-    let status = Command::new(RUST_MAKE)
+    let out = Command::new(RUST_MAKE)
         .args(["--no-print-directory", "-r", "-n", "-f", "Makefile"])
+        .args(args)
         .env("MAKERS_DEPGRAPH", &pre)
         .env("MAKERS_DEPGRAPH_POST", &post)
         .env_remove("MAKEFLAGS")
         .env_remove("GNUMAKEFLAGS")
         .env_remove("MAKEFILES")
         .current_dir(&workdir)
-        .status()
+        .output()
         .expect("spawn make");
     let read = |p: &PathBuf| {
         std::fs::read_to_string(p)
@@ -74,7 +87,8 @@ fn dump_graph(dump_name: &str) -> Dump {
     Dump {
         pre: read(&pre),
         post: read(&post),
-        status,
+        stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+        status: out.status,
     }
 }
 
@@ -227,5 +241,72 @@ fn makefile_snapshot_doc_is_current() {
     assert_eq!(
         committed, doc,
         "docs/depgraph-makefile.md is stale; regenerate with UPDATE_SNAPSHOTS=1"
+    );
+}
+
+/// `--shuffle` must not rewrite the graph the dump reports.
+///
+/// The flag exists to perturb *build order*, so that a makefile relying on
+/// an undeclared ordering fails loudly instead of working by luck. It is not
+/// a claim about the makefile's structure, and the post-walk dump — like the
+/// `makers:plugin` `graph` interface that reads the same snapshot — promises
+/// makefile order.
+///
+/// This port applied the reordering destructively: `shuffle_deps` permuted
+/// `FileNode::deps` in place and `shuffle_goals_recursive` permuted the goal
+/// vector, so by the time anything read the graph the makefile's own order
+/// was gone. The C implementation never had this problem — it kept the
+/// original `->next` chain and recorded the shuffle in a separate `->shuf`
+/// link, so both orders stayed available.
+///
+/// The pre-walk dump is taken before shuffling runs and so was always
+/// unaffected; it is the control here rather than the subject.
+#[test]
+fn shuffle_does_not_reorder_the_dumped_graph() {
+    let plain = dump_graph("shuffle-plain.md");
+    let shuffled = dump_graph_with_args("shuffle-reverse.md", &["--shuffle=reverse"]);
+    assert!(plain.status.success() && shuffled.status.success());
+
+    assert_eq!(
+        plain.pre, shuffled.pre,
+        "the pre-walk dump is taken before shuffling and must be unaffected"
+    );
+    assert_eq!(
+        plain.post, shuffled.post,
+        "the post-walk dump reports the makefile's structure, which \
+         `--shuffle` does not change"
+    );
+}
+
+/// And the shuffling still happens, or the test above would pass for the
+/// wrong reason.
+///
+/// `-n` prints recipes in the order make would run them, so a reversing
+/// shuffle is visible there and nowhere else. Asserting both halves is the
+/// point: a fix that quietly stopped reordering the build would satisfy the
+/// first test perfectly.
+#[test]
+fn shuffle_still_reorders_the_build() {
+    let plain = dump_graph("shuffle-order-plain.md");
+    let shuffled = dump_graph_with_args("shuffle-order-reverse.md", &["--shuffle=reverse"]);
+    assert!(plain.status.success() && shuffled.status.success());
+
+    // `prog: main.o util.o gen.tab.c | outdir` — the two compiles are
+    // independent, so their relative order is exactly what the shuffle has
+    // to flip.
+    let position = |haystack: &str, needle: &str| {
+        haystack
+            .find(needle)
+            .unwrap_or_else(|| panic!("{needle} not in:\n{haystack}"))
+    };
+    assert!(
+        position(&plain.stdout, "-o main.o") < position(&plain.stdout, "-o util.o"),
+        "unshuffled, prerequisites are built in makefile order:\n{}",
+        plain.stdout
+    );
+    assert!(
+        position(&shuffled.stdout, "-o util.o") < position(&shuffled.stdout, "-o main.o"),
+        "`--shuffle=reverse` must still reverse the build order:\n{}",
+        shuffled.stdout
     );
 }
