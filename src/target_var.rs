@@ -70,7 +70,7 @@ pub enum VarExport {
 /// for the c2rust `variable` record held in a target's `VariableSetList`. Name
 /// and value are raw bytes (no `c_char`); the c2rust bitfield is split into
 /// plain enums/bools.
-#[derive(Debug, Clone, PartialEq, Eq, ContentHash)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, ContentHash)]
 pub struct TargetVariable {
     pub name: Vec<u8>,
     pub value: Vec<u8>,
