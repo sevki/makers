@@ -18,12 +18,17 @@ use plugin_common::{assert_clean, component, run_make, workdir, Run};
 const SOURCES: &[&str] = &["main.c", "util.c", "debug.c"];
 
 fn run(extra: &[(&str, &str)]) -> Run {
+    run_with_args(&[], extra)
+}
+
+/// As [`run`], plus extra command-line arguments — for `--shuffle`.
+fn run_with_args(args: &[&str], extra: &[(&str, &str)]) -> Run {
     let plugin = component("compile-commands", "compile_commands");
     let dir = workdir("plugin_api.mk", SOURCES);
     let spec = format!("compdb={}", plugin.display());
     let mut env: Vec<(&str, &str)> = vec![("MAKERS_PLUGINS", &spec)];
     env.extend_from_slice(extra);
-    run_make(&dir, &env)
+    plugin_common::run_make_with_args(&dir, args, &env)
 }
 
 /// The database matches what make would actually run, per target — the
@@ -301,5 +306,43 @@ fn a_target_scoped_variable_inside_a_function_is_not_expanded_globally() {
         run.stderr.contains("target-specific variable") && run.stderr.contains("LIBS"),
         "the plugin has to say which variable made it stop:\n{}",
         run.stderr
+    );
+}
+
+/// Analysis order follows the makefile, not the order make built in.
+///
+/// This plugin appends each entry as `analyze` is called and joins them
+/// unsorted, so `compile_commands.json` records the order the pass walked
+/// the graph — which makes it the right place to assert the `graph`
+/// interface's order promise end to end.
+///
+/// `--shuffle` is the flag that used to break that promise. It reorders the
+/// build so a makefile relying on an undeclared ordering fails loudly
+/// instead of working by luck, but this port applied the reordering to
+/// `FileNode::deps` in place, so the pass saw the scheduler's plan and
+/// generated a database in build order. A compilation database is consumed
+/// by editors and indexers that diff it; one that reorders itself because
+/// of a debugging flag is one that produces spurious diffs.
+#[test]
+fn shuffle_analysis_order_follows_the_makefile() {
+    // One working directory for both runs. Each entry records its
+    // `directory`, so two temp dirs would differ for a reason that has
+    // nothing to do with the ordering under test.
+    let plugin = component("compile-commands", "compile_commands");
+    let dir = workdir("plugin_api.mk", SOURCES);
+    let spec = format!("compdb={}", plugin.display());
+    let env = [("MAKERS_PLUGINS", spec.as_str())];
+
+    let plain = plugin_common::run_make_with_args(&dir, &[], &env);
+    assert_clean(&plain);
+    let plain_db = plain.artifact("compile_commands.json");
+
+    let shuffled = plugin_common::run_make_with_args(&dir, &["--shuffle=reverse"], &env);
+    assert_clean(&shuffled);
+
+    assert_eq!(
+        plain_db,
+        shuffled.artifact("compile_commands.json"),
+        "the database records analysis order, which `--shuffle` must not touch"
     );
 }

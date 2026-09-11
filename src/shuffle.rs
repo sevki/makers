@@ -41,17 +41,19 @@ pub fn get_mode(ctx: &crate::execctx::ExecContext) -> Option<String> {
     }
 }
 
-/// Whether this run's shuffling will actually reorder the graph.
+/// Whether this run's shuffling will actually reorder the build.
 ///
 /// Distinct from [`get_mode`], which reports what was *configured*:
 /// `--shuffle=identity` is a mode but not a reorder, and any mode is a no-op
-/// under `.NOTPARALLEL`. Callers that read dep or goal order out of the
-/// graph after [`shuffle_goals_recursive`] has run — the `makers:plugin`
-/// analysis pass is the one that does — need the narrower question, because
-/// this port applies the reordering to `FileNode::deps` in place. The C
-/// implementation kept the original `->next` chain alongside a separate
-/// `->shuf` link, so there the makefile order remained recoverable; here it
-/// does not survive.
+/// under `.NOTPARALLEL`.
+///
+/// It no longer means "the graph's order is unreliable". It used to: this
+/// port applied the reordering to `FileNode::deps` in place, so a reader of
+/// the graph got the scheduler's plan rather than the makefile's structure,
+/// and the `makers:plugin` pass warned that it could not keep its documented
+/// promise. [`shuffle_deps`] records a rank per edge now and leaves the
+/// vector alone, so both orders are available at once and the question this
+/// answers is only about the build.
 pub fn reorders_the_graph(ctx: &crate::execctx::ExecContext) -> bool {
     matches!(config(ctx).mode, Mode::Random | Mode::Reverse) && !not_parallel(ctx)
 }
@@ -145,24 +147,59 @@ fn reverse_shuffle<T>(slice: &mut [T]) {
 
 fn identity_shuffle<T>(_: &mut [T]) {}
 
-/// Reorder a `Vec<DepNode>` per the active shuffle mode. A `wait_here` marker
-/// anywhere in the list disables shuffling for that list (matching the C code,
-/// which leaves `->shuf` null so the original `->next` order is kept).
+/// Record a build order on `deps` per the active shuffle mode, leaving the
+/// vector itself in makefile order. A `wait_here` marker anywhere in the list
+/// disables shuffling for that list, matching the C code.
 ///
-/// Unlike the C version (which preserved `->next` and recorded the reordering
-/// in a separate `->shuf` link), the idiomatic updater iterates the `deps`
-/// vector directly, so the reorder is applied to the vector in place — the same
-/// observable build order.
+/// This is C's arrangement rather than the one this port started with. C kept
+/// the makefile order in `->next` and threaded the shuffled order through a
+/// separate `->shuf` chain, so a reader could ask for either; this port
+/// permuted the `deps` vector in place, which produced the same build order
+/// but destroyed the other answer — and the `makers:plugin` `graph`
+/// interface, `MAKERS_DEPGRAPH_POST` and every future consumer of the
+/// snapshot all want makefile order.
+///
+/// The permutation is computed over indices and then written back as a rank
+/// per edge. Shuffling the index vector rather than the dep vector draws
+/// exactly the same sequence of `make_rand` values — same length, same swap
+/// loop — so `--shuffle=<seed>` reproduces the build order it always did.
 fn shuffle_deps(ctx: &crate::execctx::ExecContext, deps: &mut [DepNode]) {
     if deps.is_empty() || deps.iter().any(|d| d.wait_here) {
         return;
     }
+    let mut order: Vec<u32> = (0..deps.len() as u32).collect();
     match config(ctx).mode {
-        Mode::None => {}
-        Mode::Random => random_shuffle(ctx, deps),
-        Mode::Reverse => reverse_shuffle(deps),
-        Mode::Identity => identity_shuffle(deps),
+        Mode::None => return,
+        Mode::Random => random_shuffle(ctx, &mut order),
+        Mode::Reverse => reverse_shuffle(&mut order),
+        Mode::Identity => identity_shuffle(&mut order),
     }
+    // `order[rank]` is the dep that goes `rank`-th; the edge stores its own
+    // rank, which is the inverse.
+    for (rank, &i) in order.iter().enumerate() {
+        deps[i as usize].shuf = Some(rank as u32);
+    }
+}
+
+/// The indices of a dep or goal list in the order the build should walk it.
+///
+/// Makefile order — `0..n` — unless `--shuffle` recorded ranks, which is the
+/// overwhelmingly common case and is why this returns early rather than
+/// always sorting.
+///
+/// An edge with no rank sorts first. That is not arbitrary: the only way to
+/// have one in a list that was shuffled is to have been added afterwards, by
+/// implicit-rule matching during the update walk, and `implicit.rs` adds
+/// those with `insert(0, ..)` — at the front, meaning first. Ties fall back
+/// to the vector's own order, so the result is total and reproducible.
+pub fn build_order(ranks: impl Iterator<Item = Option<u32>>) -> Vec<usize> {
+    let ranks: Vec<Option<u32>> = ranks.collect();
+    let mut order: Vec<usize> = (0..ranks.len()).collect();
+    if ranks.iter().all(Option::is_none) {
+        return order;
+    }
+    order.sort_by_key(|&i| (ranks[i], i));
+    order
 }
 
 /// Recursively shuffle a file's deps and the deps of each prerequisite file,
@@ -220,12 +257,23 @@ pub fn shuffle_goals_recursive(
         make_seed(ctx, seed);
     }
     // A `wait_here` marker on any goal disables shuffling for the list.
+    // Ranks are recorded on each goal's own edge, exactly as for a dep list,
+    // so the goal vector stays in the order the command line and makefile
+    // put it — which is what `session.goal-names` and `graph.goals` report.
+    //
+    // No emptiness guard: every step below is already a no-op on an empty
+    // list, so one would be unreachable weight rather than protection —
+    // `cargo-mutants` proved it by surviving a mutation of it.
     if !goals.iter().any(|g| g.dep.wait_here) {
+        let mut order: Vec<u32> = (0..goals.len() as u32).collect();
         match mode {
             Mode::None => {}
-            Mode::Random => random_shuffle(ctx, goals),
-            Mode::Reverse => reverse_shuffle(goals),
-            Mode::Identity => identity_shuffle(goals),
+            Mode::Random => random_shuffle(ctx, &mut order),
+            Mode::Reverse => reverse_shuffle(&mut order),
+            Mode::Identity => identity_shuffle(&mut order),
+        }
+        for (rank, &i) in order.iter().enumerate() {
+            goals[i as usize].dep.shuf = Some(rank as u32);
         }
     }
     let files: Vec<FileId> = goals.iter().filter_map(|g| g.dep.file).collect();
@@ -376,9 +424,30 @@ mod tests {
         dep_names(&guard.deps)
     }
 
-    /// `reverse` mode must actually reverse a dep list in place.
+    /// The names in the order the build would walk them — what the scheduler
+    /// reads, as opposed to what the vector holds.
+    fn walk_names(deps: &[DepNode]) -> Vec<String> {
+        build_order(deps.iter().map(|d| d.shuf))
+            .into_iter()
+            .map(|i| deps[i].name.clone())
+            .collect()
+    }
+
+    fn file_walk_names(ctx: &crate::execctx::ExecContext, f: FileId) -> Vec<String> {
+        let node = ctx.filenodes.get(f).expect("file node present");
+        let guard = node.lock().expect("file node poisoned");
+        walk_names(&guard.deps)
+    }
+
+    /// `reverse` mode reverses the *walk* and leaves the list alone.
+    ///
+    /// Both halves matter. Reversing the build order is what `--shuffle`
+    /// is for; leaving the vector in makefile order is what lets the graph
+    /// snapshot keep its promise. Asserting only the first would pass for a
+    /// version that destroys the second, which is exactly the bug this
+    /// replaced.
     #[test]
-    fn shuffle_deps_reverse_reorders_in_place() {
+    fn shuffle_deps_reverse_reorders_the_walk_not_the_list() {
         let ctx = crate::execctx::ExecContext::default();
         set_mode(&ctx, "reverse");
         let mut deps = vec![
@@ -388,8 +457,54 @@ mod tests {
             dep_named("d"),
         ];
         shuffle_deps(&ctx, &mut deps);
-        assert_eq!(dep_names(&deps), vec!["d", "c", "b", "a"]);
+        assert_eq!(
+            dep_names(&deps),
+            vec!["a", "b", "c", "d"],
+            "the list itself stays in makefile order"
+        );
+        assert_eq!(
+            walk_names(&deps),
+            vec!["d", "c", "b", "a"],
+            "and the recorded build order is reversed"
+        );
         set_mode(&ctx, "none");
+    }
+
+    /// With no shuffling there are no ranks, and the walk is the list.
+    #[test]
+    fn without_shuffling_the_walk_is_makefile_order() {
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "none");
+        let mut deps = vec![dep_named("a"), dep_named("b"), dep_named("c")];
+        shuffle_deps(&ctx, &mut deps);
+        assert!(
+            deps.iter().all(|d| d.shuf.is_none()),
+            "nothing shuffled, so nothing is ranked"
+        );
+        assert_eq!(walk_names(&deps), vec!["a", "b", "c"]);
+    }
+
+    /// An edge added after the shuffle — which is what implicit-rule
+    /// matching does, at the front of the list — walks first, and does not
+    /// disturb the ranks already recorded.
+    ///
+    /// This is the property that made a rank-per-edge the right shape. A
+    /// stored permutation of indices would have been invalidated by the
+    /// insert; the rank rides on the edge, so it cannot be.
+    #[test]
+    fn an_edge_added_after_the_shuffle_walks_first() {
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+        let mut deps = vec![dep_named("a"), dep_named("b"), dep_named("c")];
+        shuffle_deps(&ctx, &mut deps);
+        set_mode(&ctx, "none");
+
+        deps.insert(0, dep_named("discovered"));
+        assert_eq!(
+            walk_names(&deps),
+            vec!["discovered", "c", "b", "a"],
+            "the new edge leads; the rest keep the order the shuffle gave them"
+        );
     }
 
     /// A `wait_here` marker anywhere in a *non-empty* list must disable shuffling
@@ -436,13 +551,23 @@ mod tests {
 
         assert_eq!(
             file_dep_names(&ctx, p),
+            vec!["shuf_C1", "shuf_C2", "shuf_Z"],
+            "the parent's dep list is untouched"
+        );
+        assert_eq!(
+            file_walk_names(&ctx, p),
             vec!["shuf_Z", "shuf_C2", "shuf_C1"],
-            "parent deps must be reversed"
+            "its walk is reversed"
         );
         assert_eq!(
             file_dep_names(&ctx, c1),
+            vec!["g1", "g2"],
+            "and so is the child's list"
+        );
+        assert_eq!(
+            file_walk_names(&ctx, c1),
             vec!["g2", "g1"],
-            "child deps must be reversed via recursion"
+            "with its walk reversed via the recursion"
         );
         set_mode(&ctx, "none");
     }
@@ -496,6 +621,51 @@ mod tests {
         set_mode(&ctx, "none");
     }
 
+    /// A `wait_here` marker on any goal disables shuffling for the goal list,
+    /// the same rule dep lists follow.
+    ///
+    /// `.WAIT` is an ordering the makefile asked for explicitly, so it is the
+    /// one thing `--shuffle` must not perturb: the flag exists to break
+    /// orderings nobody declared. The deps equivalent has been covered since
+    /// this module was written; the goal equivalent had not, which is how a
+    /// mutation of this guard survived CI.
+    #[test]
+    fn shuffle_goals_recursive_wait_here_marker_disables_shuffle() {
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+
+        let mut goals = vec![goal_named("a"), goal_named("b"), goal_named("c")];
+        goals[1].dep.wait_here = true;
+        shuffle_goals_recursive(&ctx, &mut goals);
+
+        assert!(
+            goals.iter().all(|g| g.dep.shuf.is_none()),
+            "no goal may be ranked when the list carries a `.WAIT`"
+        );
+        let walk: Vec<String> = build_order(goals.iter().map(|g| g.dep.shuf))
+            .into_iter()
+            .map(|i| goals[i].dep.name.clone())
+            .collect();
+        assert_eq!(
+            walk,
+            vec!["a", "b", "c"],
+            "so the walk is the order the command line gave"
+        );
+        set_mode(&ctx, "none");
+    }
+
+    /// An empty goal list is a no-op rather than a panic — the case the
+    /// removed emptiness guard was standing in for.
+    #[test]
+    fn shuffle_goals_recursive_handles_an_empty_list() {
+        let ctx = crate::execctx::ExecContext::default();
+        set_mode(&ctx, "reverse");
+        let mut goals: Vec<crate::dep::GoalDepNode> = Vec::new();
+        shuffle_goals_recursive(&ctx, &mut goals);
+        assert!(goals.is_empty());
+        set_mode(&ctx, "none");
+    }
+
     /// The goal-list entry point must reorder the goals (`reverse` here) when no
     /// `wait_here` marker is present.
     #[test]
@@ -506,7 +676,16 @@ mod tests {
         let mut goals = vec![goal_named("a"), goal_named("b"), goal_named("c")];
         shuffle_goals_recursive(&ctx, &mut goals);
         let names: Vec<String> = goals.iter().map(|g| g.dep.name.clone()).collect();
-        assert_eq!(names, vec!["c", "b", "a"]);
+        assert_eq!(
+            names,
+            vec!["a", "b", "c"],
+            "the goal list keeps the order the command line gave it"
+        );
+        let walk: Vec<String> = build_order(goals.iter().map(|g| g.dep.shuf))
+            .into_iter()
+            .map(|i| goals[i].dep.name.clone())
+            .collect();
+        assert_eq!(walk, vec!["c", "b", "a"], "and the walk is reversed");
         set_mode(&ctx, "none");
     }
 

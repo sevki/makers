@@ -45,16 +45,16 @@ flowchart LR
   n9([".DEFAULT"])
   n10["prog"]
   n11["outdir"]
-  n12[["%.tab.c %.tab.h: %.y"]]
-  n13[["%.o: %.c"]]
+  n12[["%.o: %.c"]]
+  n13[["%.tab.c %.tab.h: %.y"]]
   n0 ==> n10
   n8 --> n11
   n10 --> n1
   n10 --> n6
   n10 --> n4
   n10 -.->|order-only| n11
-  n12 -.-> n5
-  n13 -.-> n3
+  n12 -.-> n3
+  n13 -.-> n5
   classDef phony stroke-dasharray:5 5;
   class n11 phony;
   classDef rule stroke:#36c,stroke-dasharray:3 3;
@@ -85,31 +85,31 @@ flowchart LR
   n13([".DEFAULT"])
   n14["prog"]
   n15["outdir"]
-  n16[["%.tab.c %.tab.h: %.y"]]
-  n17[["%.o: %.c"]]
+  n16[["%.o: %.c"]]
+  n17[["%.tab.c %.tab.h: %.y"]]
   n0 ==> n14
   n1 -->|parent| n6
   n2 --> n10
   n2 -->|parent| n14
-  n2 -.->|rule| n17
+  n2 -.->|rule| n16
   n3 -->|parent| n8
   n6 --> n1
   n6 -.->|also| n11
   n6 -->|parent| n14
-  n6 -.->|rule| n16
+  n6 -.->|rule| n17
   n8 --> n3
   n8 -->|parent| n14
-  n8 -.->|rule| n17
+  n8 -.->|rule| n16
   n10 -->|parent| n2
-  n11 -.->|rule| n16
+  n11 -.->|rule| n17
   n12 --> n15
   n14 --> n2
   n14 --> n8
   n14 --> n6
   n14 -.->|order-only| n15
   n15 -->|parent| n14
-  n16 -.-> n7
-  n17 -.-> n5
+  n16 -.-> n5
+  n17 -.-> n7
   classDef phony stroke-dasharray:5 5;
   class n15 phony;
   classDef rule stroke:#36c,stroke-dasharray:3 3;
