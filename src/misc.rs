@@ -9,25 +9,25 @@ use ::core::{
     ffi::{c_char, c_longlong, c_uint, c_ulonglong, c_void},
     ptr::{null, null_mut},
 };
+#[cfg(target_family = "wasm")]
+use crate::compat::{getpid, mkstemp, stpcpy, umask};
+#[cfg(unix)]
+use libc::{getpid, mkstemp, stpcpy, umask};
 
 use libc::{
     __errno_location,
     calloc,
     free,
     getenv,
-    getpid,
     malloc,
-    mkstemp,
     realloc,
     sleep,
     sprintf,
-    stpcpy,
     strcpy,
     strdup,
     strerror,
     strlen,
     strndup,
-    umask,
     EINTR,
 };
 
@@ -514,7 +514,10 @@ unsafe fn end_of_token_raw(mut p: *const c_char) -> *mut c_char {
 /// # Safety
 /// `name` must be a valid NUL-terminated path.
 pub unsafe fn unlink_c(name: *const c_char) -> i32 {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let os = ::std::ffi::OsStr::from_bytes(::core::ffi::CStr::from_ptr(name).to_bytes());
     loop {
         match ::std::fs::remove_file(os) {
@@ -587,16 +590,13 @@ pub unsafe fn free_ns_chain(mut ns: *mut nameseq) {
 /// `type_0` must be a valid NUL-terminated string.
 pub unsafe fn spin(type_0: *const c_char) {
     let mut filenm: [c_char; 256] = [0; 256];
-    let mut dummy: stat = ::core::mem::zeroed();
 
     sprintf(filenm.as_mut_ptr(), c".make-spin-%s".as_ptr(), type_0);
-    if stat(filenm.as_ptr(), &mut dummy) == 0 {
+    let spinfile = crate::fs::path_from_c(filenm.as_ptr());
+    if crate::fs::exists(spinfile) {
         fprintf(stderr, c"SPIN on %s\n".as_ptr(), filenm.as_ptr());
-        loop {
+        while crate::fs::exists(spinfile) {
             sleep(1);
-            if stat(filenm.as_ptr(), &mut dummy) != 0 {
-                break;
-            }
         }
     }
 }

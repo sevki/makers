@@ -7,7 +7,7 @@
 //! through `#[repr(C)]`.
 
 use ::core::{
-    ffi::{c_double, c_uint, c_ulong, c_void},
+    ffi::{c_double, c_uint, c_void},
     ptr::null_mut,
 };
 
@@ -16,7 +16,7 @@ use libc::{exit, free};
 use crate::{ffi_types::size_t, misc::xcalloc};
 
 pub type __compar_fn_t = Option<unsafe extern "C" fn(*const c_void, *const c_void) -> i32>;
-pub type hash_func_t = Option<unsafe fn(*const c_void) -> c_ulong>;
+pub type hash_func_t = Option<unsafe fn(*const c_void) -> u64>;
 pub type hash_cmp_func_t = Option<unsafe fn(*const c_void, *const c_void) -> i32>;
 pub type hash_map_func_t = Option<unsafe fn(*const c_void)>;
 pub type hash_map_arg_func_t = Option<unsafe fn(*const c_void, *mut c_void)>;
@@ -32,15 +32,15 @@ pub struct HashTable {
     pub ht_hash_2: hash_func_t,
     pub ht_compare: hash_cmp_func_t,
     /// Total slots (a power of two).
-    pub ht_size: c_ulong,
+    pub ht_size: u64,
     /// Fill threshold that triggers a rehash (15/16 of the size).
-    pub ht_capacity: c_ulong,
+    pub ht_capacity: u64,
     /// Items in the table.
-    pub ht_fill: c_ulong,
+    pub ht_fill: u64,
     /// Slots that are neither full nor deleted.
-    pub ht_empty_slots: c_ulong,
-    pub ht_collisions: c_ulong,
-    pub ht_lookups: c_ulong,
+    pub ht_empty_slots: u64,
+    pub ht_collisions: u64,
+    pub ht_lookups: u64,
     pub ht_rehashes: c_uint,
     pub(crate) ht_in_map: c_uint,
 }
@@ -93,7 +93,7 @@ unsafe fn table_slots_mut<'a>(ht: *mut HashTable) -> &'a mut [*mut c_void] {
 /// valid for the items later stored.
 pub unsafe fn hash_init(
     ht: *mut HashTable,
-    size: c_ulong,
+    size: u64,
     hash_1: hash_func_t,
     hash_2: hash_func_t,
     hash_cmp: hash_cmp_func_t,
@@ -107,7 +107,7 @@ pub unsafe fn hash_init(
         let _ = write!(
             std::io::stderr(),
             "can't allocate {} bytes for hash table: memory exhausted",
-            (*ht).ht_size * ::core::mem::size_of::<*mut c_void>() as c_ulong,
+            (*ht).ht_size * ::core::mem::size_of::<*mut c_void>() as u64,
         );
         exit(MAKE_TROUBLE);
     }
@@ -132,8 +132,8 @@ pub unsafe fn hash_init(
 pub unsafe fn hash_load(
     ht: *mut HashTable,
     item_table: *const c_void,
-    cardinality: c_ulong,
-    size: c_ulong,
+    cardinality: u64,
+    size: u64,
 ) {
     if cardinality == 0 {
         return;
@@ -172,8 +172,7 @@ pub unsafe fn hash_find_slot(ht: *mut HashTable, key: *const c_void) -> *mut *mu
         .wrapping_add(1);
     loop {
         // ht_size is a power of two, so this is "hash_1 % size".
-        hash_1 = (hash_1 as c_ulong
-            & (ht.as_ref().expect("hash table pointer is null").ht_size - 1))
+        hash_1 = (hash_1 as u64 & (ht.as_ref().expect("hash table pointer is null").ht_size - 1))
             as c_uint;
         let idx = hash_1 as usize;
         let slot_val = *table_slots_mut(ht)
@@ -391,13 +390,17 @@ pub unsafe fn hash_free(ht: *mut HashTable, free_items: i32) {
 /// `ht` must be initialized and `map` non-null.
 pub unsafe fn hash_map(ht: *mut HashTable, map: hash_map_func_t) {
     let map = map.expect("hash_map without callback");
-    ht.as_mut().expect("hash table pointer is null").set_ht_in_map(1);
+    ht.as_mut()
+        .expect("hash table pointer is null")
+        .set_ht_in_map(1);
     for &item in table_slots(ht) {
         if is_real_item(item) {
             map(item);
         }
     }
-    ht.as_mut().expect("hash table pointer is null").set_ht_in_map(0);
+    ht.as_mut()
+        .expect("hash table pointer is null")
+        .set_ht_in_map(0);
 }
 
 /// Call `map(item, arg)` on every item. The table must not be modified
@@ -449,11 +452,11 @@ pub unsafe fn hash_rehash(ht: *mut HashTable) {
 /// The `hash_print_stats` line for the given counters. `{:.0}` rounds
 /// half-to-even exactly like the C `%.0f` these lines were printed with.
 fn hash_stats_string(
-    fill: c_ulong,
-    size: c_ulong,
+    fill: u64,
+    size: u64,
     rehashes: c_uint,
-    collisions: c_ulong,
-    lookups: c_ulong,
+    collisions: u64,
+    lookups: u64,
 ) -> String {
     format!(
         "Load={}/{}={:.0}%, Rehash={}, Collisions={}/{}={:.0}%",

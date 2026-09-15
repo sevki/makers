@@ -22,6 +22,10 @@ pub use include_path::{construct_include_path, tilde_expand};
 
 /// Raw makefile line reading from an `EBuffer` (split out of this file).
 mod lines;
+#[cfg(target_family = "wasm")]
+use crate::compat::getlogin;
+#[cfg(unix)]
+use libc::getlogin;
 pub use lines::{readline, readstring};
 use {
     crate::{
@@ -50,7 +54,7 @@ use {
         output::FmtArg,
         strcache::{strcache_add, strcache_add_bytes},
     },
-    libc::{__errno_location, free, getenv, getlogin, strchr, strcpy, strerror, strpbrk},
+    libc::{__errno_location, free, getenv, strchr, strcpy, strerror, strpbrk},
 };
 extern "C" {
     fn memcpy(
@@ -72,7 +76,18 @@ extern "C" {
         __pglob: *mut glob_t,
     ) -> i32;
     fn globfree(__pglob: *mut glob_t);
+}
+// `getpwnam` (user-database lookup, `~user` tilde expansion) has no WASI
+// equivalent -- there is no user database in a wasm sandbox. Declared by
+// hand (bypassing `libc`'s per-target gating), so wasm needs its own
+// stand-in to link; it always reports "no such user".
+#[cfg(unix)]
+extern "C" {
     fn getpwnam(__name: *const ::core::ffi::c_char) -> *mut passwd;
+}
+#[cfg(target_family = "wasm")]
+unsafe fn getpwnam(_name: *const ::core::ffi::c_char) -> *mut passwd {
+    ::core::ptr::null_mut()
 }
 pub use crate::sys_stat::{stat, timespec};
 use crate::warning::{self, Action, Type};
@@ -261,7 +276,7 @@ pub const EINTR: i32 = 4;
 pub const ENOMEM: i32 = 12;
 pub const ENFILE: i32 = 23;
 pub const EMFILE: i32 = 24;
-pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
+pub const SIZE_MAX: ::core::ffi::c_ulong = ::core::ffi::c_ulong::MAX;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const MAP_NUL: i32 = 0x1_i32;
 pub const MAP_BLANK: i32 = 0x2_i32;
@@ -528,7 +543,10 @@ unsafe fn eval_makefile(
     }
     *__errno_location() = 0;
     {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         let path = std::ffi::OsStr::from_bytes(CStr::from_ptr(filename).to_bytes());
         loop {
             match std::fs::File::open(path) {
@@ -568,7 +586,10 @@ unsafe fn eval_makefile(
             & 0x8000_i32
             != 0)
     {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         // `filename` is an existing C string supplied by the caller; read its
         // bytes (no new C string constructed) to build candidate paths.
         let filename_bytes = CStr::from_ptr(filename).to_bytes().to_vec();
@@ -917,10 +938,7 @@ pub unsafe fn eval(
             private_v: 0,
             export_v: 0,
         };
-        (*ebuf).floc.lineno = (*ebuf)
-            .floc
-            .lineno
-            .wrapping_add(nlines as ::core::ffi::c_ulong);
+        (*ebuf).floc.lineno = (*ebuf).floc.lineno.wrapping_add(nlines as u64);
         nlines = readline(ctx, ebuf);
         if nlines < 0 {
             break;
@@ -1028,7 +1046,7 @@ pub unsafe fn eval(
                 }
             } else {
                 if filenames.is_some() {
-                    fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                    fi.lineno = tgts_started as u64;
                     fi.offset = 0;
                     record_files(
                         ctx,
@@ -1149,7 +1167,7 @@ pub unsafe fn eval(
                             );
                         }
                         if filenames.is_some() {
-                            fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                            fi.lineno = tgts_started as u64;
                             fi.offset = 0;
                             record_files(
                                 ctx,
@@ -1207,7 +1225,7 @@ pub unsafe fn eval(
                             );
                         }
                         if filenames.is_some() {
-                            fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                            fi.lineno = tgts_started as u64;
                             fi.offset = 0;
                             record_files(
                                 ctx,
@@ -1296,7 +1314,7 @@ pub unsafe fn eval(
                             );
                         }
                         if filenames.is_some() {
-                            fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                            fi.lineno = tgts_started as u64;
                             fi.offset = 0;
                             record_files(
                                 ctx,
@@ -1341,7 +1359,7 @@ pub unsafe fn eval(
                             files = parsed?;
                             save = install_conditionals(ctx);
                             if filenames.is_some() {
-                                fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                                fi.lineno = tgts_started as u64;
                                 fi.offset = 0;
                                 record_files(
                                     ctx,
@@ -1425,7 +1443,7 @@ pub unsafe fn eval(
                             );
                         }
                         if filenames.is_some() {
-                            fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                            fi.lineno = tgts_started as u64;
                             fi.offset = 0;
                             record_files(
                                 ctx,
@@ -1583,7 +1601,7 @@ pub unsafe fn eval(
                         let mut end: *const ::core::ffi::c_char;
                         let mut beg: *const ::core::ffi::c_char;
                         if filenames.is_some() {
-                            fi.lineno = tgts_started as ::core::ffi::c_ulong;
+                            fi.lineno = tgts_started as u64;
                             fi.offset = 0;
                             record_files(
                                 ctx,
@@ -2024,7 +2042,7 @@ pub unsafe fn eval(
         ));
     }
     if filenames.is_some() {
-        fi.lineno = tgts_started as ::core::ffi::c_ulong;
+        fi.lineno = tgts_started as u64;
         fi.offset = 0;
         record_files(
             ctx,
@@ -2178,10 +2196,7 @@ unsafe fn do_define(
                 &[],
             ));
         }
-        (*ebuf).floc.lineno = (*ebuf)
-            .floc
-            .lineno
-            .wrapping_add(nlines as ::core::ffi::c_ulong);
+        (*ebuf).floc.lineno = (*ebuf).floc.lineno.wrapping_add(nlines as u64);
         line = (*ebuf).buffer;
         collapse_continuations(ctx, line);
         if *line.offset(0_i32 as isize) as i32 != crate::entry::opt_cmd_prefix(ctx) as i32 {

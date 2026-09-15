@@ -14,52 +14,22 @@ use ::core::{
 use std::sync::atomic::Ordering;
 
 use libc::{
-    __errno_location,
-    close,
-    fcntl,
-    flock,
-    free,
-    fstat,
-    mkfifo,
-    open,
-    perror,
-    pipe,
-    pselect,
-    read,
-    sigemptyset,
-    sigset_t,
-    sprintf,
-    sscanf,
-    strcmp,
-    strerror,
-    strlen,
-    strncmp,
-    timespec,
-    write,
-    EAGAIN,
-    EBADF,
-    EINTR,
-    FD_CLOEXEC,
-    FD_SET,
-    FD_ZERO,
-    F_GETFD,
-    F_GETFL,
-    F_SETFD,
-    F_SETFL,
-    F_SETLKW,
-    F_UNLCK,
-    F_WRLCK,
-    O_APPEND,
-    O_EXCL,
-    O_NONBLOCK,
-    O_RDONLY,
-    O_RDWR,
-    O_TMPFILE,
-    O_WRONLY,
-    SEEK_SET,
-    S_IFMT,
-    S_IFREG,
+    __errno_location, close, fcntl, free, open, perror, read, sigset_t, sprintf, sscanf,
+    strcmp, strerror, strlen, strncmp, timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET,
+    FD_ZERO, F_GETFD, F_GETFL, F_SETFD, F_SETFL, O_APPEND, O_EXCL, O_NONBLOCK, O_RDONLY, O_RDWR,
+    O_WRONLY, SEEK_SET,
 };
+// `flock`/`mkfifo`/`pipe`/`pselect`/`sigemptyset` and the `F_SETLKW`/
+// `F_UNLCK`/`F_WRLCK`/`O_TMPFILE` constants are part of the jobserver/
+// output-sync POSIX surface that WASI does not expose; see
+// `crate::compat` for the wasm stand-ins (accepted architectural gap —
+// job control does not work on wasm, it only needs to compile there).
+#[cfg(target_family = "wasm")]
+use crate::compat::{
+    flock, mkfifo, pipe, pselect, sigemptyset, F_SETLKW, F_UNLCK, F_WRLCK, O_TMPFILE,
+};
+#[cfg(unix)]
+use libc::{flock, mkfifo, pipe, pselect, sigemptyset, F_SETLKW, F_UNLCK, F_WRLCK, O_TMPFILE};
 
 use crate::{
     commands::handling_fatal_signal,
@@ -109,12 +79,15 @@ pub unsafe fn check_io_state(ctx: &crate::execctx::ExecContext) -> c_uint {
     // If stdout and stderr are both usable, check whether they refer to the
     // same file.
     if state & (IO_STDOUT_OK | IO_STDERR_OK) as c_uint == (IO_STDOUT_OK | IO_STDERR_OK) as c_uint {
-        let mut stbuf_o: libc::stat = ::core::mem::zeroed();
-        let mut stbuf_e: libc::stat = ::core::mem::zeroed();
-        if fstat(libc::STDOUT_FILENO, &mut stbuf_o) == 0
-            && fstat(libc::STDERR_FILENO, &mut stbuf_e) == 0
-            && stbuf_o.st_dev == stbuf_e.st_dev
-            && stbuf_o.st_ino == stbuf_e.st_ino
+        // They are one destination only if the platform reports a file
+        // identity for both and the two agree. Where it reports none (see
+        // `crate::fs::file_id`) `zip` yields `None` and they count as
+        // distinct: the cost is output that is not merged, where guessing the
+        // other way would merge unrelated streams.
+        let file_id = |fd| unsafe { crate::fs::metadata_of_fd(fd) }.ok().and_then(|m| m.id());
+        if file_id(libc::STDOUT_FILENO)
+            .zip(file_id(libc::STDERR_FILENO))
+            .is_some_and(|(out, err)| out == err)
         {
             state |= IO_COMBINED_OUTERR as c_uint;
         }
@@ -969,8 +942,9 @@ pub unsafe fn fd_noinherit(fd: i32) {
 /// `fd` must be an open descriptor.
 pub unsafe fn fd_set_append(fd: i32) -> i32 {
     let mut flags: i32 = -1;
-    let mut stbuf: libc::stat = ::core::mem::zeroed();
-    if fstat(fd, &mut stbuf) == 0 && stbuf.st_mode & S_IFMT == S_IFREG {
+    // Only a regular file can meaningfully be put in append mode; a pipe or
+    // terminal is left as it is.
+    if crate::fs::metadata_of_fd(fd).is_ok_and(|m| m.is_file()) {
         flags = fcntl(fd, F_GETFL, 0);
         if flags >= 0 {
             fcntl_set_retry(fd, F_SETFL, flags | O_APPEND);
@@ -1052,19 +1026,21 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
 /// counter-qualified name (create_new retries collisions), then unlink it so
 /// only the descriptor remains.
 fn anon_unlinked_tmp() -> std::io::Result<std::fs::File> {
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
     static SEQ: ::core::sync::atomic::AtomicU32 = ::core::sync::atomic::AtomicU32::new(0);
     let pid = std::process::id();
     loop {
         let seq = SEQ.fetch_add(1, Ordering::Relaxed);
         let path = format!("/tmp/GmAnon{pid}-{seq}");
-        match std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&path)
-        {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.read(true).write(true).create_new(true);
+        // WASI's `OpenOptions` has no `mode()` extension (no POSIX permission
+        // bits over its capability-based filesystem API); the file is opened
+        // with the target's default permissions there instead.
+        #[cfg(unix)]
+        opts.mode(0o600);
+        match opts.open(&path) {
             Ok(f) => {
                 let _ = std::fs::remove_file(&path);
                 return Ok(f);

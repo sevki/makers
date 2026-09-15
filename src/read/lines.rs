@@ -26,7 +26,9 @@ impl MakefileReader {
     }
 
     pub fn as_raw_fd(&self) -> i32 {
-        use std::os::unix::io::AsRawFd;
+        // `std::os::fd` (unlike `std::os::unix::io`) is available on both
+        // unix and wasi, and provides the identical `AsRawFd` trait.
+        use std::os::fd::AsRawFd;
         self.inner.get_ref().as_raw_fd()
     }
 
@@ -147,8 +149,14 @@ pub unsafe fn readline(
         let mut backslash: i32;
         len = strlen(p) as size_t;
         if len == 0 {
-            error(ctx, &raw mut (*ebuf).floc, 0, b"warning: NUL character seen; rest of line ignored\0" as *const u8
-                    as *const ::core::ffi::c_char, &[]);
+            error(
+                ctx,
+                &raw mut (*ebuf).floc,
+                0,
+                b"warning: NUL character seen; rest of line ignored\0" as *const u8
+                    as *const ::core::ffi::c_char,
+                &[],
+            );
             *p.offset(0_i32 as isize) = '\n' as i32 as ::core::ffi::c_char;
             len = 1;
         }

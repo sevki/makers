@@ -1,3 +1,5 @@
+#[cfg(target_family = "wasm")]
+use crate::compat::pipe;
 pub use crate::ffi_types::{
     __blkcnt_t,
     __blksize_t,
@@ -34,9 +36,11 @@ use {
         stdio::FILE,
         strcache::strcache_add,
     },
-    libc::{__errno_location, close, free, pipe, remove, sprintf, strerror, strstr},
+    libc::{__errno_location, close, free, remove, sprintf, strerror, strstr},
     std::sync::atomic::Ordering,
 };
+#[cfg(unix)]
+use libc::pipe;
 extern "C" {
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
     static mut stderr: *mut FILE;
@@ -250,7 +254,7 @@ pub const EINTR: i32 = 4;
 pub const ERANGE: i32 = 34;
 pub const PATH_MAX: i32 = 4096_i32;
 pub const GET_PATH_MAX: i32 = PATH_MAX;
-pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
+pub const SIZE_MAX: ::core::ffi::c_ulong = ::core::ffi::c_ulong::MAX;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
 pub const MAP_NUL: i32 = 0x1_i32;
 pub const MAP_BLANK: i32 = 0x2_i32;
@@ -272,19 +276,17 @@ pub const INTSTR_LENGTH: usize = 53_usize
     .wrapping_add(3_usize);
 pub const EXP_COUNT_BITS: i32 = 15;
 pub const EXP_COUNT_MAX: i32 = ((1) << EXP_COUNT_BITS) - 1;
-unsafe fn function_table_entry_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+unsafe fn function_table_entry_hash_1(keyv: *const ::core::ffi::c_void) -> u64 {
     let key: *const FunctionTableEntry = keyv as *const FunctionTableEntry;
-    let mut _result_: ::core::ffi::c_ulong = 0;
+    let mut _result_: u64 = 0;
     let _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
-    _result_ = _result_.wrapping_add(jhash(::core::slice::from_raw_parts(
-        _key_,
-        (*key).len as usize,
-    )) as ::core::ffi::c_ulong);
+    _result_ = _result_
+        .wrapping_add(jhash(::core::slice::from_raw_parts(_key_, (*key).len as usize)) as u64);
     _result_
 }
-fn function_table_entry_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+fn function_table_entry_hash_2(keyv: *const ::core::ffi::c_void) -> u64 {
     let mut _key: *const FunctionTableEntry = keyv as *const FunctionTableEntry;
-    let mut _result_: ::core::ffi::c_ulong = 0;
+    let mut _result_: u64 = 0;
     _result_
 }
 unsafe fn function_table_entry_hash_cmp(
@@ -4429,7 +4431,10 @@ fn abspath_into(name: &[u8], starting_dir: &[u8], out: &mut [u8]) -> Option<usiz
 /// trailing NUL), or `None` when resolution fails, the result no longer
 /// `stat`s, or it would overflow the `PATH_MAX` buffer libc `realpath` uses.
 fn realpath_token(token: &[u8]) -> Option<Vec<u8>> {
+    #[cfg(unix)]
     use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::{OsStrExt, OsStringExt};
     // Retry on EINTR, mirroring the C `realpath`/`stat` loops: a signal
     // arriving mid-call must not silently drop the token.
     fn retry_eintr<T>(mut f: impl FnMut() -> std::io::Result<T>) -> std::io::Result<T> {
@@ -4524,10 +4529,11 @@ unsafe fn func_file(
     argv: *mut *mut ::core::ffi::c_char,
     mut _funcname: *const ::core::ffi::c_char,
 ) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
-    use ::std::{
-        io::{Read, Write},
-        os::unix::ffi::OsStrExt,
-    };
+    use ::std::io::{Read, Write};
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let fn_0: *mut ::core::ffi::c_char = *argv.offset(0_i32 as isize);
     if *fn_0.offset(0_i32 as isize) as i32 == '>' as i32 {
         let append = *fn_0.offset(1_i32 as isize) as i32 == '>' as i32;
@@ -5467,8 +5473,8 @@ pub unsafe fn define_new_function(
 pub unsafe fn hash_init_function_table(ctx: &crate::execctx::ExecContext) {
     hash_init(
         ctx.function_table.0.as_ptr(),
-        (::core::mem::size_of::<[FunctionTableEntry; 38]>() as ::core::ffi::c_ulong)
-            .wrapping_div(::core::mem::size_of::<FunctionTableEntry>() as ::core::ffi::c_ulong)
+        (::core::mem::size_of::<[FunctionTableEntry; 38]>() as u64)
+            .wrapping_div(::core::mem::size_of::<FunctionTableEntry>() as u64)
             .wrapping_mul(2),
         Some(function_table_entry_hash_1),
         Some(function_table_entry_hash_2),
@@ -5477,9 +5483,9 @@ pub unsafe fn hash_init_function_table(ctx: &crate::execctx::ExecContext) {
     hash_load(
         ctx.function_table.0.as_ptr(),
         function_table_init.as_ptr() as *const ::core::ffi::c_void,
-        (::core::mem::size_of::<[FunctionTableEntry; 38]>() as ::core::ffi::c_ulong)
-            .wrapping_div(::core::mem::size_of::<FunctionTableEntry>() as ::core::ffi::c_ulong),
-        ::core::mem::size_of::<FunctionTableEntry>() as ::core::ffi::c_ulong,
+        (::core::mem::size_of::<[FunctionTableEntry; 38]>() as u64)
+            .wrapping_div(::core::mem::size_of::<FunctionTableEntry>() as u64),
+        ::core::mem::size_of::<FunctionTableEntry>() as u64,
     );
 }
 
