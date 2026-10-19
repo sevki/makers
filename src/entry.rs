@@ -1906,11 +1906,11 @@ pub fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i3
     // Flush explicitly: a fatal path ending in libc `exit()` would drop an
     // unflushed Rust buffer.
     if bad != 0 {
-        let mut err = ctx.stderr.borrow_mut();
+        let mut err = ctx.stderr_lock();
         let _ = err.write_all(text.as_bytes());
         let _ = err.flush();
     } else {
-        let mut out = ctx.stdout.borrow_mut();
+        let mut out = ctx.stdout_lock();
         if let Err(e) = out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
             crate::output::record_stdout_error(&e);
         }
@@ -3484,8 +3484,8 @@ pub unsafe fn main_0(
             // process image — the Rust counterpart of the C fflush pair.
             {
                 use std::io::Write;
-                let _ = ctx.stdout.borrow_mut().flush();
-                let _ = ctx.stderr.borrow_mut().flush();
+                let _ = ctx.stdout_lock().flush();
+                let _ = ctx.stderr_lock().flush();
             }
             osync_clear();
             jobserver_pre_child(&ctx, 1);

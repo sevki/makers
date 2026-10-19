@@ -133,7 +133,7 @@ pub fn trace_out_ctx<Out: std::io::Write, Err: std::io::Write>(
     ctx: &ExecContext<Out, Err>,
     bytes: &[u8],
 ) {
-    let mut o = ctx.stdout.borrow_mut();
+    let mut o = ctx.stdout_lock();
     // `StdoutSink::write`/`flush` already feed `record_stdout_error` for the
     // default sink; a non-default `Out` reports its own failures how it
     // sees fit; there is no process-wide stdout to be sticky about there.
@@ -202,11 +202,11 @@ fn _outputs(ctx: &ExecContext, out: Option<&mut output>, is_err: bool, msg: &::c
     // own sink instead of the process's real stdout.
     use std::io::Write;
     if is_err {
-        let mut f = ctx.stderr.borrow_mut();
+        let mut f = ctx.stderr_lock();
         let _ = f.write_all(bytes);
         let _ = f.flush();
     } else {
-        let mut f = ctx.stdout.borrow_mut();
+        let mut f = ctx.stdout_lock();
         if let Err(e) = f.write_all(bytes).and_then(|()| f.flush()) {
             record_stdout_error(&e);
         }
@@ -358,17 +358,18 @@ pub unsafe fn pump_from_tmp(ctx: &ExecContext, from: i32, to_stderr: bool) {
     // Borrow the fd as a File without taking ownership.
     let mut src = ::core::mem::ManuallyDrop::new(std::fs::File::from_raw_fd(from));
     if to_stderr {
-        // `dst` already *is* the borrowed stderr sink; report through it
-        // directly rather than taking a second borrow of `ctx.stderr`.
-        pump_copy(&mut *src, &mut *ctx.stderr.borrow_mut(), false, pump_perror);
+        // `dst` already *is* the locked stderr sink; report through it
+        // directly rather than locking `ctx.stderr` a second time (which
+        // would deadlock).
+        pump_copy(&mut *src, &mut *ctx.stderr_lock(), false, pump_perror);
     } else {
-        // `dst` is the stdout sink here, so the stderr diagnostic borrows
-        // the separate `ctx.stderr` `RefCell` freely.
+        // `dst` is the stdout sink here, so the stderr diagnostic locks
+        // the separate `ctx.stderr` mutex freely.
         pump_copy(
             &mut *src,
-            &mut *ctx.stdout.borrow_mut(),
+            &mut *ctx.stdout_lock(),
             true,
-            |_dst, what, e| pump_perror(&mut *ctx.stderr.borrow_mut(), what, e),
+            |_dst, what, e| pump_perror(&mut *ctx.stderr_lock(), what, e),
         );
     }
 }
@@ -953,7 +954,7 @@ pub fn out_of_memory() -> ! {
     std::process::exit(MAKE_FAILURE)
 }
 fn write_oom_message_from_ctx(ctx: &crate::execctx::ExecContext) {
-    let mut out = ctx.stdout.borrow_mut();
+    let mut out = ctx.stdout_lock();
     write_oom_message(&mut *out, &msg::program_name(ctx));
 }
 fn write_oom_message(out: &mut impl std::io::Write, prog: &str) {

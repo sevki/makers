@@ -803,15 +803,17 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
 
     /// The sink every recipe/trace/diagnostic stdout write goes through —
     /// `output::trace_out`/`_outputs`'s non-synced path, `hash_print_stats`,
-    /// the usage/version printers. `Rc<RefCell<_>>` rather than a bare `Out`
+    /// the usage/version printers. `Arc<Mutex<_>>` rather than a bare `Out`
     /// so [`ExecContext::clone`] stays a cheap handle-copy (matching
     /// [`Self::remote_backend`]'s rationale) while every clone still writes
-    /// to the *same* sink — the point of a per-session buffer.
-    pub stdout: ::std::rc::Rc<::core::cell::RefCell<Out>>,
+    /// to the *same* sink — the point of a per-session buffer. `Arc<Mutex<_>>`
+    /// rather than `Rc<RefCell<_>>` so the handle is `Send` (#607); reach it
+    /// through [`Self::stdout_lock`].
+    pub stdout: ::std::sync::Arc<::std::sync::Mutex<Out>>,
     /// Same as [`Self::stdout`] for stderr — `error`/`fatal`'s output and the
     /// `-h`/bad-flag usage banner. An independent type parameter from
     /// `stdout`'s: nothing requires the two channels to share a sink type.
-    pub stderr: ::std::rc::Rc<::core::cell::RefCell<Err>>,
+    pub stderr: ::std::sync::Arc<::std::sync::Mutex<Err>>,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1969,6 +1971,23 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
     pub fn default_include_directories(&self) -> [&'static [u8]; 3] {
         self.config.default_include_directories
     }
+
+    /// Exclusive access to the stdout sink. A sink left mid-write by a
+    /// panicking holder is still a valid `Write`, so poisoning is ignored.
+    /// Hold the guard for one write only: re-locking the same sink while it
+    /// is held deadlocks (the `RefCell` this replaced panicked instead).
+    pub fn stdout_lock(&self) -> ::std::sync::MutexGuard<'_, Out> {
+        self.stdout
+            .lock()
+            .unwrap_or_else(::std::sync::PoisonError::into_inner)
+    }
+
+    /// Exclusive access to the stderr sink; see [`Self::stdout_lock`].
+    pub fn stderr_lock(&self) -> ::std::sync::MutexGuard<'_, Err> {
+        self.stderr
+            .lock()
+            .unwrap_or_else(::std::sync::PoisonError::into_inner)
+    }
 }
 
 impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
@@ -2080,8 +2099,8 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
             expanding_var: self.expanding_var,
             recipe_reading_floc: self.recipe_reading_floc,
             variable_buffer: self.variable_buffer,
-            stdout: ::std::rc::Rc::new(::core::cell::RefCell::new(stdout)),
-            stderr: ::std::rc::Rc::new(::core::cell::RefCell::new(stderr)),
+            stdout: ::std::sync::Arc::new(::std::sync::Mutex::new(stdout)),
+            stderr: ::std::sync::Arc::new(::std::sync::Mutex::new(stderr)),
         }
     }
 }
@@ -2119,10 +2138,10 @@ mod tests {
         // Non-io state survived the conversion untouched.
         assert_eq!(buffered.makelevel(), 5);
         use ::std::io::Write;
-        buffered.stdout.borrow_mut().write_all(b"hello").unwrap();
-        buffered.stderr.borrow_mut().write_all(b"oops").unwrap();
-        assert_eq!(&**buffered.stdout.borrow(), b"hello");
-        assert_eq!(&**buffered.stderr.borrow(), b"oops");
+        buffered.stdout_lock().write_all(b"hello").unwrap();
+        buffered.stderr_lock().write_all(b"oops").unwrap();
+        assert_eq!(&**buffered.stdout_lock(), b"hello");
+        assert_eq!(&**buffered.stderr_lock(), b"oops");
     }
 
     /// `Out` and `Err` are independent type parameters, not one shared `W`:
@@ -2138,16 +2157,16 @@ mod tests {
         let ctx = ExecContext::new(Config::default())
             .with_sinks(Cursor::new(Vec::<u8>::new()), Vec::<u8>::new());
 
-        ctx.stdout.borrow_mut().write_all(b"cursor stdout").unwrap();
-        ctx.stderr.borrow_mut().write_all(b"vec stderr").unwrap();
+        ctx.stdout_lock().write_all(b"cursor stdout").unwrap();
+        ctx.stderr_lock().write_all(b"vec stderr").unwrap();
 
-        let mut cursor = ctx.stdout.borrow_mut();
+        let mut cursor = ctx.stdout_lock();
         cursor.seek(SeekFrom::Start(0)).unwrap();
         let mut read_back = String::new();
         cursor.read_to_string(&mut read_back).unwrap();
         assert_eq!(read_back, "cursor stdout");
 
-        assert_eq!(&**ctx.stderr.borrow(), b"vec stderr");
+        assert_eq!(&**ctx.stderr_lock(), b"vec stderr");
     }
 
     /// A `Cursor`-backed context's `trace_out_ctx` writes land in the
@@ -2161,10 +2180,10 @@ mod tests {
             .with_sinks(Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()));
         crate::output::trace_out_ctx(&ctx, b"buffered trace line\n");
         assert_eq!(
-            ctx.stdout.borrow().get_ref().as_slice(),
+            ctx.stdout_lock().get_ref().as_slice(),
             b"buffered trace line\n"
         );
-        assert!(ctx.stderr.borrow().get_ref().is_empty());
+        assert!(ctx.stderr_lock().get_ref().is_empty());
     }
 
     /// The default sinks (`StdoutSink`/`StderrSink`) still exist and stay
@@ -2172,8 +2191,54 @@ mod tests {
     #[test]
     fn default_context_uses_distinct_stdio_sinks() {
         let ctx = ExecContext::default();
-        assert_eq!(*ctx.stdout.borrow(), StdoutSink);
-        assert_eq!(*ctx.stderr.borrow(), StderrSink);
+        assert_eq!(*ctx.stdout_lock(), StdoutSink);
+        assert_eq!(*ctx.stderr_lock(), StderrSink);
+    }
+
+    /// The sink handles are `Send + Sync` (#607's `Rc` -> `Arc` swap) and
+    /// every clone writes into the one shared sink, also from another
+    /// thread — which the `Rc<RefCell<_>>` could not do.
+    #[test]
+    fn sink_handles_are_send_and_shared_across_clones() {
+        use ::std::io::Write;
+        fn assert_send_sync<T: Send + Sync>(_: &T) {}
+
+        let ctx = ExecContext::new(Config::default())
+            .with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        assert_send_sync(&ctx.stdout);
+        assert_send_sync(&ctx.stderr);
+
+        let out = ::std::sync::Arc::clone(&ctx.stdout);
+        ::std::thread::spawn(move || {
+            out.lock().unwrap().write_all(b"from thread").unwrap();
+        })
+        .join()
+        .unwrap();
+        ctx.clone().stdout_lock().write_all(b" + clone").unwrap();
+        assert_eq!(&**ctx.stdout_lock(), b"from thread + clone");
+    }
+
+    /// A holder that panics mid-write poisons the mutex; the accessor must
+    /// still hand the sink back rather than turn that into a second panic.
+    #[test]
+    fn sink_lock_survives_a_poisoned_mutex() {
+        use ::std::io::Write;
+        let ctx = ExecContext::new(Config::default())
+            .with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        let (out, err) = (
+            ::std::sync::Arc::clone(&ctx.stdout),
+            ::std::sync::Arc::clone(&ctx.stderr),
+        );
+        let _ = ::std::thread::spawn(move || {
+            let _o = out.lock().unwrap();
+            let _e = err.lock().unwrap();
+            panic!("poison both sinks");
+        })
+        .join();
+        ctx.stdout_lock().write_all(b"o").unwrap();
+        ctx.stderr_lock().write_all(b"e").unwrap();
+        assert_eq!(&**ctx.stdout_lock(), b"o");
+        assert_eq!(&**ctx.stderr_lock(), b"e");
     }
 
     /// `make_sync`'s address is captured by `output_context` before the
