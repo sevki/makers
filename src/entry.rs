@@ -45,7 +45,6 @@ use {
         strchr,
         strcmp,
         strerror,
-        strrchr,
         tolower,
     },
     std::sync::atomic::Ordering,
@@ -1963,6 +1962,13 @@ fn chdir_path(dir: &::std::path::Path) -> i32 {
     }
 }
 
+/// `basename(argv[0])` the way startup derives the program name: everything
+/// after the last '/', or all of it when there is none (so an `argv[0]` ending
+/// in '/' yields the empty name).
+fn program_basename(argv0: &[u8]) -> &[u8] {
+    argv0.rsplit(|&b| b == b'/').next().unwrap_or(argv0)
+}
+
 /// The NUL-terminated path in a [`getcwd_into`] buffer, as an owned path
 /// (empty when the buffer holds the empty string).
 fn cwd_buffer_path(buf: &[::core::ffi::c_char]) -> ::std::path::PathBuf {
@@ -2090,18 +2096,14 @@ pub unsafe fn main_0(
         *fresh33 = b"\0" as *const u8 as *const ::core::ffi::c_char as *mut ::core::ffi::c_char;
     }
     if *(*argv.offset(0_i32 as isize)).offset(0_i32 as isize) as i32 == 0 {
-        ctx.program
-            .0
-            .set(b"make\0" as *const u8 as *const ::core::ffi::c_char);
+        *ctx.program.borrow_mut() = Some(c"make".to_owned());
     } else {
-        let mut prog: *const ::core::ffi::c_char =
-            strrchr(*argv.offset(0_i32 as isize), '/' as i32);
-        if prog.is_null() {
-            prog = *argv.offset(0_i32 as isize);
-        } else {
-            prog = prog.offset(1_i32 as isize);
-        }
-        ctx.program.0.set(prog);
+        // basename(argv[0]): everything after the last '/', or all of it.
+        // (An argv[0] ending in '/' yields the empty name, as `strrchr` + 1
+        // did.)
+        let base = program_basename(cstr_bytes_or_empty(*argv.offset(0_i32 as isize)));
+        *ctx.program.borrow_mut() =
+            Some(::std::ffi::CString::new(base).expect("a C string has no interior NUL"));
     }
     initialize_global_hash_tables(&ctx);
     get_tmpdir(&ctx);
@@ -6242,6 +6244,46 @@ mod chdir_path_tests {
         assert_eq!(assert_same(&cwd), 0);
         assert_eq!(assert_same(Path::new("/no/such/dir/for/chdir_path")), -1);
         assert_eq!(errno(), 2); // ENOENT
+    }
+}
+
+/// `program_basename` against the `strrchr`-based computation it replaced,
+/// kept here verbatim as the oracle.
+#[cfg(test)]
+mod program_basename_tests {
+    use super::program_basename;
+    use std::ffi::CString;
+
+    /// The former startup code: `strrchr(argv0, '/')`, then +1 or the whole
+    /// string, read back as bytes.
+    fn program_basename_unsafe_oracle(argv0: &CString) -> Vec<u8> {
+        // SAFETY: `argv0` is a valid NUL-terminated string, and `prog` stays
+        // within it (or one past the last '/').
+        unsafe {
+            let mut prog: *const ::core::ffi::c_char = libc::strrchr(argv0.as_ptr(), '/' as i32);
+            if prog.is_null() {
+                prog = argv0.as_ptr();
+            } else {
+                prog = prog.offset(1_i32 as isize);
+            }
+            ::core::ffi::CStr::from_ptr(prog).to_bytes().to_vec()
+        }
+    }
+
+    #[test]
+    fn matches_the_strrchr_oracle() {
+        for argv0 in [
+            "make", "./make", "/usr/bin/make", "a//b", "dir/", "/", "x", "../up/gmake", "sp ace/m k",
+        ] {
+            let c = CString::new(argv0).unwrap();
+            assert_eq!(
+                program_basename(argv0.as_bytes()),
+                program_basename_unsafe_oracle(&c).as_slice(),
+                "argv0 = {argv0:?}"
+            );
+        }
+        assert_eq!(program_basename(b"/usr/bin/make"), b"make");
+        assert_eq!(program_basename(b"dir/"), b"");
     }
 }
 

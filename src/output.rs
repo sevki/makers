@@ -213,11 +213,7 @@ fn _outputs(ctx: &ExecContext, out: Option<&mut output>, is_err: bool, msg: &::c
     }
 }
 /// Print an entering/leaving-directory line (returns 1).
-///
-/// # Safety
-/// `ctx.program` must be null or a valid NUL-terminated string (the c2rust
-/// pointer contract it always carries).
-pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
+pub fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     let line = working_directory_line(ctx, entering);
     // `line` was built with exactly one trailing NUL and no interior one (the
     // format strings never embed one), so this always succeeds.
@@ -228,21 +224,14 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
 
 /// The text [`log_working_directory`] prints, NUL-terminated, split out so
 /// the format ladder can be checked without capturing process stdout.
-///
-/// # Safety
-/// Same contract as [`log_working_directory`].
-unsafe fn working_directory_line(ctx: &ExecContext, entering: i32) -> Vec<u8> {
+fn working_directory_line(ctx: &ExecContext, entering: i32) -> Vec<u8> {
     let makelevel = ctx.makelevel();
-    // `program` is null only on context-less paths handed a throwaway
+    // `program` is unset only on context-less paths handed a throwaway
     // `ExecContext` (plugin ABI); the C original could not get here with a
     // null `program` global. Fall back to the plain name like
     // `msg::program_name` rather than passing null to the formatter.
-    let program = ctx.program.0.get();
-    let program = if program.is_null() {
-        c"make".as_ptr()
-    } else {
-        program
-    };
+    let program_name = ctx.program_cstring();
+    let program = program_name.as_deref().unwrap_or(c"make").as_ptr();
     // An owned NUL-terminated copy for the formatter's `%s`; a path recorded
     // from a `getcwd` buffer holds no interior NUL.
     let starting_directory = ctx.starting_directory_bytes().map(|bytes| {
@@ -294,7 +283,10 @@ unsafe fn working_directory_line(ctx: &ExecContext, entering: i32) -> Vec<u8> {
             FmtArg::Str(starting_directory_ptr),
         ]
     };
-    vformat_into(&mut line, fmt, args);
+    // SAFETY: `fmt` is one of the NUL-terminated literals above, and every
+    // `Str` arg is a pointer into `program_name`/`starting_directory` (or the
+    // `c"make"` literal), all of which outlive this call.
+    unsafe { vformat_into(&mut line, fmt, args) };
     line.push(0);
     line
 }
@@ -765,17 +757,8 @@ fn push_cstr(out: &mut Vec<u8>, s: Option<&::core::ffi::CStr>) {
     }
 }
 
-unsafe fn push_program_prefix(
-    ctx: &ExecContext,
-    out: &mut Vec<u8>,
-    makelevel: u32,
-    fatal_marker: bool,
-) {
-    let program = ctx.program.0.get();
-    push_cstr(
-        out,
-        (!program.is_null()).then(|| ::core::ffi::CStr::from_ptr(program)),
-    );
+fn push_program_prefix(ctx: &ExecContext, out: &mut Vec<u8>, makelevel: u32, fatal_marker: bool) {
+    push_cstr(out, ctx.program_cstring().as_deref());
     if makelevel == 0 {
         out.extend_from_slice(b": ");
     } else {
@@ -993,19 +976,13 @@ pub mod msg {
     };
 
     pub(crate) fn program_name(ctx: &ExecContext) -> String {
-        let p = ctx.program.0.get();
-        if p.is_null() {
-            // Startup derives the name from argv[0] before anything can
-            // print; a null only occurs pre-startup or on a bare test
-            // context, where the plain name is the right prefix.
-            "make".to_string()
-        } else {
-            // SAFETY: a non-null `program` is a NUL-terminated C string that
-            // outlives the run (argv or 'static storage backs it).
-            unsafe { ::core::ffi::CStr::from_ptr(p) }
-                .to_string_lossy()
-                .into_owned()
-        }
+        // Startup derives the name from argv[0] before anything can print;
+        // unset only occurs pre-startup or on a bare test context, where the
+        // plain name is the right prefix.
+        ctx.program_cstring().map_or_else(
+            || "make".to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
     }
 
     fn build_prefix(ctx: &ExecContext, loc: Option<&Floc>, fatal_marker: bool) -> String {
@@ -1148,10 +1125,9 @@ mod log_working_directory_tests {
     #[test]
     fn tolerates_null_program_context() {
         let ctx = crate::execctx::ExecContext::default();
-        assert!(ctx.program.0.get().is_null());
-        // SAFETY: single-threaded test; the options channel is installed above.
-        let traced = unsafe { super::log_working_directory(&ctx, 1) };
-        assert_eq!(traced, 1);
+        assert!(ctx.program.borrow().is_none());
+        assert_eq!(super::log_working_directory(&ctx, 1), 1);
+        assert_eq!(super::msg::program_name(&ctx), "make");
     }
 
     /// The other three `makelevel`/`starting_directory` format-string
@@ -1167,10 +1143,7 @@ mod log_working_directory_tests {
             });
             *ctx.starting_directory.borrow_mut() = Some("/tmp/build".into());
             for entering in [1, 0] {
-                // SAFETY: single-threaded test; `program` is left null,
-                // which `log_working_directory` handles.
-                let traced = unsafe { super::log_working_directory(&ctx, entering) };
-                assert_eq!(traced, 1);
+                assert_eq!(super::log_working_directory(&ctx, entering), 1);
             }
         }
     }
@@ -1197,10 +1170,35 @@ mod log_working_directory_tests {
                 ..Default::default()
             });
             *ctx.starting_directory.borrow_mut() = dir.map(Into::into);
-            // SAFETY: `program` is left null, which the function handles.
-            let line = unsafe { super::working_directory_line(&ctx, entering) };
+            let line = super::working_directory_line(&ctx, entering);
             assert_eq!(line.last(), Some(&0));
             assert_eq!(String::from_utf8_lossy(&line[..line.len() - 1]), want);
+        }
+    }
+
+    /// A set program name prefixes the directory line, the `msg` printers and
+    /// the error prefix; the empty name an `argv[0]` ending in '/' produces
+    /// stays set (and prints as empty) rather than falling back to "make".
+    #[test]
+    fn a_set_program_name_prefixes_every_printer() {
+        for (name, shown) in [("gmake", "gmake"), ("", "")] {
+            let ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
+                makelevel: 1,
+                ..Default::default()
+            });
+            *ctx.program.borrow_mut() = Some(::std::ffi::CString::new(name).unwrap());
+            *ctx.starting_directory.borrow_mut() = Some("/w".into());
+
+            let line = super::working_directory_line(&ctx, 1);
+            assert_eq!(
+                String::from_utf8_lossy(&line[..line.len() - 1]),
+                format!("{shown}[1]: Entering directory '/w'\n")
+            );
+            assert_eq!(super::msg::program_name(&ctx), shown);
+
+            let mut prefix = Vec::new();
+            super::push_program_prefix(&ctx, &mut prefix, 1, true);
+            assert_eq!(String::from_utf8_lossy(&prefix), format!("{shown}[1]: *** "));
         }
     }
 }

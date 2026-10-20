@@ -293,9 +293,10 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// The program name — `basename(argv[0])`, or `"make"` when argv[0] is
     /// empty — the former main.rs `pub static mut program`. Prefixes every
     /// message/error line and the usage text. Set once at startup (before the
-    /// build-phase context rebuild, so it is carried across it); argv or
-    /// 'static storage backs the pointer.
-    pub program: PtrCell,
+    /// build-phase context rebuild, so it is carried across it). `None` only
+    /// before startup or on a bare test context. Owned, so it adds no raw
+    /// pointer to `ExecContext` (#607).
+    pub program: ::core::cell::RefCell<Option<::std::ffi::CString>>,
 
     /// The temporary-file directory (`$MAKE_TMPDIR`, `$TMPDIR`, or the
     /// default), the former `misc.rs` function-local `static mut tmpdir` in
@@ -1975,6 +1976,12 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
         self.config.default_include_directories
     }
 
+    /// [`Self::program`], cloned out of its cell (a few bytes) so callers
+    /// need not hold the borrow while formatting.
+    pub fn program_cstring(&self) -> Option<::std::ffi::CString> {
+        self.program.borrow().clone()
+    }
+
     /// [`Self::starting_directory`] as the raw bytes the message and
     /// `$(abspath)` formatters work in.
     pub fn starting_directory_bytes(&self) -> Option<Vec<u8>> {
@@ -2665,6 +2672,29 @@ mod tests {
         // Per-run: a fresh context does not inherit the buffer.
         assert!(ExecContext::default().read_dirstream_buf.get().is_null());
         assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
+    }
+
+    /// `program` starts unset and survives the `main_0` carry-over and the
+    /// sink swap as an owned name (the empty name stays `Some`).
+    #[test]
+    fn program_starts_unset_and_survives_carry_over() {
+        let mut ctx = ExecContext::default();
+        assert!(ctx.program_cstring().is_none());
+
+        *ctx.program.borrow_mut() = Some(c"gmake".to_owned());
+        let carried = ::core::mem::take(&mut ctx.program);
+        assert!(ctx.program_cstring().is_none());
+        let rebuilt = ExecContext {
+            program: carried,
+            ..ExecContext::default()
+        };
+        assert_eq!(rebuilt.program_cstring().as_deref(), Some(c"gmake"));
+
+        let swapped = rebuilt.with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        assert_eq!(swapped.program_cstring().as_deref(), Some(c"gmake"));
+
+        *swapped.program.borrow_mut() = Some(c"".to_owned());
+        assert_eq!(swapped.program_cstring().as_deref(), Some(c""));
     }
 
     /// `starting_directory` starts unset, reads back as bytes (the empty path
