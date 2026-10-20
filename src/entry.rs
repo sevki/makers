@@ -1314,35 +1314,15 @@ fn goal_name_bytes(ctx: &crate::execctx::ExecContext, g: &crate::dep::GoalDepNod
     Vec::new()
 }
 
-/// Materialize a goal's source location as an owned `Floc` whose `filenm` lives
-/// for the returned value's lifetime (the bytes are stored alongside it).
-fn goal_floc(g: &crate::dep::GoalDepNode) -> Option<GoalFloc> {
-    g.defined_in.as_ref().map(|f| {
-        let mut bytes = f.clone();
-        bytes.push(0);
-        GoalFloc {
-            floc: Floc {
-                filenm: bytes.as_ptr() as *const ::core::ffi::c_char,
-                lineno: g.lineno,
-                offset: g.offset,
-            },
-            _bytes: bytes,
-        }
+/// Materialize a goal's source location as an owned `Floc`. Its `filenm` is the
+/// interned copy of the goal's `defined_in`, so it outlives the returned value
+/// and nothing else has to be kept alive beside it.
+fn goal_floc(ctx: &crate::execctx::ExecContext, g: &crate::dep::GoalDepNode) -> Option<Floc> {
+    g.defined_in.as_ref().map(|f| Floc {
+        filenm: crate::strcache::strcache_intern(ctx, f).as_ptr(),
+        lineno: g.lineno,
+        offset: g.offset,
     })
-}
-
-/// Owns the NUL-terminated `filenm` bytes referenced by `floc.filenm`. Deref
-/// to `Floc` for the c2rust APIs that still take a `*const Floc`.
-struct GoalFloc {
-    floc: Floc,
-    _bytes: Vec<u8>,
-}
-
-impl ::core::ops::Deref for GoalFloc {
-    type Target = Floc;
-    fn deref(&self) -> &Floc {
-        &self.floc
-    }
 }
 
 /// The synthetic "new file" mtime used for `-W`/`--what-if` targets: the
@@ -3069,11 +3049,11 @@ pub unsafe fn main_0(
             let mut name_bytes = goal_name_bytes(&ctx, d_1);
             name_bytes.push(0);
             let d1_name = name_bytes.as_ptr() as *const ::core::ffi::c_char;
-            let floc = goal_floc(d_1);
+            let floc = goal_floc(&ctx, d_1);
             error(
                 &ctx,
                 floc.as_ref()
-                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                    .map_or(::core::ptr::null(), |f| f as *const Floc),
                 (strlen(d1_name) as size_t).wrapping_add(strlen(err) as size_t),
                 b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
                 &[
@@ -3097,11 +3077,11 @@ pub unsafe fn main_0(
                         .map(|n| n.lock().expect("file node poisoned").unloaded)
                         .unwrap_or(false);
                     if unloaded {
-                        let floc = goal_floc(d_2);
+                        let floc = goal_floc(&ctx, d_2);
                         if load_file(
                             &ctx,
                             floc.as_ref()
-                                .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                .map_or(::core::ptr::null(), |f| f as *const Floc),
                             ::core::ptr::null_mut::<file>(),
                             0,
                         ) == 0
@@ -3111,7 +3091,7 @@ pub unsafe fn main_0(
                             return Err(fatal_err(
                                 &ctx,
                                 floc.as_ref()
-                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                    .map_or(::core::ptr::null(), |f| f as *const Floc),
                                 strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
                                 b"%s: failed to load\0" as *const u8 as *const ::core::ffi::c_char,
                                 &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
@@ -3155,11 +3135,11 @@ pub unsafe fn main_0(
                         } else if !d_4.dep.flags.contains(crate::dep::DepFlags::DONTCARE) {
                             let mut nm = name.clone();
                             nm.push(0);
-                            let floc = goal_floc(d_4);
+                            let floc = goal_floc(&ctx, d_4);
                             error(
                                 &ctx,
                                 floc.as_ref()
-                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                    .map_or(::core::ptr::null(), |f| f as *const Floc),
                                 strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
                                 b"failed to remake makefile '%s'\0" as *const u8
                                     as *const ::core::ffi::c_char,
@@ -3181,11 +3161,11 @@ pub unsafe fn main_0(
                         nm.push(0);
                         let dnm = nm.as_ptr() as *const ::core::ffi::c_char;
                         if d_4.dep.flags.contains(crate::dep::DepFlags::INCLUDED) {
-                            let floc = goal_floc(d_4);
+                            let floc = goal_floc(&ctx, d_4);
                             error(
                                 &ctx,
                                 floc.as_ref()
-                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                    .map_or(::core::ptr::null(), |f| f as *const Floc),
                                 strlen(dnm) as size_t,
                                 b"included makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
@@ -6602,6 +6582,42 @@ mod command_count_tests {
         assert_eq!(opt_command_count(ctx), 3, "two bumps through the channel");
 
         with_options(ctx, |o| o.command_count.set(1));
+    }
+}
+
+/// `goal_floc` builds a goal's source location with an interned file name, so
+/// the `Floc` stays valid on its own (no buffer kept beside it).
+#[cfg(test)]
+mod goal_floc_tests {
+    use super::goal_floc;
+    use crate::{dep::GoalDepNode, execctx::ExecContext, strcache::strcache_iscached};
+    use ::core::ffi::CStr;
+
+    #[test]
+    fn goal_floc_interns_the_defined_in_name() {
+        let ctx = ExecContext::default();
+        let goal = GoalDepNode {
+            defined_in: Some(b"goal-floc-test/inc.mk".to_vec()),
+            lineno: 7,
+            offset: 3,
+            ..GoalDepNode::default()
+        };
+
+        let floc = goal_floc(&ctx, &goal).expect("a goal with a source file has a floc");
+
+        assert_ne!(strcache_iscached(floc.filenm), 0, "the name is interned");
+        // SAFETY: an interned name is a valid NUL-terminated string for 'static.
+        assert_eq!(
+            unsafe { CStr::from_ptr(floc.filenm) }.to_bytes(),
+            b"goal-floc-test/inc.mk"
+        );
+        assert_eq!((floc.lineno, floc.offset), (7, 3));
+    }
+
+    #[test]
+    fn goal_floc_is_none_for_a_synthetic_goal() {
+        let ctx = ExecContext::default();
+        assert!(goal_floc(&ctx, &GoalDepNode::default()).is_none());
     }
 }
 

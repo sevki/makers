@@ -344,27 +344,26 @@ unsafe fn target_variable_from_c(vr: &variable) -> TargetVariable {
 /// Materialize a transient c2rust `variable` from a [`TargetVariable`] so the
 /// existing pointer-based printers (`print_variable`) can render it. The
 /// returned `variable` borrows the NUL-terminated buffers handed back in the
-/// tuple's second/third/fourth slots; keep those alive for the call.
+/// tuple's second/third slots; keep those alive for the call. Its source file
+/// name is the interned copy of `defined_in`, so it needs no buffer of its own.
 ///
-/// Returns `(variable, name_buf, value_buf, file_buf)`. The bitfields are set
+/// Returns `(variable, name_buf, value_buf)`. The bitfields are set
 /// through the c2rust setters so the rendered output matches the legacy path.
-fn c_variable_from_target(tv: &TargetVariable) -> (variable, Vec<u8>, Vec<u8>, Option<Vec<u8>>) {
+fn c_variable_from_target(
+    ctx: &ExecContext,
+    tv: &TargetVariable,
+) -> (variable, Vec<u8>, Vec<u8>) {
     let mut name_buf = tv.name.clone();
     name_buf.push(0);
     let mut value_buf = tv.value.clone();
     value_buf.push(0);
-    let file_buf = tv.defined_in.as_ref().map(|f| {
-        let mut b = f.clone();
-        b.push(0);
-        b
-    });
     let mut v: variable = variable {
         name: name_buf.as_ptr() as *mut ::core::ffi::c_char,
         value: value_buf.as_ptr() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: file_buf
-                .as_ref()
-                .map_or(::core::ptr::null(), |b| b.as_ptr() as *const ::core::ffi::c_char),
+            filenm: tv.defined_in.as_ref().map_or(::core::ptr::null(), |f| {
+                crate::strcache::strcache_intern(ctx, f).as_ptr()
+            }),
             lineno: tv.defined_lineno,
             offset: 0,
         },
@@ -392,7 +391,7 @@ fn c_variable_from_target(tv: &TargetVariable) -> (variable, Vec<u8>, Vec<u8>, O
     v.set_special(tv.special as ::core::ffi::c_uint);
     v.set_exportable(tv.exportable as ::core::ffi::c_uint);
     v.set_private_var(tv.private_var as ::core::ffi::c_uint);
-    (v, name_buf, value_buf, file_buf)
+    (v, name_buf, value_buf)
 }
 
 /// Define (or replace) a per-target variable directly on a [`FileNode`]'s
@@ -3189,7 +3188,7 @@ pub fn print_file_variables(ctx: &ExecContext, file: FileId) {
         .for_each(|tv| {
             // SAFETY: `cv` borrows the NUL-terminated buffers held in the tuple,
             // which outlive the `print_variable` call below.
-            let (cv, _n, _v, _f) = c_variable_from_target(tv);
+            let (cv, _n, _v) = c_variable_from_target(ctx, tv);
             unsafe {
                 print_variable(
                     &raw const cv as *const ::core::ffi::c_void,
@@ -3220,7 +3219,7 @@ pub fn print_target_variables(ctx: &ExecContext, file: FileId) {
         .for_each(|tv| {
             // SAFETY: `cv` borrows the NUL-terminated buffers held in the tuple,
             // which outlive the `print_variable` call below.
-            let (cv, _n, _v, _f) = c_variable_from_target(tv);
+            let (cv, _n, _v) = c_variable_from_target(ctx, tv);
             unsafe {
                 print_variable(
                     &raw const cv as *const ::core::ffi::c_void,
@@ -4227,5 +4226,42 @@ mod global_variables_tests {
             again.len(),
             "reading must not add or drop entries"
         );
+    }
+}
+
+/// `c_variable_from_target` carries a per-target variable's source location as
+/// an interned name, so the transient `variable` needs no file buffer beside it.
+#[cfg(test)]
+mod c_variable_from_target_tests {
+    use super::c_variable_from_target;
+    use crate::{execctx::ExecContext, strcache::strcache_iscached, target_var::TargetVariable};
+    use ::core::ffi::CStr;
+
+    #[test]
+    fn the_source_file_is_interned_and_a_synthetic_variable_has_none() {
+        let ctx = ExecContext::default();
+
+        let defined = TargetVariable {
+            name: b"V".to_vec(),
+            value: b"1".to_vec(),
+            defined_in: Some(b"c-variable-test/Makefile".to_vec()),
+            defined_lineno: 12,
+            ..TargetVariable::default()
+        };
+        let (cv, _name, _value) = c_variable_from_target(&ctx, &defined);
+        assert_ne!(strcache_iscached(cv.fileinfo.filenm), 0, "the name is interned");
+        // SAFETY: an interned name is a valid NUL-terminated string for 'static.
+        assert_eq!(
+            unsafe { CStr::from_ptr(cv.fileinfo.filenm) }.to_bytes(),
+            b"c-variable-test/Makefile"
+        );
+        assert_eq!(cv.fileinfo.lineno, 12);
+
+        let synthetic = TargetVariable {
+            name: b"S".to_vec(),
+            ..TargetVariable::default()
+        };
+        let (cv, _name, _value) = c_variable_from_target(&ctx, &synthetic);
+        assert!(cv.fileinfo.filenm.is_null(), "no source file, no name");
     }
 }

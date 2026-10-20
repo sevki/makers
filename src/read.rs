@@ -512,7 +512,12 @@ unsafe fn eval_makefile(
         rf.push(crate::dep::GoalDepNode::default());
         idx
     };
-    ebuf.floc.filenm = filename;
+    // The interned copy of the name, not the caller's pointer: callers differ in
+    // what backs it (an interned string, a static table entry, or a local
+    // `Vec` for an `include`), and interning is idempotent for the first two.
+    ebuf.floc.filenm =
+        crate::strcache::strcache_intern(ctx, ::core::ffi::CStr::from_ptr(filename).to_bytes())
+            .as_ptr();
     ebuf.floc.lineno = 1;
     ebuf.floc.offset = 0;
     if 0x2_i32 & db_level(ctx) != 0 {

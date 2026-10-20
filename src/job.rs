@@ -505,16 +505,11 @@ fn file_name_cstr(ctx: &crate::execctx::ExecContext, file: FileId) -> Vec<u8> {
 }
 
 /// Snapshot a target's recipe definition location (`defined_in`/
-/// `defined_lineno`) into an owned [`Floc`] plus the backing filename buffer.
-/// The returned `Floc.filenm` points into `buf` (which the caller must keep
-/// alive); a recipe with no source file yields a null `filenm`. The arena lock
-/// is dropped before returning.
-fn recipe_floc(
-    ctx: &crate::execctx::ExecContext,
-    file: FileId,
-    offset: u64,
-    buf: &mut Vec<u8>,
-) -> Floc {
+/// `defined_lineno`) into an owned [`Floc`]. The returned `Floc.filenm` is the
+/// interned copy of the recipe's file name, so nothing has to be kept alive
+/// beside it; a recipe with no source file yields a null `filenm`. The arena
+/// lock is dropped before returning.
+fn recipe_floc(ctx: &crate::execctx::ExecContext, file: FileId, offset: u64) -> Floc {
     let (defined_in, lineno) = match ctx.filenodes.get(file) {
         Some(node) => {
             let g = node.lock().expect("file node poisoned");
@@ -526,11 +521,9 @@ fn recipe_floc(
         None => (None, 0),
     };
     match defined_in {
-        Some(mut name) => {
-            name.push(0);
-            *buf = name;
+        Some(name) => {
             Floc {
-                filenm: buf.as_ptr() as *const ::core::ffi::c_char,
+                filenm: crate::strcache::strcache_intern(ctx, &name).as_ptr(),
                 lineno,
                 // The error reports `lineno + offset`; the offset is the failing
                 // command's 0-based index in the recipe (C: `fileinfo.offset =
@@ -651,9 +644,8 @@ unsafe fn child_error(
     let mut pre: *const ::core::ffi::c_char = b"*** \0" as *const u8 as *const ::core::ffi::c_char;
     let mut post: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let mut dump: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
-    let mut floc_buf: Vec<u8> = Vec::new();
     let cmd_offset = ((*child).command_line as u64).saturating_sub(1);
-    let floc = recipe_floc(ctx, (*child).file, cmd_offset, &mut floc_buf);
+    let floc = recipe_floc(ctx, (*child).file, cmd_offset);
     let name_buf = file_name_cstr(ctx, (*child).file);
     let f_name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
     let mut smode: Option<&::core::ffi::CStr> = None;
@@ -3807,9 +3799,9 @@ mod child_error_helper_tests {
     /// owned buffer tracked by `allocations`.
     #[test]
     fn label_formats_file_and_line() {
-        let name = CString::new("Makefile").unwrap();
         let fl = Floc {
-            filenm: name.as_ptr(),
+            // A `Floc` name is always interned or static, never a local buffer.
+            filenm: c"Makefile".as_ptr(),
             lineno: 10,
             offset: 2,
         };
