@@ -15,7 +15,7 @@ use std::sync::atomic::Ordering;
 
 use libc::{
     __errno_location, close, fcntl, free, open, perror, read, sigset_t, sprintf, sscanf,
-    strcmp, strerror, strlen, strncmp, timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET,
+    strcmp, strerror, strncmp, timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET,
     FD_ZERO, F_GETFD, F_GETFL, F_SETFD, F_SETFL, O_APPEND, O_EXCL, O_NONBLOCK, O_RDONLY, O_RDWR,
     O_WRONLY, SEEK_SET,
 };
@@ -35,7 +35,7 @@ use crate::{
     commands::handling_fatal_signal,
     entry::db_level,
     floc::Floc,
-    misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc, xstrdup},
+    misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc},
     output::{
         error,
         fatal_err,
@@ -487,7 +487,7 @@ pub unsafe fn jobserver_clear() {
             // The signal path only reads the name: it neither frees nor
             // clears it (the process is about to die), and `try_with` never
             // blocks or allocates. If the lock is held at this instant, the
-            // fifo file is left behind (see `FifoNameCell`).
+            // fifo file is left behind (see `SignalPathCell`).
             if ctx.job_root.0.load(Ordering::Relaxed) {
                 let _ = ctx
                     .fifo_name
@@ -745,7 +745,11 @@ pub fn osync_enabled(ctx: &crate::execctx::ExecContext) -> c_uint {
 /// Must run single-threaded during startup.
 pub unsafe fn osync_setup(ctx: &crate::execctx::ExecContext) {
     let (h, nm) = open_named_tmpfd(ctx);
-    ctx.osync_tmpfile.0.set(nm);
+    // `nm` is an `xmalloc`'d name (null on failure): keep an owned copy and
+    // free the original, which this function used to adopt as-is.
+    let name = (!nm.is_null()).then(|| CStr::from_ptr(nm).to_owned());
+    free(nm as *mut c_void);
+    ctx.osync_tmpfile.set(name);
     ctx.osync_handle.0.store(h, Ordering::Relaxed);
     fd_noinherit(h);
     ctx.sync_root.0.store(true, Ordering::Relaxed);
@@ -760,9 +764,13 @@ pub unsafe fn osync_get_mutex(ctx: &crate::execctx::ExecContext) -> *mut c_char 
     if osync_enabled(ctx) == 0 {
         return null_mut();
     }
-    let osync_tmpfile = ctx.osync_tmpfile.0.get();
-    let mutex = xmalloc(strlen(osync_tmpfile) + MUTEX_PREFIX.to_bytes().len() + 1) as *mut c_char;
-    sprintf(mutex, c"fnm:%s".as_ptr(), osync_tmpfile);
+    let osync_tmpfile = ctx
+        .osync_tmpfile
+        .get()
+        .expect("an enabled output sync mutex always has a recorded path");
+    let mutex =
+        xmalloc(osync_tmpfile.count_bytes() + MUTEX_PREFIX.to_bytes().len() + 1) as *mut c_char;
+    sprintf(mutex, c"fnm:%s".as_ptr(), osync_tmpfile.as_ptr());
     mutex
 }
 
@@ -792,9 +800,11 @@ pub unsafe fn osync_parse_mutex(
         return Ok(0);
     }
 
-    free(ctx.osync_tmpfile.0.get() as *mut c_void);
-    let osync_tmpfile = xstrdup(mutex.add(MUTEX_PREFIX.to_bytes().len()));
-    ctx.osync_tmpfile.0.set(osync_tmpfile);
+    let osync_path = CStr::from_ptr(mutex.add(MUTEX_PREFIX.to_bytes().len())).to_owned();
+    // The raw pointer the libc calls below take; `osync_path` owns it.
+    let osync_tmpfile = osync_path.as_ptr();
+    // Replaces (and drops) any earlier name, as the `free` of the old pointer did.
+    ctx.osync_tmpfile.set(Some(osync_path.clone()));
 
     loop {
         let h = open(osync_tmpfile, O_WRONLY);
@@ -834,11 +844,20 @@ pub unsafe fn osync_clear() {
             close(h);
             ctx.osync_handle.0.store(-1, Ordering::Relaxed);
         }
-        let osync_tmpfile = ctx.osync_tmpfile.0.get();
-        if ctx.sync_root.0.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
-            let _ = crate::misc::unlink_c(osync_tmpfile);
-            free(osync_tmpfile as *mut c_void);
-            ctx.osync_tmpfile.0.set(null_mut());
+        // Only the process that created the lock file removes it; one that
+        // merely adopted an inherited mutex keeps its recorded name.
+        if ctx.sync_root.0.load(Ordering::Relaxed) {
+            if handling_fatal_signal(ctx) {
+                // The signal path only reads the name: `try_with` never
+                // blocks or allocates, and nothing is freed or cleared (the
+                // process is about to die). If the lock is held at this
+                // instant, the file is left behind (see `SignalPathCell`).
+                let _ = ctx
+                    .osync_tmpfile
+                    .try_with(|name| crate::misc::unlink_c(name.as_ptr()));
+            } else if let Some(name) = ctx.osync_tmpfile.take() {
+                let _ = crate::misc::unlink_c(name.as_ptr());
+            }
         }
     });
 }
@@ -1581,5 +1600,108 @@ mod tests {
         assert!(!path.exists(), "the signal path still unlinks the fifo");
         assert_eq!(ctx.fifo_name.get().as_deref(), Some(name.as_c_str()));
         ctx.fifo_name.set(None);
+    }
+
+    /// `osync_clear`: only the process that created the lock file
+    /// (`sync_root`) unlinks it and forgets its name; one that merely adopted an
+    /// inherited mutex keeps its name; and on the fatal-signal path the creator
+    /// unlinks but leaves the name alone.
+    #[test]
+    fn osync_clear_unlinks_only_for_the_creator() {
+        let ctx = crate::entry::install_default_exec_context_for_test();
+        let make = |tag: &str| {
+            let path = std::env::temp_dir()
+                .join(format!("makers_osync_clear_{}_{tag}", std::process::id()));
+            std::fs::write(&path, b"").unwrap();
+            let name = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+            (path, name)
+        };
+
+        // An adopter: the file is not ours to remove, and the name is kept.
+        let (path, name) = make("adopter");
+        ctx.sync_root.0.store(false, Ordering::Relaxed);
+        ctx.osync_tmpfile.set(Some(name.clone()));
+        unsafe { osync_clear() };
+        assert!(path.exists(), "an adopter must not unlink the lock file");
+        assert_eq!(ctx.osync_tmpfile.get().as_deref(), Some(name.as_c_str()));
+        std::fs::remove_file(&path).unwrap();
+
+        // The creator, ordinary path: unlinked, and the name forgotten.
+        let (path, name) = make("creator");
+        ctx.sync_root.0.store(true, Ordering::Relaxed);
+        ctx.osync_tmpfile.set(Some(name));
+        unsafe { osync_clear() };
+        assert!(!path.exists(), "the creator unlinks the lock file");
+        assert!(ctx.osync_tmpfile.get().is_none());
+
+        // The creator, fatal-signal path: unlinked, name left in place.
+        let (path, name) = make("signal");
+        ctx.osync_tmpfile.set(Some(name.clone()));
+        ctx.handling_fatal_signal.0.store(true, Ordering::Relaxed);
+        unsafe { osync_clear() };
+        ctx.handling_fatal_signal.0.store(false, Ordering::Relaxed);
+        assert!(!path.exists(), "the signal path still unlinks the lock file");
+        assert_eq!(ctx.osync_tmpfile.get().as_deref(), Some(name.as_c_str()));
+        ctx.osync_tmpfile.set(None);
+        ctx.sync_root.0.store(false, Ordering::Relaxed);
+    }
+
+    /// The creator's whole lifecycle: `osync_setup` copies the `xmalloc`'d name
+    /// `open_named_tmpfd` returns into an owned one (and frees the original),
+    /// `osync_get_mutex` reports it as `fnm:<path>`, and `osync_clear` removes
+    /// the file and forgets it.
+    #[test]
+    fn osync_setup_records_an_owned_name_that_get_mutex_and_clear_use() {
+        use std::os::unix::ffi::OsStrExt;
+        let ctx = crate::entry::install_default_exec_context_for_test();
+
+        unsafe { osync_setup(ctx) };
+        let name = ctx
+            .osync_tmpfile
+            .get()
+            .expect("setup records the lock file's name");
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(name.to_bytes()));
+        assert!(path.exists(), "setup creates the lock file");
+        assert_ne!(osync_enabled(ctx), 0);
+
+        // SAFETY: `osync_get_mutex` returns an `xmalloc`'d NUL-terminated
+        // string, read once and freed.
+        let reported = unsafe {
+            let mutex = osync_get_mutex(ctx);
+            let bytes = CStr::from_ptr(mutex).to_bytes().to_vec();
+            free(mutex.cast());
+            bytes
+        };
+        assert_eq!(reported, [b"fnm:".as_slice(), name.to_bytes()].concat());
+
+        unsafe { osync_clear() };
+        assert!(!path.exists(), "clear removes the lock file");
+        assert!(ctx.osync_tmpfile.get().is_none());
+        assert_eq!(osync_enabled(ctx), 0, "clear closes the handle");
+        ctx.sync_root.0.store(false, Ordering::Relaxed);
+    }
+
+    /// `osync_parse_mutex` adopts an inherited `fnm:<path>`: the path is
+    /// recorded as an owned name (replacing any earlier one) and the file is
+    /// opened.
+    #[test]
+    fn osync_parse_mutex_adopts_an_inherited_path() {
+        let ctx = crate::execctx::ExecContext::default();
+        let path = std::env::temp_dir().join(format!("makers_osync_parse_{}", std::process::id()));
+        std::fs::write(&path, b"").unwrap();
+        ctx.osync_tmpfile.set(Some(c"/some/earlier/path".to_owned()));
+
+        let mutex = std::ffi::CString::new(format!("fnm:{}", path.to_str().unwrap())).unwrap();
+        let result = unsafe { osync_parse_mutex(&ctx, mutex.as_ptr()) };
+
+        assert_eq!(result, Ok(1));
+        assert_eq!(
+            ctx.osync_tmpfile.get().as_deref().map(CStr::to_bytes),
+            Some(path.to_str().unwrap().as_bytes()),
+        );
+        let handle = ctx.osync_handle.0.load(Ordering::Relaxed);
+        assert!(handle >= 0, "the inherited lock file was opened");
+        unsafe { close(handle) };
+        std::fs::remove_file(&path).unwrap();
     }
 }
