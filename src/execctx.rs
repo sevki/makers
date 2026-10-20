@@ -279,8 +279,11 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// and read by `temp_stdin_unlink` on the cleanup/fatal-signal paths, which
     /// carry only `&ExecContext`. Carried across the `main_0` build-phase
     /// context rebuild: the name is recorded before the rebuild and must
-    /// survive until cleanup. Interned or 'static storage backs the pointer.
-    pub temp_stdin_name: PtrCell,
+    /// survive until cleanup. `None` until a temp-stdin file is registered.
+    /// An owned copy, so it adds no raw pointer to `ExecContext` (#607); the
+    /// signal-path reader only takes a shared borrow (no allocation), and the
+    /// writers run during argument decoding.
+    pub temp_stdin_name: ::core::cell::RefCell<Option<::std::ffi::CString>>,
 
     /// The working directory before any `-C` chdir, the former main.rs
     /// `pub static mut directory_before_chdir` — restored on re-exec and in
@@ -2673,6 +2676,33 @@ mod tests {
         // Per-run: a fresh context does not inherit the buffer.
         assert!(ExecContext::default().read_dirstream_buf.get().is_null());
         assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
+    }
+
+    /// `temp_stdin_name` starts unset and the registered name survives the
+    /// `main_0` carry-over (it is read by cleanup after the rebuild) and the
+    /// sink swap, independent of the context it was carried from.
+    #[test]
+    fn temp_stdin_name_starts_unset_and_survives_carry_over() {
+        let mut ctx = ExecContext::default();
+        assert!(ctx.temp_stdin_name.borrow().is_none());
+
+        *ctx.temp_stdin_name.borrow_mut() = Some(c"/tmp/GmStdin1".to_owned());
+        let carried = ::core::mem::take(&mut ctx.temp_stdin_name);
+        assert!(ctx.temp_stdin_name.borrow().is_none());
+        let rebuilt = ExecContext {
+            temp_stdin_name: carried,
+            ..ExecContext::default()
+        };
+        assert_eq!(
+            rebuilt.temp_stdin_name.borrow().as_deref(),
+            Some(c"/tmp/GmStdin1")
+        );
+
+        let swapped = rebuilt.with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        assert_eq!(
+            swapped.temp_stdin_name.borrow().as_deref(),
+            Some(c"/tmp/GmStdin1")
+        );
     }
 
     /// `program` starts unset and survives the `main_0` carry-over and the

@@ -2021,8 +2021,11 @@ unsafe fn getcwd_into(buf: *mut ::core::ffi::c_char, size: usize) -> bool {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn temp_stdin_unlink(ctx: &crate::execctx::ExecContext) {
-    if opt_stdin_offset(ctx) >= 0 && !ctx.temp_stdin_name.0.get().is_null() {
-        let nm: *const ::core::ffi::c_char = ctx.temp_stdin_name.0.get();
+    // A shared borrow, not a clone: this runs on the fatal-signal path, where
+    // allocating is best avoided.
+    let registered = ctx.temp_stdin_name.borrow();
+    if let (true, Some(nm)) = (opt_stdin_offset(ctx) >= 0, registered.as_deref()) {
+        let nm = nm.as_ptr();
         with_options(ctx, |o| o.stdin_offset.set(-1));
         let r = crate::misc::unlink_c(nm);
         if r < 0 && *__errno_location() != ENOENT && !handling_fatal_signal(ctx) {
@@ -2662,7 +2665,8 @@ pub unsafe fn main_0(
                 options.makefiles.borrow_mut()[i_1] =
                     ::core::ffi::CStr::from_ptr(cached).to_owned();
                 options.stdin_offset.set(i_1 as i32);
-                ctx.temp_stdin_name.0.set(cached);
+                *ctx.temp_stdin_name.borrow_mut() =
+                    Some(::core::ffi::CStr::from_ptr(cached).to_owned());
                 free(newnm as *mut ::core::ffi::c_void);
             }
             i_1 = i_1.wrapping_add(1);
@@ -4110,8 +4114,9 @@ fn apply_value_switch(
                 // Its return value is a strcache-owned, valid NUL-terminated
                 // string for the process lifetime.
                 let cached = unsafe { strcache_add(ctx, coptarg) };
-                ctx.temp_stdin_name.0.set(cached);
-                unsafe { ::core::ffi::CStr::from_ptr(cached) }.to_owned()
+                let name = unsafe { ::core::ffi::CStr::from_ptr(cached) }.to_owned();
+                *ctx.temp_stdin_name.borrow_mut() = Some(name.clone());
+                name
             } else {
                 // SAFETY: `expand_command_line_file` requires a valid
                 // NUL-terminated C string (`coptarg`, as above) and returns
@@ -6980,7 +6985,7 @@ mod jobserver_and_stdin_cleanup_tests {
         let ctx = crate::execctx::ExecContext::default();
         unsafe {
             with_options(&ctx, |o| o.stdin_offset.set(-1));
-            ctx.temp_stdin_name.0.set(::core::ptr::null());
+            *ctx.temp_stdin_name.borrow_mut() = None;
             temp_stdin_unlink(&ctx);
         }
 
@@ -6990,16 +6995,23 @@ mod jobserver_and_stdin_cleanup_tests {
         std::fs::write(&path, b"all:\n").unwrap();
         assert!(path.exists());
         let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        *ctx.temp_stdin_name.borrow_mut() = Some(cpath);
+
+        // Registered but `stdin_offset < 0` (no `-f -` in play): the file is
+        // left alone.
+        unsafe {
+            with_options(&ctx, |o| o.stdin_offset.set(-1));
+            temp_stdin_unlink(&ctx);
+        }
+        assert!(path.exists(), "no unlink while stdin_offset is unset");
+
+        // Registered and live: unlinked, and the offset is reset.
         unsafe {
             with_options(&ctx, |o| o.stdin_offset.set(0));
-            ctx.temp_stdin_name.0.set(cpath.as_ptr());
             temp_stdin_unlink(&ctx);
-            // Restore globals before `cpath` is dropped to avoid a dangling ptr.
-            ctx.temp_stdin_name.0.set(::core::ptr::null());
-            with_options(&ctx, |o| o.stdin_offset.set(-1));
         }
         assert!(!path.exists(), "temp stdin file should have been unlinked");
-        drop(cpath);
+        assert_eq!(crate::entry::opt_stdin_offset(&ctx), -1);
     }
 }
 

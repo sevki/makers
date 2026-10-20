@@ -304,8 +304,9 @@ pub unsafe fn decode_switches_oracle(
                                                 }
                                                 options.stdin_offset.set(list.len() as i32);
                                                 let cached = strcache_add(ctx, coptarg);
-                                                ctx.temp_stdin_name.0.set(cached);
-                                                ::core::ffi::CStr::from_ptr(cached).to_owned()
+                                                let name = ::core::ffi::CStr::from_ptr(cached).to_owned();
+                                                *ctx.temp_stdin_name.borrow_mut() = Some(name.clone());
+                                                name
                                             } else {
                                                 ::core::ffi::CStr::from_ptr(
                                                     expand_command_line_file(ctx, coptarg)?,
