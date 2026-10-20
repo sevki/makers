@@ -589,6 +589,24 @@ own sake:
   internal hostnames. Withholding `read-recipes` is a supported mode, not an
   error.
 
+**Recursive makes (`mode=wrap`).** Per-target genrules assume the graph is
+whole. The Linux kernel's is not: Kbuild recurses with `$(MAKE) -f
+scripts/Makefile.build obj=<dir>`, so the top-level graph holds the
+recursion rather than the compiles, its recipes are `$(call
+if_changed_rule,cc_o_c)` (meaningless until expanded against `$@` inside the
+sub-make), and its `built-in.a` archives are thin, naming `.o` files a
+per-target action would not have kept. `--plugin-arg bazel:mode=wrap` emits a
+`MODULE.bazel` and one hermetic `kernel` genrule instead — copy the tree, run
+`make`, return the declared `outs` — the same trade Android's Kleaf makes. See
+the module docs in `plugins/bazel-export/src/lib.rs` for the settings. For
+Linux 6.6 (verified: `bazel build //:kernel` yields `vmlinux` and `bzImage`):
+
+```sh
+MAKERS_PLUGINS=bazel=bazel_export.wasm \
+MAKERS_PLUGIN_ARGS='bazel:mode=wrap;bazel:outs=vmlinux,arch/x86/boot/bzImage;bazel:goals=vmlinux bzImage;bazel:configure=defconfig' \
+make -n help && bazel build //:kernel --action_env=PATH
+```
+
 It is also the plugin that forced the digest to get honest, and now the
 first to declare `deterministic` on the strength of it. It has to substitute
 plain variables — Bazel has no `CC`, so `$(CC)` left alone becomes a genrule
