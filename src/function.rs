@@ -307,213 +307,178 @@ unsafe fn function_table_entry_hash_cmp(
         )
     }
 }
-/// # Safety
+/// Append `bytes` to the variable buffer at `o`, returning the new cursor.
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn subst_expand(
+/// The one place the pure substitution results cross back into the C-shaped
+/// output buffer; an empty result leaves the cursor untouched.
+unsafe fn append_bytes(
     ctx: &crate::execctx::ExecContext,
-    mut o: *mut ::core::ffi::c_char,
-    text: *const ::core::ffi::c_char,
-    subst: *const ::core::ffi::c_char,
-    replace: *const ::core::ffi::c_char,
-    slen: size_t,
-    rlen: size_t,
-    by_word: i32,
+    o: *mut ::core::ffi::c_char,
+    bytes: &[u8],
 ) -> *mut ::core::ffi::c_char {
-    // `text` is NUL-terminated; view it as a byte slice so the scan runs over
-    // indices instead of walking raw pointers. `subst`/`replace` are emitted
-    // straight to the output buffer, which is the genuine FFI boundary.
-    let text_bytes = ::core::ffi::CStr::from_ptr(text).to_bytes();
-    let subst_bytes = ::core::slice::from_raw_parts(subst as *const u8, slen);
-    if slen == 0 && by_word == 0 {
-        o = variable_buffer_output(ctx, o, text, text_bytes.len());
-        if rlen > 0 {
-            o = variable_buffer_output(ctx, o, replace, rlen);
-        }
-        return o;
+    if bytes.is_empty() {
+        o
+    } else {
+        variable_buffer_output(
+            ctx,
+            o,
+            bytes.as_ptr() as *const ::core::ffi::c_char,
+            bytes.len(),
+        )
     }
-    // `ti` is the offset of the C cursor `t` within `text_bytes`.
+}
+/// Pure core of make's `subst_expand`: replace every occurrence of `subst` in
+/// `text` with `replace`.
+///
+/// With `by_word` only standalone words (bounded by blanks/newlines or the
+/// ends of `text`) are replaced, and a non-standalone match keeps the original
+/// `subst`; this is how `patsubst` without a `%` is evaluated. An empty `subst`
+/// outside word mode copies `text` and appends `replace`; in word mode it
+/// matches at the end of each token. `text` is the string without its NUL.
+fn subst_bytes(text: &[u8], subst: &[u8], replace: &[u8], by_word: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    if subst.is_empty() && !by_word {
+        out.extend_from_slice(text);
+        out.extend_from_slice(replace);
+        return out;
+    }
+    // `ti` is the offset of the scan cursor within `text`.
     let mut ti: usize = 0;
     loop {
         // `p` is the offset of the next match (or token end, in word mode).
-        let p: usize;
-        if by_word != 0 && slen == 0 {
-            // p = end_of_token(next_token(t)); recover its offset by address
-            // difference (an accepted span computation, not pointer arithmetic).
-            let t_ptr = text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char;
-            let nt = next_token(t_ptr);
-            // `nt` points within `text_bytes`; recover its offset and scan only
-            // the already-bounded remaining slice for the token end. Feeding the
-            // bounded `text_bytes[nt_off..]` (which ends at the NUL) avoids a
-            // fresh `strlen` over the whole suffix per token, keeping this
-            // per-token loop O(n) overall instead of O(n^2).
-            let nt_off = nt as usize - text_bytes.as_ptr() as usize;
-            p = nt_off + end_of_token(&text_bytes[nt_off..]);
+        let p = if subst.is_empty() {
+            let rest = &text[ti..];
+            let nt = ti
+                + rest
+                    .iter()
+                    .position(|&b| !is_map_space(b))
+                    .unwrap_or(rest.len());
+            nt + text[nt..]
+                .iter()
+                .position(|&b| is_map_space(b))
+                .unwrap_or(text.len() - nt)
         } else {
-            // p = strstr(t, subst)
-            match text_bytes[ti..]
-                .windows(subst_bytes.len())
-                .position(|w| w == subst_bytes)
-            {
-                Some(rel) => p = ti + rel,
+            match text[ti..].windows(subst.len()).position(|w| w == subst) {
+                Some(rel) => ti + rel,
                 None => {
-                    o = variable_buffer_output(
-                        ctx,
-                        o,
-                        text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char,
-                        text_bytes.len() - ti,
-                    );
-                    return o;
+                    out.extend_from_slice(&text[ti..]);
+                    return out;
                 }
             }
-        }
-        if p > ti {
-            o = variable_buffer_output(
-                ctx,
-                o,
-                text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char,
-                p - ti,
-            );
-        }
+        };
+        out.extend_from_slice(&text[ti..p]);
         // Whole-word boundary test (word mode only): keep the original `subst`
         // when the match is not a standalone word — preceded by a non-blank
         // (and not at the start), or followed by a non-blank, non-terminator.
-        let prev_breaks = p > 0 && !stop_set(text_bytes[p - 1], MAP_BLANK | MAP_NEWLINE);
-        let after = text_bytes.get(p + slen).copied().unwrap_or(0);
+        let prev_breaks = p > 0 && !stop_set(text[p - 1], MAP_BLANK | MAP_NEWLINE);
+        let after = text.get(p + subst.len()).copied().unwrap_or(0);
         let after_breaks = !stop_set(after, MAP_BLANK | MAP_NEWLINE | MAP_NUL);
-        if by_word != 0 && (prev_breaks || after_breaks) {
-            o = variable_buffer_output(ctx, o, subst, slen);
-        } else if rlen > 0 {
-            o = variable_buffer_output(ctx, o, replace, rlen);
+        if by_word && (prev_breaks || after_breaks) {
+            out.extend_from_slice(subst);
+        } else {
+            out.extend_from_slice(replace);
         }
-        // Advance past the match; stop when the cursor reaches the NUL.
-        ti = p + slen;
-        if ti >= text_bytes.len() {
-            break;
+        // Advance past the match; stop when the cursor reaches the end.
+        ti = p + subst.len();
+        if ti >= text.len() {
+            return out;
         }
     }
-    o
+}
+/// Pure core of make's `patsubst_expand_pat`. `pat_pct`/`rep_pct` are the
+/// offsets of the (already unquoted) `%` within `pattern`/`replace`, if any.
+///
+/// Without a `%` in `pattern` this is a whole-word [`subst_bytes`]. Otherwise
+/// each whitespace-separated token of `text` that matches `prefix%suffix` is
+/// rewritten (its stem spliced into `replace`'s `%`, if it has one) and the
+/// results are joined by single spaces; non-matching tokens pass through.
+fn patsubst_bytes(
+    text: &[u8],
+    pattern: &[u8],
+    pat_pct: Option<usize>,
+    replace: &[u8],
+    rep_pct: Option<usize>,
+) -> Vec<u8> {
+    let Some(pp) = pat_pct else {
+        return subst_bytes(text, pattern, replace, true);
+    };
+    let (pat_prefix, pat_suffix) = (&pattern[..pp], &pattern[pp + 1..]);
+    let (rep_prefix, rep_suffix) = match rep_pct {
+        Some(rp) => (&replace[..rp], &replace[rp + 1..]),
+        None => (replace, &replace[..0]),
+    };
+    let mut out = Vec::with_capacity(text.len());
+    let mut doneany = false;
+    for tok in tokens(text) {
+        // A token matches `prefix % suffix` when it is long enough and both
+        // ends line up; `&&` short-circuits so the slices stay in bounds.
+        let matched = tok.len() >= pat_prefix.len() + pat_suffix.len()
+            && tok.starts_with(pat_prefix)
+            && tok.ends_with(pat_suffix);
+        if matched {
+            out.extend_from_slice(rep_prefix);
+            if rep_pct.is_some() {
+                // The stem is what '%' captured: the token minus prefix/suffix.
+                out.extend_from_slice(&tok[pat_prefix.len()..tok.len() - pat_suffix.len()]);
+                out.extend_from_slice(rep_suffix);
+            }
+        } else {
+            out.extend_from_slice(tok);
+        }
+        if !matched
+            || !rep_prefix.is_empty()
+            || rep_pct.is_some() && tok.len() + rep_suffix.len() > 0
+        {
+            out.push(b' ');
+            doneany = true;
+        }
+    }
+    if doneany {
+        out.pop();
+    }
+    out
+}
+/// Locate the first unquoted `%` in an argument and drop the backslashes that
+/// quoted it, as `find_percent` does in place: the unquoted bytes and the `%`
+/// offset within them. Borrows `s` unchanged unless it held an escaped `%`.
+fn unquote_percent(s: &[u8]) -> (::std::borrow::Cow<'_, [u8]>, Option<usize>) {
+    use crate::parser::{find_percent_cached, FindPercentCached};
+    match find_percent_cached(s) {
+        FindPercentCached::AsIs(idx) => (::std::borrow::Cow::Borrowed(s), idx),
+        FindPercentCached::Collapsed { mut buf, idx } => {
+            // The collapse happens in place over a NUL-terminated copy.
+            buf.truncate(buf.iter().position(|&b| b == 0).unwrap_or(buf.len()));
+            (::std::borrow::Cow::Owned(buf), idx)
+        }
+    }
 }
 /// # Safety
 ///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
+/// `text`, `pattern` and `replace` must be valid NUL-terminated strings;
+/// `pattern_percent`/`replace_percent` are null or point just past the `%`
+/// inside `pattern`/`replace` respectively.
 pub unsafe fn patsubst_expand_pat(
     ctx: &crate::execctx::ExecContext,
-    mut o: *mut ::core::ffi::c_char,
-    mut text: *const ::core::ffi::c_char,
+    o: *mut ::core::ffi::c_char,
+    text: *const ::core::ffi::c_char,
     pattern: *const ::core::ffi::c_char,
     replace: *const ::core::ffi::c_char,
     pattern_percent: *const ::core::ffi::c_char,
     replace_percent: *const ::core::ffi::c_char,
 ) -> *mut ::core::ffi::c_char {
-    let mut len: size_t = 0;
-    let mut doneany: i32 = 0;
-    // Replacement halves around the '%'. `replace`/`replace_percent` are emitted
-    // straight to the output buffer; only their split lengths are needed here.
-    // The '%' offset is an address difference, not pointer arithmetic.
-    let replace_prepercent_len: usize;
-    let replace_postpercent_len: usize;
-    if !replace_percent.is_null() {
-        replace_prepercent_len = (replace_percent as usize - replace as usize) - 1;
-        replace_postpercent_len = strlen(replace_percent) as usize;
-    } else {
-        replace_prepercent_len = strlen(replace) as usize;
-        replace_postpercent_len = 0;
-    }
-    if pattern_percent.is_null() {
-        return subst_expand(
-            ctx,
-            o,
-            text,
-            pattern,
-            replace,
-            strlen(pattern) as size_t,
-            strlen(replace) as size_t,
-            1,
-        );
-    }
-    // Split the pattern into its prefix and suffix around the '%' and match
-    // each token against them by slice comparison instead of walking pointers.
-    let pat = ::core::ffi::CStr::from_ptr(pattern).to_bytes();
-    let prepercent_len = (pattern_percent as usize - pattern as usize) - 1;
-    let pat_prefix = &pat[..prepercent_len];
-    let pat_suffix = &pat[prepercent_len + 1..];
-    let postpercent_len = pat_suffix.len();
-    loop {
-        let t = find_next_token(&raw mut text, &raw mut len);
-        if t.is_null() {
-            break;
-        }
-        let tok = ::core::slice::from_raw_parts(t as *const u8, len as usize);
-        // A token matches `prefix % suffix` when it is long enough and both
-        // ends line up; `&&` short-circuits so the slices stay in bounds.
-        let matched = tok.len() >= prepercent_len + postpercent_len
-            && tok[..prepercent_len] == *pat_prefix
-            && tok[tok.len() - postpercent_len..] == *pat_suffix;
-        if matched {
-            o = variable_buffer_output(ctx, o, replace, replace_prepercent_len);
-            if !replace_percent.is_null() {
-                // The stem is what '%' captured: the token minus prefix/suffix.
-                let stem = &tok[prepercent_len..tok.len() - postpercent_len];
-                o = variable_buffer_output(
-                    ctx,
-                    o,
-                    stem.as_ptr() as *const ::core::ffi::c_char,
-                    stem.len(),
-                );
-                o = variable_buffer_output(ctx, o, replace_percent, replace_postpercent_len);
-            }
-        } else {
-            o = variable_buffer_output(ctx, o, t, len);
-        }
-        if !matched
-            || replace_prepercent_len > 0
-            || !replace_percent.is_null() && len.wrapping_add(replace_postpercent_len) > 0
-        {
-            o = variable_buffer_output(
-                ctx,
-                o,
-                b" \0" as *const u8 as *const ::core::ffi::c_char,
-                1,
-            );
-            doneany = 1;
-        }
-    }
-    if doneany != 0 {
-        o = o.offset(-1_i32 as isize);
-    }
-    o
-}
-/// # Safety
-///
-/// C-style API operating on raw pointers inherited from the c2rust
-/// translation; all pointer arguments must be valid for the call.
-pub unsafe fn patsubst_expand(
-    ctx: &crate::execctx::ExecContext,
-    o: *mut ::core::ffi::c_char,
-    text: *const ::core::ffi::c_char,
-    pattern: *mut ::core::ffi::c_char,
-    replace: *mut ::core::ffi::c_char,
-) -> *mut ::core::ffi::c_char {
-    let mut pattern_percent: *const ::core::ffi::c_char = find_percent(pattern);
-    let mut replace_percent: *const ::core::ffi::c_char = find_percent(replace);
-    if !replace_percent.is_null() {
-        replace_percent = replace_percent.offset(1_i32 as isize);
-    }
-    if !pattern_percent.is_null() {
-        pattern_percent = pattern_percent.offset(1_i32 as isize);
-    }
-    patsubst_expand_pat(
-        ctx,
-        o,
-        text,
-        pattern,
-        replace,
-        pattern_percent,
-        replace_percent,
-    )
+    // The `%` offsets are address differences from the string start (an
+    // accepted span computation), minus one for the `%` itself.
+    let pct = |base: *const ::core::ffi::c_char, after: *const ::core::ffi::c_char| {
+        (!after.is_null()).then(|| after as usize - base as usize - 1)
+    };
+    let out = patsubst_bytes(
+        ::core::ffi::CStr::from_ptr(text).to_bytes(),
+        ::core::ffi::CStr::from_ptr(pattern).to_bytes(),
+        pct(pattern, pattern_percent),
+        ::core::ffi::CStr::from_ptr(replace).to_bytes(),
+        pct(replace, replace_percent),
+    );
+    append_bytes(ctx, o, &out)
 }
 unsafe fn lookup_function(
     ctx: &crate::execctx::ExecContext,
@@ -723,20 +688,11 @@ mod string_glob_tests {
         assert!(join_glob_names(&[]).is_empty());
     }
 }
-unsafe fn func_patsubst(
-    ctx: &crate::execctx::ExecContext,
-    mut o: *mut ::core::ffi::c_char,
-    argv: *mut *mut ::core::ffi::c_char,
-    mut _funcname: *const ::core::ffi::c_char,
-) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
-    o = patsubst_expand(
-        ctx,
-        o,
-        *argv.offset(2_i32 as isize),
-        *argv.offset(0_i32 as isize),
-        *argv.offset(1_i32 as isize),
-    );
-    Ok(o)
+/// make's `$(patsubst pattern,replacement,text)`.
+fn func_patsubst(_name: &[u8], args: &[&[u8]]) -> Vec<u8> {
+    let (pattern, pat_pct) = unquote_percent(args[0]);
+    let (replace, rep_pct) = unquote_percent(args[1]);
+    patsubst_bytes(args[2], &pattern, pat_pct, &replace, rep_pct)
 }
 /// make's `$(join list1,list2)`: concatenate the i-th word of `list1` with the
 /// i-th word of `list2`, for every row up to the longer list, space-separated
@@ -1395,23 +1351,9 @@ fn func_addsuffix_addprefix(name: &[u8], args: &[&[u8]]) -> Vec<u8> {
     );
     addprefix_addsuffix_result(args[0], args[1], is_addprefix)
 }
-unsafe fn func_subst(
-    ctx: &crate::execctx::ExecContext,
-    mut o: *mut ::core::ffi::c_char,
-    argv: *mut *mut ::core::ffi::c_char,
-    mut _funcname: *const ::core::ffi::c_char,
-) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
-    o = subst_expand(
-        ctx,
-        o,
-        *argv.offset(2_i32 as isize),
-        *argv.offset(0_i32 as isize),
-        *argv.offset(1_i32 as isize),
-        strlen(*argv.offset(0_i32 as isize)) as size_t,
-        strlen(*argv.offset(1_i32 as isize)) as size_t,
-        0,
-    );
-    Ok(o)
+/// make's `$(subst from,to,text)`: replace every occurrence of `from` in `text`.
+fn func_subst(_name: &[u8], args: &[&[u8]]) -> Vec<u8> {
+    subst_bytes(args[2], args[0], args[1], false)
 }
 /// Iterate the whitespace-separated tokens of `s`, matching make's
 /// `find_next_token`/`next_token`/`end_of_token`: each token is a maximal run
@@ -4968,12 +4910,12 @@ const function_table_init: [FunctionTableEntry; 38] = [
     ft_entry_safe(b"notdir\0", 0, 1, 1, func_notdir_suffix),
     ft_entry(b"or\0", 1, 0, 0, func_or),
     ft_entry(b"origin\0", 0, 1, 1, func_origin),
-    ft_entry(b"patsubst\0", 3, 3, 1, func_patsubst),
+    ft_entry_safe(b"patsubst\0", 3, 3, 1, func_patsubst),
     ft_entry(b"realpath\0", 0, 1, 1, func_realpath),
     ft_entry(b"shell\0", 0, 1, 1, func_shell),
     ft_entry(b"sort\0", 0, 1, 1, func_sort),
     ft_entry(b"strip\0", 0, 1, 1, func_strip),
-    ft_entry(b"subst\0", 3, 3, 1, func_subst),
+    ft_entry_safe(b"subst\0", 3, 3, 1, func_subst),
     ft_entry_safe(b"suffix\0", 0, 1, 1, func_notdir_suffix),
     ft_entry(b"value\0", 0, 1, 1, func_value),
     ft_entry(b"warning\0", 0, 1, 1, func_error),
@@ -6021,13 +5963,11 @@ mod realpath_tests {
 #[cfg(test)]
 mod subst_and_strip_tests {
     use {
-        super::{func_strip, subst_expand},
+        super::{func_strip, subst_bytes},
         crate::{
             entry::initialize_stopchar_map,
             expand::{
-                initialize_variable_output,
-                variable_buffer_output,
-                VARIABLE_BUFFER_TEST_LOCK,
+                initialize_variable_output, variable_buffer_output, VARIABLE_BUFFER_TEST_LOCK,
             },
         },
         std::ffi::{c_char, CStr, CString},
@@ -6061,72 +6001,25 @@ mod subst_and_strip_tests {
     }
 
     #[test]
-    fn subst_expand_replaces_each_occurrence() {
-        unsafe {
-            let text = CString::new("a.b.c").unwrap();
-            let subst = CString::new(".").unwrap();
-            let replace = CString::new("-").unwrap();
-            let out = with_output(|ctx, o| {
-                subst_expand(
-                    ctx,
-                    o,
-                    text.as_ptr(),
-                    subst.as_ptr(),
-                    replace.as_ptr(),
-                    1,
-                    1,
-                    0,
-                )
-            });
-            assert_eq!(out, b"a-b-c");
-        }
+    fn subst_bytes_replaces_each_occurrence() {
+        assert_eq!(subst_bytes(b"a.b.c", b".", b"-", false), b"a-b-c");
     }
 
     #[test]
-    fn subst_expand_empty_subst_appends_replacement() {
-        // slen == 0 && by_word == 0: copy text verbatim then append replace.
-        unsafe {
-            let text = CString::new("xy").unwrap();
-            let subst = CString::new("").unwrap();
-            let replace = CString::new("Z").unwrap();
-            let out = with_output(|ctx, o| {
-                subst_expand(
-                    ctx,
-                    o,
-                    text.as_ptr(),
-                    subst.as_ptr(),
-                    replace.as_ptr(),
-                    0,
-                    1,
-                    0,
-                )
-            });
-            assert_eq!(out, b"xyZ");
-        }
+    fn subst_bytes_empty_subst_appends_replacement() {
+        // empty subst && !by_word: copy text verbatim then append replace.
+        assert_eq!(subst_bytes(b"xy", b"", b"Z", false), b"xyZ");
     }
 
     #[test]
-    fn subst_expand_by_word_only_replaces_whole_words() {
-        // by_word != 0: "foo" is replaced as a standalone word, but the "foo"
+    fn subst_bytes_by_word_only_replaces_whole_words() {
+        // by_word: "foo" is replaced as a standalone word, but the "foo"
         // inside "foobar" is preserved.
-        unsafe {
-            let text = CString::new("foo foobar foo").unwrap();
-            let subst = CString::new("foo").unwrap();
-            let replace = CString::new("Q").unwrap();
-            let out = with_output(|ctx, o| {
-                subst_expand(
-                    ctx,
-                    o,
-                    text.as_ptr(),
-                    subst.as_ptr(),
-                    replace.as_ptr(),
-                    3,
-                    1,
-                    1,
-                )
-            });
-            assert_eq!(out, b"Q foobar Q");
-        }
+        initialize_stopchar_map();
+        assert_eq!(
+            subst_bytes(b"foo foobar foo", b"foo", b"Q", true),
+            b"Q foobar Q"
+        );
     }
 
     #[test]
@@ -6513,5 +6406,423 @@ mod builtin_rejection_tests {
             got.is_err(),
             "one argument is below `word`'s minimum of two"
         );
+    }
+}
+
+#[cfg(test)]
+mod subst_family_tests {
+    //! AGENTS.md rule #3: the pre-conversion `unsafe` bodies of `subst_expand`,
+    //! `patsubst_expand_pat`, `patsubst_expand` and the `$(subst)`/`$(patsubst)`
+    //! handlers are preserved verbatim below as `*_unsafe_oracle` and driven
+    //! through the real variable-output buffer alongside the safe `subst_bytes`/
+    //! `patsubst_bytes` conversions, asserting byte-identical output.
+    use {
+        super::*,
+        crate::{
+            entry::initialize_stopchar_map,
+            expand::{initialize_variable_output, VARIABLE_BUFFER_TEST_LOCK},
+            read::find_percent,
+        },
+        std::ffi::{c_char, CString},
+    };
+
+    /// # Safety
+    ///
+    /// C-style API operating on raw pointers inherited from the c2rust
+    /// translation; all pointer arguments must be valid for the call.
+    unsafe fn subst_expand_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut ::core::ffi::c_char,
+        text: *const ::core::ffi::c_char,
+        subst: *const ::core::ffi::c_char,
+        replace: *const ::core::ffi::c_char,
+        slen: size_t,
+        rlen: size_t,
+        by_word: i32,
+    ) -> *mut ::core::ffi::c_char {
+        // `text` is NUL-terminated; view it as a byte slice so the scan runs over
+        // indices instead of walking raw pointers. `subst`/`replace` are emitted
+        // straight to the output buffer, which is the genuine FFI boundary.
+        let text_bytes = ::core::ffi::CStr::from_ptr(text).to_bytes();
+        let subst_bytes = ::core::slice::from_raw_parts(subst as *const u8, slen);
+        if slen == 0 && by_word == 0 {
+            o = variable_buffer_output(ctx, o, text, text_bytes.len());
+            if rlen > 0 {
+                o = variable_buffer_output(ctx, o, replace, rlen);
+            }
+            return o;
+        }
+        // `ti` is the offset of the C cursor `t` within `text_bytes`.
+        let mut ti: usize = 0;
+        loop {
+            // `p` is the offset of the next match (or token end, in word mode).
+            let p: usize;
+            if by_word != 0 && slen == 0 {
+                // p = end_of_token(next_token(t)); recover its offset by address
+                // difference (an accepted span computation, not pointer arithmetic).
+                let t_ptr = text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char;
+                let nt = next_token(t_ptr);
+                // `nt` points within `text_bytes`; recover its offset and scan only
+                // the already-bounded remaining slice for the token end. Feeding the
+                // bounded `text_bytes[nt_off..]` (which ends at the NUL) avoids a
+                // fresh `strlen` over the whole suffix per token, keeping this
+                // per-token loop O(n) overall instead of O(n^2).
+                let nt_off = nt as usize - text_bytes.as_ptr() as usize;
+                p = nt_off + end_of_token(&text_bytes[nt_off..]);
+            } else {
+                // p = strstr(t, subst)
+                match text_bytes[ti..]
+                    .windows(subst_bytes.len())
+                    .position(|w| w == subst_bytes)
+                {
+                    Some(rel) => p = ti + rel,
+                    None => {
+                        o = variable_buffer_output(
+                            ctx,
+                            o,
+                            text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char,
+                            text_bytes.len() - ti,
+                        );
+                        return o;
+                    }
+                }
+            }
+            if p > ti {
+                o = variable_buffer_output(
+                    ctx,
+                    o,
+                    text_bytes[ti..].as_ptr() as *const ::core::ffi::c_char,
+                    p - ti,
+                );
+            }
+            // Whole-word boundary test (word mode only): keep the original `subst`
+            // when the match is not a standalone word — preceded by a non-blank
+            // (and not at the start), or followed by a non-blank, non-terminator.
+            let prev_breaks = p > 0 && !stop_set(text_bytes[p - 1], MAP_BLANK | MAP_NEWLINE);
+            let after = text_bytes.get(p + slen).copied().unwrap_or(0);
+            let after_breaks = !stop_set(after, MAP_BLANK | MAP_NEWLINE | MAP_NUL);
+            if by_word != 0 && (prev_breaks || after_breaks) {
+                o = variable_buffer_output(ctx, o, subst, slen);
+            } else if rlen > 0 {
+                o = variable_buffer_output(ctx, o, replace, rlen);
+            }
+            // Advance past the match; stop when the cursor reaches the NUL.
+            ti = p + slen;
+            if ti >= text_bytes.len() {
+                break;
+            }
+        }
+        o
+    }
+    /// # Safety
+    ///
+    /// C-style API operating on raw pointers inherited from the c2rust
+    /// translation; all pointer arguments must be valid for the call.
+    unsafe fn patsubst_expand_pat_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut ::core::ffi::c_char,
+        mut text: *const ::core::ffi::c_char,
+        pattern: *const ::core::ffi::c_char,
+        replace: *const ::core::ffi::c_char,
+        pattern_percent: *const ::core::ffi::c_char,
+        replace_percent: *const ::core::ffi::c_char,
+    ) -> *mut ::core::ffi::c_char {
+        let mut len: size_t = 0;
+        let mut doneany: i32 = 0;
+        // Replacement halves around the '%'. `replace`/`replace_percent` are emitted
+        // straight to the output buffer; only their split lengths are needed here.
+        // The '%' offset is an address difference, not pointer arithmetic.
+        let replace_prepercent_len: usize;
+        let replace_postpercent_len: usize;
+        if !replace_percent.is_null() {
+            replace_prepercent_len = (replace_percent as usize - replace as usize) - 1;
+            replace_postpercent_len = strlen(replace_percent) as usize;
+        } else {
+            replace_prepercent_len = strlen(replace) as usize;
+            replace_postpercent_len = 0;
+        }
+        if pattern_percent.is_null() {
+            return subst_expand_unsafe_oracle(
+                ctx,
+                o,
+                text,
+                pattern,
+                replace,
+                strlen(pattern) as size_t,
+                strlen(replace) as size_t,
+                1,
+            );
+        }
+        // Split the pattern into its prefix and suffix around the '%' and match
+        // each token against them by slice comparison instead of walking pointers.
+        let pat = ::core::ffi::CStr::from_ptr(pattern).to_bytes();
+        let prepercent_len = (pattern_percent as usize - pattern as usize) - 1;
+        let pat_prefix = &pat[..prepercent_len];
+        let pat_suffix = &pat[prepercent_len + 1..];
+        let postpercent_len = pat_suffix.len();
+        loop {
+            let t = find_next_token(&raw mut text, &raw mut len);
+            if t.is_null() {
+                break;
+            }
+            let tok = ::core::slice::from_raw_parts(t as *const u8, len as usize);
+            // A token matches `prefix % suffix` when it is long enough and both
+            // ends line up; `&&` short-circuits so the slices stay in bounds.
+            let matched = tok.len() >= prepercent_len + postpercent_len
+                && tok[..prepercent_len] == *pat_prefix
+                && tok[tok.len() - postpercent_len..] == *pat_suffix;
+            if matched {
+                o = variable_buffer_output(ctx, o, replace, replace_prepercent_len);
+                if !replace_percent.is_null() {
+                    // The stem is what '%' captured: the token minus prefix/suffix.
+                    let stem = &tok[prepercent_len..tok.len() - postpercent_len];
+                    o = variable_buffer_output(
+                        ctx,
+                        o,
+                        stem.as_ptr() as *const ::core::ffi::c_char,
+                        stem.len(),
+                    );
+                    o = variable_buffer_output(ctx, o, replace_percent, replace_postpercent_len);
+                }
+            } else {
+                o = variable_buffer_output(ctx, o, t, len);
+            }
+            if !matched
+                || replace_prepercent_len > 0
+                || !replace_percent.is_null() && len.wrapping_add(replace_postpercent_len) > 0
+            {
+                o = variable_buffer_output(
+                    ctx,
+                    o,
+                    b" \0" as *const u8 as *const ::core::ffi::c_char,
+                    1,
+                );
+                doneany = 1;
+            }
+        }
+        if doneany != 0 {
+            o = o.offset(-1_i32 as isize);
+        }
+        o
+    }
+    /// # Safety
+    ///
+    /// C-style API operating on raw pointers inherited from the c2rust
+    /// translation; all pointer arguments must be valid for the call.
+    unsafe fn patsubst_expand_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        o: *mut ::core::ffi::c_char,
+        text: *const ::core::ffi::c_char,
+        pattern: *mut ::core::ffi::c_char,
+        replace: *mut ::core::ffi::c_char,
+    ) -> *mut ::core::ffi::c_char {
+        let mut pattern_percent: *const ::core::ffi::c_char = find_percent(pattern);
+        let mut replace_percent: *const ::core::ffi::c_char = find_percent(replace);
+        if !replace_percent.is_null() {
+            replace_percent = replace_percent.offset(1_i32 as isize);
+        }
+        if !pattern_percent.is_null() {
+            pattern_percent = pattern_percent.offset(1_i32 as isize);
+        }
+        patsubst_expand_pat_unsafe_oracle(
+            ctx,
+            o,
+            text,
+            pattern,
+            replace,
+            pattern_percent,
+            replace_percent,
+        )
+    }
+    unsafe fn func_patsubst_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut ::core::ffi::c_char,
+        argv: *mut *mut ::core::ffi::c_char,
+        mut _funcname: *const ::core::ffi::c_char,
+    ) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
+        o = patsubst_expand_unsafe_oracle(
+            ctx,
+            o,
+            *argv.offset(2_i32 as isize),
+            *argv.offset(0_i32 as isize),
+            *argv.offset(1_i32 as isize),
+        );
+        Ok(o)
+    }
+    unsafe fn func_subst_unsafe_oracle(
+        ctx: &crate::execctx::ExecContext,
+        mut o: *mut ::core::ffi::c_char,
+        argv: *mut *mut ::core::ffi::c_char,
+        mut _funcname: *const ::core::ffi::c_char,
+    ) -> Result<*mut ::core::ffi::c_char, crate::build_result::BuildError> {
+        o = subst_expand_unsafe_oracle(
+            ctx,
+            o,
+            *argv.offset(2_i32 as isize),
+            *argv.offset(0_i32 as isize),
+            *argv.offset(1_i32 as isize),
+            strlen(*argv.offset(0_i32 as isize)) as size_t,
+            strlen(*argv.offset(1_i32 as isize)) as size_t,
+            0,
+        );
+        Ok(o)
+    }
+
+    /// Run the oracle handler on fresh C copies of `args`, returning the bytes
+    /// it wrote into a freshly initialized variable buffer.
+    unsafe fn emit_oracle(
+        handler: unsafe fn(
+            &crate::execctx::ExecContext,
+            *mut c_char,
+            *mut *mut c_char,
+            *const c_char,
+        ) -> Result<*mut c_char, crate::build_result::BuildError>,
+        args: [&[u8]; 3],
+    ) -> Vec<u8> {
+        let _g = VARIABLE_BUFFER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        initialize_stopchar_map();
+        let c: Vec<CString> = args.iter().map(|a| CString::new(*a).unwrap()).collect();
+        let mut argv: [*mut c_char; 4] = [
+            c[0].as_ptr() as *mut c_char,
+            c[1].as_ptr() as *mut c_char,
+            c[2].as_ptr() as *mut c_char,
+            ::core::ptr::null_mut(),
+        ];
+        let name = CString::new("f").unwrap();
+        let ctx = crate::execctx::ExecContext::default();
+        let start = initialize_variable_output(&ctx);
+        let end = handler(&ctx, start, argv.as_mut_ptr(), name.as_ptr()).unwrap();
+        written(&ctx, end)
+    }
+
+    /// The bytes between the buffer base and the output cursor `end`
+    /// (`variable_buffer_output` may move the buffer, so measure from its base).
+    unsafe fn written(ctx: &crate::execctx::ExecContext, end: *mut c_char) -> Vec<u8> {
+        let base = ctx.variable_buffer.ptr();
+        assert!(!base.is_null());
+        let len = end.offset_from(base);
+        assert!(len >= 0, "output cursor moved before the buffer start");
+        ::core::slice::from_raw_parts(base as *const u8, len as usize).to_vec()
+    }
+
+    const TEXTS: &[&[u8]] = &[
+        b"",
+        b"a",
+        b"a b c",
+        b"  foo.c  bar.o\tbaz ",
+        b"foo foobar foo",
+        b"a.b.c",
+        b"%",
+        b"x%y",
+        b"a\\%b",
+        b"foo.c\nbar.c ",
+    ];
+    const PATTERNS: &[&[u8]] = &[
+        b"", b"a", b"foo", b".", b"%.c", b"%", b"a%", b"%b", b"a%c", b"a\\%b", b"a\\\\%b", b"%%",
+        b"foo%bar",
+    ];
+    const REPLACES: &[&[u8]] = &[
+        b"", b"X", b"%.o", b"%", b"pre%", b"%post", b"a%b%c", b"\\%", b"-",
+    ];
+
+    #[test]
+    fn func_subst_matches_unsafe_oracle() {
+        for &text in TEXTS {
+            for &from in PATTERNS {
+                for &to in REPLACES {
+                    let want = unsafe { emit_oracle(func_subst_unsafe_oracle, [from, to, text]) };
+                    assert_eq!(
+                        func_subst(b"subst", &[from, to, text]),
+                        want,
+                        "subst diverged for from={from:?} to={to:?} text={text:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            func_subst(b"subst", &[b"ee", b"EE", b"feet on the street"]),
+            b"fEEt on the strEEt"
+        );
+    }
+
+    #[test]
+    fn func_patsubst_matches_unsafe_oracle() {
+        for &text in TEXTS {
+            for &pat in PATTERNS {
+                for &rep in REPLACES {
+                    let want =
+                        unsafe { emit_oracle(func_patsubst_unsafe_oracle, [pat, rep, text]) };
+                    assert_eq!(
+                        func_patsubst(b"patsubst", &[pat, rep, text]),
+                        want,
+                        "patsubst diverged for pat={pat:?} rep={rep:?} text={text:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            func_patsubst(b"patsubst", &[b"%.c", b"%.o", b"x.c y.c z.h"]),
+            b"x.o y.o z.h"
+        );
+    }
+
+    /// The pointer-API wrappers other modules call (`subst_expand`,
+    /// `patsubst_expand_pat`) agree with the verbatim originals.
+    #[test]
+    fn pointer_wrappers_match_unsafe_oracle() {
+        for &text in TEXTS {
+            for &pat in PATTERNS {
+                for &rep in REPLACES {
+                    unsafe {
+                        let run = |oracle: bool| {
+                            let _g = VARIABLE_BUFFER_TEST_LOCK
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            initialize_stopchar_map();
+                            let t = CString::new(text).unwrap();
+                            let p = CString::new(pat).unwrap();
+                            let r = CString::new(rep).unwrap();
+                            let pp = find_percent(p.as_ptr() as *mut c_char);
+                            let rp = find_percent(r.as_ptr() as *mut c_char);
+                            let (pp, rp) = (
+                                if pp.is_null() { pp } else { pp.add(1) },
+                                if rp.is_null() { rp } else { rp.add(1) },
+                            );
+                            let ctx = crate::execctx::ExecContext::default();
+                            let start = initialize_variable_output(&ctx);
+                            let end = if oracle {
+                                patsubst_expand_pat_unsafe_oracle(
+                                    &ctx,
+                                    start,
+                                    t.as_ptr(),
+                                    p.as_ptr(),
+                                    r.as_ptr(),
+                                    pp,
+                                    rp,
+                                )
+                            } else {
+                                patsubst_expand_pat(
+                                    &ctx,
+                                    start,
+                                    t.as_ptr(),
+                                    p.as_ptr(),
+                                    r.as_ptr(),
+                                    pp,
+                                    rp,
+                                )
+                            };
+                            written(&ctx, end)
+                        };
+                        assert_eq!(
+                            run(false),
+                            run(true),
+                            "patsubst_expand_pat diverged for pat={pat:?} rep={rep:?} text={text:?}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
