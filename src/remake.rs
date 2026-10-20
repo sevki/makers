@@ -40,10 +40,8 @@ use {
     libc::{__errno_location, close, free, open, sprintf, strcmp, strcpy, strerror, strrchr},
 };
 extern "C" {
-    fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
     fn fstat(__fd: i32, __buf: *mut stat) -> i32;
     fn lstat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
-    fn lseek(__fd: i32, __offset: __off_t, __whence: i32) -> __off_t;
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
     fn write(__fd: i32, __buf: *const ::core::ffi::c_void, __n: size_t) -> ssize_t;
     fn readlink(
@@ -52,6 +50,18 @@ extern "C" {
         __len: size_t,
     ) -> ssize_t;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
+}
+// Hand-declared (bypassing `libc`'s per-target gating): on wasm32-wasip1,
+// WASI's real `lseek` takes a 64-bit offset, which mismatches this 32-bit
+// `__off_t`-based prototype at link time. Used here only for member-archive
+// lookup, which has no wasm equivalent anyway.
+#[cfg(unix)]
+extern "C" {
+    fn lseek(__fd: i32, __offset: __off_t, __whence: i32) -> __off_t;
+}
+#[cfg(target_family = "wasm")]
+unsafe fn lseek(_fd: i32, _offset: __off_t, _whence: i32) -> __off_t {
+    -1
 }
 pub use crate::sys_stat::{stat, timespec};
 use crate::warning::{self, Action, Type};
@@ -219,7 +229,7 @@ fn new_mtime() -> uintmax_t {
     })
 }
 
-/// Read the debug level via the `make_main` accessor.
+/// Read the debug level via the `entry` accessor.
 #[inline]
 /// `-d` trace line `<pre><name><post>`, where `name` is a `cname`-style
 /// NUL-terminated buffer (the NUL is dropped) — one printf `%s` site.
@@ -334,7 +344,7 @@ pub fn update_goal_chain(
     ctx: &crate::execctx::ExecContext,
     goaldeps: &mut Vec<GoalDepNode>,
 ) -> Result<UpdateStatus, crate::build_result::BuildError> {
-    let mut last_cmd_count: ::core::ffi::c_ulong = 0;
+    let mut last_cmd_count: u64 = 0;
     let t: bool = crate::entry::opt_touch(ctx);
     let q: bool = crate::entry::opt_question(ctx);
     let n: bool = crate::entry::opt_just_print(ctx);
@@ -566,8 +576,8 @@ pub fn show_goal_error(ctx: &crate::execctx::ExecContext) {
                         floc_name.push(0);
                         Floc {
                             filenm: floc_name.as_ptr() as *const ::core::ffi::c_char,
-                            lineno: goal.lineno as ::core::ffi::c_ulong,
-                            offset: goal.offset as ::core::ffi::c_ulong,
+                            lineno: goal.lineno,
+                            offset: goal.offset,
                         }
                     });
                     let floc_ptr = floc.as_ref().map_or(::core::ptr::null_mut::<Floc>(), |f| {
@@ -1981,7 +1991,7 @@ pub fn touch_file(
             );
             return Ok(UpdateStatus::Failed);
         }
-        if statbuf.st_size == 0 as __off_t {
+        if statbuf.st_size == 0 {
             close(fd);
             loop {
                 fd = open(name_ptr, 0o2_i32 | 0o1000_i32, 0o666_i32);
@@ -2354,56 +2364,33 @@ pub unsafe fn name_mtime(
     ctx: &crate::execctx::ExecContext,
     name: *const ::core::ffi::c_char,
 ) -> uintmax_t {
-    let mut mtime: uintmax_t;
-    let mut st: stat = stat {
-        st_dev: 0,
-        st_ino: 0,
-        st_nlink: 0,
-        st_mode: 0,
-        st_uid: 0,
-        st_gid: 0,
-        __pad0: 0,
-        st_rdev: 0,
-        st_size: 0,
-        st_blksize: 0,
-        st_blocks: 0,
-        st_atim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
+    let mut mtime: uintmax_t = match crate::fs::metadata(crate::fs::path_from_c(name)) {
+        Ok(m) => match m.modified() {
+            Some(t) => file_timestamp_cons(ctx, name, system_time_from_unix(t.secs, t.nanos)),
+            // The file is there but carries no timestamp; treat it as
+            // existing-but-unknown rather than missing.
+            None => UNKNOWN_MTIME as uintmax_t,
         },
-        st_mtim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        st_ctim: timespec {
-            tv_sec: 0,
-            tv_nsec: 0,
-        },
-        __glibc_reserved: [0; 3],
-    };
-    let mut e: i32;
-    loop {
-        e = stat(name, &raw mut st);
-        if !(e == -1_i32 && *__errno_location() == EINTR) {
-            break;
+        // Simply not there: the ordinary case for a target yet to be built,
+        // and not something to report. `NotADirectory` covers a path whose
+        // parent is a plain file, which cannot name an existing file either.
+        Err(e)
+            if matches!(
+                e.kind(),
+                ::std::io::ErrorKind::NotFound | ::std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            NONEXISTENT_MTIME as uintmax_t
         }
-    }
-    if e == 0 {
-        mtime = file_timestamp_cons(
-            ctx,
-            name,
-            system_time_from_unix(st.st_mtim.tv_sec, st.st_mtim.tv_nsec as u32),
-        );
-    } else if *__errno_location() == ENOENT || *__errno_location() == ENOTDIR {
-        mtime = NONEXISTENT_MTIME as uintmax_t;
-    } else {
-        perror_with_name(
-            ctx,
-            b"stat: \0" as *const u8 as *const ::core::ffi::c_char,
-            name,
-        );
-        return NONEXISTENT_MTIME as uintmax_t;
-    }
+        Err(_) => {
+            perror_with_name(
+                ctx,
+                b"stat: \0" as *const u8 as *const ::core::ffi::c_char,
+                name,
+            );
+            return NONEXISTENT_MTIME as uintmax_t;
+        }
+    };
     if crate::entry::opt_check_symlink(ctx) && strlen(name) <= GET_PATH_MAX as size_t {
         mtime = follow_symlink_mtime(ctx, name, mtime);
     }
@@ -2665,7 +2652,7 @@ unsafe fn library_search(
 pub const LIBDIR: [::core::ffi::c_char; 15] =
     unsafe { ::core::mem::transmute::<[u8; 15], [::core::ffi::c_char; 15]>(*b"/usr/local/lib\0") };
 pub const __CHAR_BIT__: i32 = 8;
-pub const __LONG_MAX__: ::core::ffi::c_long = 9223372036854775807 as ::core::ffi::c_long;
+pub const __LONG_MAX__: ::core::ffi::c_long = ::core::ffi::c_long::MAX;
 pub const FILE_TIMESTAMP_HI_RES: i32 = 1;
 
 #[cfg(test)]

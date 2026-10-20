@@ -863,7 +863,7 @@ pub type qsort_cmp_t =
     Option<unsafe extern "C" fn(*const ::core::ffi::c_void, *const ::core::ffi::c_void) -> i32>;
 pub const ENOENT: i32 = 2;
 pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::c_void>();
-pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
+pub const SIZE_MAX: ::core::ffi::c_ulong = ::core::ffi::c_ulong::MAX;
 pub const INTSTR_LENGTH: usize = 53_usize
     .wrapping_mul(::core::mem::size_of::<uintmax_t>() as usize)
     .wrapping_div(22_usize)

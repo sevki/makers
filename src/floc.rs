@@ -2,6 +2,6 @@
 #[repr(C)]
 pub struct Floc {
     pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
+    pub lineno: u64,
+    pub offset: u64,
 }

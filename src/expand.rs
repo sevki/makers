@@ -213,7 +213,7 @@ pub fn set_variable_buffer_byte(
 /// valid for the call.
 unsafe fn no_recursive_expand_msg(
     filenm: *const ::core::ffi::c_char,
-    lineno: ::core::ffi::c_ulong,
+    lineno: u64,
     name: &[u8],
 ) -> Vec<u8> {
     let mut msg = Vec::with_capacity(64);

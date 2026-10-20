@@ -4,7 +4,10 @@ fn main() {
     // The single process-exit point (Phase B, #432): the library reports how
     // the run ended; only this shim turns that into an exit status.
     std::process::exit({
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         let mut args_strings: Vec<Vec<u8>> = ::std::env::args_os()
             .map(|arg| {
                 ::std::ffi::CString::new(arg.as_bytes())
