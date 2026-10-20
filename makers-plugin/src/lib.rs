@@ -248,6 +248,13 @@ impl Manifest {
     /// each of which is a way to depend on something the digest does not
     /// cover — the last because expansion can run `$(shell ...)`, so a
     /// plugin that needs make's own expander has to give this up.
+    ///
+    /// One gap the host cannot check for you: the digest covers the global
+    /// variable set except its environment-origin members, so a plugin
+    /// reading a variable make imported from the environment — through
+    /// [`vars::get`] or a [`Node::variable`] lookup that falls back to the
+    /// global set — depends on something the digest ignores. The `origin`
+    /// field on the returned variable tells you which case you are in.
     pub fn deterministic(mut self) -> Self {
         self.0.deterministic = true;
         self

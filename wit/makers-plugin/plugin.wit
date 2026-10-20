@@ -155,6 +155,16 @@ interface plugin {
         /// cover. `expand-variables` is the interesting one — expansion can
         /// run `$(shell ...)`, so a plugin that needs make's own expander
         /// cannot promise determinism, and has to choose.
+        ///
+        /// One gap the host does *not* check: the digest covers the global
+        /// variable set except its environment-origin members, which are
+        /// excluded so that ambient noise like `TERM` does not turn it over
+        /// between two runs of the same build. `vars.get` is gated on
+        /// `read-variables` alone, so a plugin holding only that capability
+        /// can read an environment-supplied value the digest ignores. It
+        /// reports each variable's true `origin`, so a plugin declaring
+        /// `deterministic` can check whether the values it depends on are
+        /// actually covered — and should, because nothing else will.
         deterministic: bool,
         failure-policy: failure-policy,
     }
