@@ -1963,6 +1963,21 @@ fn chdir_path(dir: &::std::path::Path) -> i32 {
     }
 }
 
+/// The NUL-terminated path in a [`getcwd_into`] buffer, as an owned path
+/// (empty when the buffer holds the empty string).
+fn cwd_buffer_path(buf: &[::core::ffi::c_char]) -> ::std::path::PathBuf {
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    ::std::path::PathBuf::from(::std::ffi::OsStr::from_bytes(&bytes))
+}
+
 /// getcwd(3) via `std::env::current_dir`, copied into the fixed buffer the
 /// callers keep long-lived pointers into. Returns false with errno set on
 /// failure — including ERANGE when the path cannot fit, as getcwd did.
@@ -2102,19 +2117,7 @@ pub unsafe fn main_0(
         current_directory[0_i32 as usize] = 0;
         *ctx.directory_before_chdir.borrow_mut() = None;
     } else {
-        #[cfg(unix)]
-        use std::os::unix::ffi::OsStrExt;
-        #[cfg(target_os = "wasi")]
-        use std::os::wasi::ffi::OsStrExt;
-        // `getcwd_into` NUL-terminated the buffer on success.
-        let cwd: Vec<u8> = current_directory
-            .iter()
-            .take_while(|&&c| c != 0)
-            .map(|&c| c as u8)
-            .collect();
-        *ctx.directory_before_chdir.borrow_mut() = Some(::std::path::PathBuf::from(
-            ::std::ffi::OsStr::from_bytes(&cwd),
-        ));
+        *ctx.directory_before_chdir.borrow_mut() = Some(cwd_buffer_path(&current_directory));
     }
     define_special(&ctx, b"MAKEFLAGS\0")?;
     define_special(&ctx, b".VARIABLES\0")?;
@@ -2453,9 +2456,7 @@ pub unsafe fn main_0(
             .as_ptr() as *const ::core::ffi::c_char,
         );
     }
-    ctx.starting_directory
-        .0
-        .set(&raw mut current_directory as *mut ::core::ffi::c_char);
+    *ctx.starting_directory.borrow_mut() = Some(cwd_buffer_path(&current_directory));
     if !options.directories.borrow().is_empty() {
         for entry in options.directories.borrow().iter() {
             let dir: *const ::core::ffi::c_char = entry.as_ptr();
@@ -2474,13 +2475,9 @@ pub unsafe fn main_0(
                 b"getcwd\0" as *const u8 as *const ::core::ffi::c_char,
                 b"\0" as *const u8 as *const ::core::ffi::c_char,
             );
-            ctx.starting_directory
-                .0
-                .set(::core::ptr::null_mut::<::core::ffi::c_char>());
+            *ctx.starting_directory.borrow_mut() = None;
         } else {
-            ctx.starting_directory
-                .0
-                .set(&raw mut current_directory as *mut ::core::ffi::c_char);
+            *ctx.starting_directory.borrow_mut() = Some(cwd_buffer_path(&current_directory));
         }
     }
     crate::variable::define_named(

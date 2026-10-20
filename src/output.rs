@@ -215,9 +215,23 @@ fn _outputs(ctx: &ExecContext, out: Option<&mut output>, is_err: bool, msg: &::c
 /// Print an entering/leaving-directory line (returns 1).
 ///
 /// # Safety
-/// `ctx.program`/`ctx.starting_directory` must be null or valid
-/// NUL-terminated strings (the c2rust pointer contract they always carry).
+/// `ctx.program` must be null or a valid NUL-terminated string (the c2rust
+/// pointer contract it always carries).
 pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
+    let line = working_directory_line(ctx, entering);
+    // `line` was built with exactly one trailing NUL and no interior one (the
+    // format strings never embed one), so this always succeeds.
+    let line = ::core::ffi::CStr::from_bytes_with_nul(&line).expect("no interior NUL");
+    _outputs(ctx, None, false, line);
+    1
+}
+
+/// The text [`log_working_directory`] prints, NUL-terminated, split out so
+/// the format ladder can be checked without capturing process stdout.
+///
+/// # Safety
+/// Same contract as [`log_working_directory`].
+unsafe fn working_directory_line(ctx: &ExecContext, entering: i32) -> Vec<u8> {
     let makelevel = ctx.makelevel();
     // `program` is null only on context-less paths handed a throwaway
     // `ExecContext` (plugin ABI); the C original could not get here with a
@@ -229,10 +243,17 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     } else {
         program
     };
-    let starting_directory = ctx.starting_directory.0.get();
+    // An owned NUL-terminated copy for the formatter's `%s`; a path recorded
+    // from a `getcwd` buffer holds no interior NUL.
+    let starting_directory = ctx.starting_directory_bytes().map(|bytes| {
+        ::std::ffi::CString::new(bytes).expect("recorded directory has no interior NUL")
+    });
+    let starting_directory_ptr = starting_directory
+        .as_deref()
+        .map_or(::core::ptr::null(), ::core::ffi::CStr::as_ptr);
     let fmt: *const ::core::ffi::c_char;
     if makelevel == 0 {
-        if starting_directory.is_null() {
+        if starting_directory.is_none() {
             if entering != 0 {
                 fmt = c"%s: Entering an unknown directory\n".as_ptr();
             } else {
@@ -243,7 +264,7 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
         } else {
             fmt = c"%s: Leaving directory '%s'\n".as_ptr();
         }
-    } else if starting_directory.is_null() {
+    } else if starting_directory.is_none() {
         if entering != 0 {
             fmt = c"%s[%u]: Entering an unknown directory\n".as_ptr();
         } else {
@@ -265,22 +286,17 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     // directory slot only when `starting_directory` is non-null; extra args
     // are ignored by the formatter, matching the sprintf call ladder.
     let args: &[FmtArg] = if makelevel == 0 {
-        &[FmtArg::Str(program), FmtArg::Str(starting_directory)]
+        &[FmtArg::Str(program), FmtArg::Str(starting_directory_ptr)]
     } else {
         &[
             FmtArg::Str(program),
             FmtArg::Uint(makelevel as u64),
-            FmtArg::Str(starting_directory),
+            FmtArg::Str(starting_directory_ptr),
         ]
     };
     vformat_into(&mut line, fmt, args);
     line.push(0);
-    // `line` was just built with exactly one trailing NUL and no interior
-    // one (the format strings above never embed one), so this always
-    // succeeds.
-    let line = ::core::ffi::CStr::from_bytes_with_nul(&line).expect("no interior NUL");
-    _outputs(ctx, None, false, line);
-    1
+    line
 }
 /// `perror`'s exact output — `<what>: <strerror(errno)>\n` — for the pump's
 /// error paths, sourcing errno from the `io::Error`. Generic over the
@@ -1144,21 +1160,47 @@ mod log_working_directory_tests {
     /// `makelevel == 0` and `makelevel != 0`, on both `entering` values.
     #[test]
     fn covers_every_makelevel_and_directory_combination() {
-        let dir = ::std::ffi::CString::new("/tmp/build").unwrap();
         for makelevel in [0, 2] {
             let ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
                 makelevel,
                 ..Default::default()
             });
-            ctx.starting_directory
-                .0
-                .set(dir.as_ptr() as *mut ::core::ffi::c_char);
+            *ctx.starting_directory.borrow_mut() = Some("/tmp/build".into());
             for entering in [1, 0] {
-                // SAFETY: single-threaded test; a valid NUL-terminated
-                // `starting_directory` is installed above.
+                // SAFETY: single-threaded test; `program` is left null,
+                // which `log_working_directory` handles.
                 let traced = unsafe { super::log_working_directory(&ctx, entering) };
                 assert_eq!(traced, 1);
             }
+        }
+    }
+
+    /// The exact line for every `(makelevel, starting_directory, entering)`
+    /// combination, captured through a buffer sink: an unset directory reads
+    /// "unknown directory", and a recorded one — including the empty path a
+    /// failed first `getcwd` leaves — is quoted.
+    #[test]
+    fn writes_the_exact_line_for_every_combination() {
+        let cases: [(u32, Option<&str>, i32, &str); 8] = [
+            (0, None, 1, "make: Entering an unknown directory\n"),
+            (0, None, 0, "make: Leaving an unknown directory\n"),
+            (0, Some("/tmp/build"), 1, "make: Entering directory '/tmp/build'\n"),
+            (0, Some("/tmp/build"), 0, "make: Leaving directory '/tmp/build'\n"),
+            (2, None, 1, "make[2]: Entering an unknown directory\n"),
+            (2, Some("/tmp/build"), 0, "make[2]: Leaving directory '/tmp/build'\n"),
+            (2, Some("/tmp/build"), 1, "make[2]: Entering directory '/tmp/build'\n"),
+            (0, Some(""), 1, "make: Entering directory ''\n"),
+        ];
+        for (makelevel, dir, entering, want) in cases {
+            let ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
+                makelevel,
+                ..Default::default()
+            });
+            *ctx.starting_directory.borrow_mut() = dir.map(Into::into);
+            // SAFETY: `program` is left null, which the function handles.
+            let line = unsafe { super::working_directory_line(&ctx, entering) };
+            assert_eq!(line.last(), Some(&0));
+            assert_eq!(String::from_utf8_lossy(&line[..line.len() - 1]), want);
         }
     }
 }

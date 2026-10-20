@@ -324,10 +324,12 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
 
     /// Make's recorded starting working directory (after any `-C` chdirs), the
     /// former main.rs `pub static mut starting_directory` — read by the
-    /// `Entering/Leaving directory` lines and `$(abspath)`. Null when `getcwd`
-    /// failed. Set after the build-phase context rebuild, into `main_0`'s
-    /// `current_directory` buffer, which outlives the run.
-    pub starting_directory: MutPtrCell,
+    /// `Entering/Leaving directory` lines and `$(abspath)`. `None` when
+    /// `getcwd` failed after a `-C`; `Some` of an empty path when the very
+    /// first `getcwd` failed and there was no `-C` (the former pointer then
+    /// referred to the zeroed buffer). Set after the build-phase context
+    /// rebuild. Owned, so it adds no raw pointer to `ExecContext` (#607).
+    pub starting_directory: ::core::cell::RefCell<Option<::std::path::PathBuf>>,
 
     /// `load_too_high`'s last-reported `getloadavg` failure errno (the former
     /// function-local `static mut lossage`), used to suppress repeating the
@@ -1973,6 +1975,19 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
         self.config.default_include_directories
     }
 
+    /// [`Self::starting_directory`] as the raw bytes the message and
+    /// `$(abspath)` formatters work in.
+    pub fn starting_directory_bytes(&self) -> Option<Vec<u8>> {
+        #[cfg(unix)]
+        use ::std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use ::std::os::wasi::ffi::OsStrExt;
+        self.starting_directory
+            .borrow()
+            .as_deref()
+            .map(|dir| dir.as_os_str().as_bytes().to_vec())
+    }
+
     /// Exclusive access to the stdout sink. A sink left mid-write by a
     /// panicking holder is still a valid `Write`, so poisoning is ignored.
     /// Hold the guard for one write only: re-locking the same sink while it
@@ -2650,6 +2665,35 @@ mod tests {
         // Per-run: a fresh context does not inherit the buffer.
         assert!(ExecContext::default().read_dirstream_buf.get().is_null());
         assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
+    }
+
+    /// `starting_directory` starts unset, reads back as bytes (the empty path
+    /// stays `Some`, distinct from unset), survives the sink swap, and agrees
+    /// with the pointer decode it replaced (`CStr::from_ptr` of the same
+    /// NUL-terminated buffer) for the same contents.
+    #[test]
+    fn starting_directory_round_trips_and_matches_the_pointer_decode() {
+        let ctx = ExecContext::default();
+        assert!(ctx.starting_directory.borrow().is_none());
+        assert_eq!(ctx.starting_directory_bytes(), None);
+
+        for dir in ["", "/", "/tmp/build dir"] {
+            let buffer = ::std::ffi::CString::new(dir).unwrap();
+            // The old accessor: a non-null pointer decoded in place.
+            // SAFETY: `buffer` is a valid NUL-terminated string.
+            let old = unsafe { ::core::ffi::CStr::from_ptr(buffer.as_ptr()) }
+                .to_bytes()
+                .to_vec();
+
+            *ctx.starting_directory.borrow_mut() = Some(dir.into());
+            assert_eq!(ctx.starting_directory_bytes(), Some(old));
+        }
+
+        let swapped = ctx.with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        assert_eq!(
+            swapped.starting_directory_bytes(),
+            Some(b"/tmp/build dir".to_vec())
+        );
     }
 
     /// `directory_before_chdir` starts unset and survives the `main_0`
