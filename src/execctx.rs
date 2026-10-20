@@ -453,18 +453,21 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// rebuild rather than letting it reset.
     pub filenodes: FileArena,
 
-    /// `read_dirstream`'s reused dirent scratch buffer — the heap block (and its
-    /// size) that the glob `gl_readdir` callback rewrites for each enumerated
-    /// file and returns a pointer into. These were the function-local process
-    /// globals `static mut buf`/`bufsz`; like the directory cache they now live
-    /// on the owned per-run context. The C-ABI callback can't carry an
-    /// `&ExecContext`, so it reaches these through the same `CTX_PTR` borrow
-    /// channel as `open_dirstream`. The buffer only grows (never shrinks); its
-    /// contents are scratch (overwritten every call), but `main_0` hands it
-    /// across the build-phase context rebuild alongside the directory cache so a
-    /// single block serves the whole run, exactly as the former static did.
-    pub read_dirstream_buf: ::core::cell::Cell<*mut ::core::ffi::c_char>,
-    pub read_dirstream_bufsz: ::core::cell::Cell<crate::ffi_types::size_t>,
+    /// `read_dirstream`'s reused dirent scratch buffer — the storage that the
+    /// glob `gl_readdir` callback rewrites for each enumerated file and returns
+    /// a pointer into. These were the function-local process globals `static
+    /// mut buf`/`bufsz`; like the directory cache they now live on the owned
+    /// per-run context. The C-ABI callback can't carry an `&ExecContext`, so
+    /// it reaches this through the same `CTX_PTR` borrow channel as
+    /// `open_dirstream`. A `Vec<dirent>` rather than a `malloc`'d byte block
+    /// and a size cell: the element type gives the allocation `dirent`'s
+    /// alignment, and the length is the size (in whole `dirent`s). It only
+    /// grows (never shrinks); its contents are scratch (overwritten every
+    /// call), but `main_0` hands it across the build-phase context rebuild
+    /// alongside the directory cache so a single block serves the whole run,
+    /// exactly as the former static did. Owned, so it adds no raw pointer to
+    /// `ExecContext` (#607).
+    pub read_dirstream_buf: ::core::cell::RefCell<Vec<crate::dir::dirent>>,
 
     /// `parse_file_seq`'s reused unquoting scratch buffer (the former
     /// function-local `static mut tmpbuf`/`tmpbuf_len`) — grown to fit the
@@ -2074,7 +2077,6 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
             directory_contents: self.directory_contents,
             filenodes: self.filenodes,
             read_dirstream_buf: self.read_dirstream_buf,
-            read_dirstream_bufsz: self.read_dirstream_bufsz,
             file_seq_tmpbuf: self.file_seq_tmpbuf,
             read_files: self.read_files,
             conditionals: self.conditionals,
@@ -2637,45 +2639,38 @@ mod tests {
     /// `read_dirstream`'s reused dirent scratch buffer (the former process-global
     /// `static mut buf`/`bufsz`) starts empty, is per-run, and is handed across
     /// the `main_0` build-phase context rebuild the same way the directory cache
-    /// is — a single heap block must serve the whole run, as the former static
-    /// did.
+    /// is — a single block must serve the whole run, as the former static did.
     #[test]
     fn read_dirstream_buffer_starts_empty_and_survives_carry_over() {
         let ctx = ExecContext::default();
-        assert!(ctx.read_dirstream_buf.get().is_null());
-        assert_eq!(ctx.read_dirstream_bufsz.get(), 0);
+        assert!(ctx.read_dirstream_buf.borrow().is_empty());
 
-        // Simulate a buffer allocated during makefile parsing (non-null pointer
-        // + size marks it live), then the `main_0` rebuild that hands it across.
+        // Simulate a buffer grown during makefile parsing (its length marks it
+        // live), then the `main_0` rebuild that hands it across.
         let mut populated = ExecContext::default();
         populated
             .read_dirstream_buf
-            .set(0x1 as *mut ::core::ffi::c_char);
-        populated.read_dirstream_bufsz.set(128);
+            .borrow_mut()
+            .resize(3, crate::dir::EMPTY_DIRENT);
+        let block = populated.read_dirstream_buf.borrow().as_ptr();
 
         let carried_buf = ::core::mem::take(&mut populated.read_dirstream_buf);
-        let carried_bufsz = ::core::mem::take(&mut populated.read_dirstream_bufsz);
         let rebuilt = ExecContext {
             read_dirstream_buf: carried_buf,
-            read_dirstream_bufsz: carried_bufsz,
             ..ExecContext::new(Config {
                 makelevel: 1,
                 ..Default::default()
             })
         };
-        // The carried buffer survived; the source fields reset to empty.
-        assert_eq!(
-            rebuilt.read_dirstream_buf.get(),
-            0x1 as *mut ::core::ffi::c_char
-        );
-        assert_eq!(rebuilt.read_dirstream_bufsz.get(), 128);
-        assert!(populated.read_dirstream_buf.get().is_null());
-        assert_eq!(populated.read_dirstream_bufsz.get(), 0);
+        // The carried buffer survived, still the same heap block (a returned
+        // `dirent` pointer must not move on carry); the source reset to empty.
+        assert_eq!(rebuilt.read_dirstream_buf.borrow().len(), 3);
+        assert_eq!(rebuilt.read_dirstream_buf.borrow().as_ptr(), block);
+        assert!(populated.read_dirstream_buf.borrow().is_empty());
         assert_eq!(rebuilt.makelevel(), 1);
 
         // Per-run: a fresh context does not inherit the buffer.
-        assert!(ExecContext::default().read_dirstream_buf.get().is_null());
-        assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
+        assert!(ExecContext::default().read_dirstream_buf.borrow().is_empty());
     }
 
     /// `temp_stdin_name` starts unset and the registered name survives the

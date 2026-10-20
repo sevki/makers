@@ -2315,7 +2315,6 @@ pub unsafe fn main_0(
     let carried_directories = ::core::mem::take(&mut ctx.directories);
     let carried_directory_contents = ::core::mem::take(&mut ctx.directory_contents);
     let carried_read_dirstream_buf = ::core::mem::take(&mut ctx.read_dirstream_buf);
-    let carried_read_dirstream_bufsz = ::core::mem::take(&mut ctx.read_dirstream_bufsz);
     // `parse_file_seq`'s scratch buffer is populated during parsing
     // ($(wildcard), prerequisite lists) and reused during the build
     // (function.rs, implicit.rs), so it rides along for the same reason.
@@ -2401,7 +2400,6 @@ pub unsafe fn main_0(
         directories: carried_directories,
         directory_contents: carried_directory_contents,
         read_dirstream_buf: carried_read_dirstream_buf,
-        read_dirstream_bufsz: carried_read_dirstream_bufsz,
         file_seq_tmpbuf: carried_file_seq_tmpbuf,
         filenodes: carried_files,
         temp_stdin_name: carried_temp_stdin,
