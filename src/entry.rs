@@ -2102,6 +2102,10 @@ pub unsafe fn main_0(
         current_directory[0_i32 as usize] = 0;
         *ctx.directory_before_chdir.borrow_mut() = None;
     } else {
+        #[cfg(unix)]
+        use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         // `getcwd_into` NUL-terminated the buffer on success.
         let cwd: Vec<u8> = current_directory
             .iter()
@@ -2109,7 +2113,7 @@ pub unsafe fn main_0(
             .map(|&c| c as u8)
             .collect();
         *ctx.directory_before_chdir.borrow_mut() = Some(::std::path::PathBuf::from(
-            <::std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(&cwd),
+            ::std::ffi::OsStr::from_bytes(&cwd),
         ));
     }
     define_special(&ctx, b"MAKEFLAGS\0")?;
