@@ -286,8 +286,9 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// `pub static mut directory_before_chdir` — restored on re-exec and in
     /// `die_cleanup`, both of which carry only `&ExecContext`. Set once during
     /// startup (before the build-phase context rebuild), so it is carried
-    /// across it. Heap storage from `xstrdup` backs the pointer.
-    pub directory_before_chdir: MutPtrCell,
+    /// across it. `None` when `getcwd` failed at startup. Owned, so it adds
+    /// no raw pointer to `ExecContext` (#607).
+    pub directory_before_chdir: ::core::cell::RefCell<Option<::std::path::PathBuf>>,
 
     /// The program name — `basename(argv[0])`, or `"make"` when argv[0] is
     /// empty — the former main.rs `pub static mut program`. Prefixes every
@@ -2649,6 +2650,27 @@ mod tests {
         // Per-run: a fresh context does not inherit the buffer.
         assert!(ExecContext::default().read_dirstream_buf.get().is_null());
         assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
+    }
+
+    /// `directory_before_chdir` starts unset and survives the `main_0`
+    /// carry-over as an owned path (it is read after the rebuild by the
+    /// re-exec and `die_cleanup` paths).
+    #[test]
+    fn directory_before_chdir_starts_unset_and_survives_carry_over() {
+        let mut ctx = ExecContext::default();
+        assert!(ctx.directory_before_chdir.borrow().is_none());
+
+        *ctx.directory_before_chdir.borrow_mut() = Some("/some/where".into());
+        let carried = ::core::mem::take(&mut ctx.directory_before_chdir);
+        let rebuilt = ExecContext {
+            directory_before_chdir: carried,
+            ..ExecContext::default()
+        };
+        assert_eq!(
+            rebuilt.directory_before_chdir.borrow().as_deref(),
+            Some(::std::path::Path::new("/some/where"))
+        );
+        assert!(ctx.directory_before_chdir.borrow().is_none());
     }
 
     /// The `$(...)`/recipe expansion output buffer (the former `expand.rs`

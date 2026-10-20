@@ -1948,10 +1948,16 @@ unsafe fn chdir_c(dir: *const ::core::ffi::c_char) -> i32 {
     #[cfg(target_os = "wasi")]
     use std::os::wasi::ffi::OsStrExt;
     let os = ::std::ffi::OsStr::from_bytes(::core::ffi::CStr::from_ptr(dir).to_bytes());
-    match ::std::env::set_current_dir(os) {
+    chdir_path(::std::path::Path::new(os))
+}
+
+/// [`chdir_c`] for a path already held as a `Path`: no raw pointer needed.
+fn chdir_path(dir: &::std::path::Path) -> i32 {
+    match ::std::env::set_current_dir(dir) {
         Ok(()) => 0,
         Err(e) => {
-            *__errno_location() = e.raw_os_error().unwrap_or(0);
+            // SAFETY: `__errno_location` returns this thread's valid errno slot.
+            unsafe { *__errno_location() = e.raw_os_error().unwrap_or(0) };
             -1
         }
     }
@@ -2094,12 +2100,16 @@ pub unsafe fn main_0(
             b"\0" as *const u8 as *const ::core::ffi::c_char,
         );
         current_directory[0_i32 as usize] = 0;
-        ctx.directory_before_chdir
-            .0
-            .set(::core::ptr::null_mut::<::core::ffi::c_char>());
+        *ctx.directory_before_chdir.borrow_mut() = None;
     } else {
-        ctx.directory_before_chdir.0.set(xstrdup(
-            &raw mut current_directory as *mut ::core::ffi::c_char,
+        // `getcwd_into` NUL-terminated the buffer on success.
+        let cwd: Vec<u8> = current_directory
+            .iter()
+            .take_while(|&&c| c != 0)
+            .map(|&c| c as u8)
+            .collect();
+        *ctx.directory_before_chdir.borrow_mut() = Some(::std::path::PathBuf::from(
+            <::std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(&cwd),
         ));
     }
     define_special(&ctx, b"MAKEFLAGS\0")?;
@@ -3377,8 +3387,8 @@ pub unsafe fn main_0(
             }
             if !options.directories.borrow().is_empty() {
                 let mut bad: i32 = 1;
-                if !ctx.directory_before_chdir.0.get().is_null() {
-                    if chdir_c(ctx.directory_before_chdir.0.get()) < 0 {
+                if let Some(dir) = ctx.directory_before_chdir.borrow().as_deref() {
+                    if chdir_path(dir) < 0 {
                         perror_with_name(
                             &ctx,
                             b"chdir\0" as *const u8 as *const ::core::ffi::c_char,
@@ -5228,8 +5238,8 @@ unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
         }
         crate::output::output_close(ctx, ::core::ptr::null_mut::<output>());
         osync_clear();
-        if !ctx.directory_before_chdir.0.get().is_null() {
-            let _ = chdir_c(ctx.directory_before_chdir.0.get());
+        if let Some(dir) = ctx.directory_before_chdir.borrow().as_deref() {
+            let _ = chdir_path(dir);
         }
     }
 }
@@ -6194,6 +6204,43 @@ mod output_sync_tests {
         assert_eq!(opt_output_sync(ctx), OUTPUT_SYNC_LINE);
 
         with_options(ctx, |o| o.output_sync.set(OUTPUT_SYNC_NONE));
+    }
+}
+
+/// `chdir_path` (safe, `&Path`) against the raw-pointer `chdir_c` it was split
+/// from, which stays as the oracle: same status and same errno for the same
+/// directory. Only the current directory and a missing one are used, so the
+/// process-wide cwd is never actually moved.
+#[cfg(test)]
+mod chdir_path_tests {
+    use super::{__errno_location, chdir_c, chdir_path};
+    use std::ffi::CString;
+    use std::path::Path;
+
+    fn errno() -> i32 {
+        // SAFETY: `__errno_location` returns this thread's valid errno slot.
+        unsafe { *__errno_location() }
+    }
+
+    fn assert_same(dir: &Path) -> i32 {
+        let c = CString::new(dir.to_str().unwrap()).unwrap();
+        // SAFETY: `c` is a valid NUL-terminated path.
+        let want = unsafe { chdir_c(c.as_ptr()) };
+        let want_errno = errno();
+        let got = chdir_path(dir);
+        assert_eq!(got, want);
+        if want < 0 {
+            assert_eq!(errno(), want_errno);
+        }
+        got
+    }
+
+    #[test]
+    fn chdir_path_matches_the_raw_pointer_oracle() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(assert_same(&cwd), 0);
+        assert_eq!(assert_same(Path::new("/no/such/dir/for/chdir_path")), -1);
+        assert_eq!(errno(), 2); // ENOENT
     }
 }
 
