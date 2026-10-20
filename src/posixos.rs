@@ -102,6 +102,14 @@ pub unsafe fn check_io_state(ctx: &crate::execctx::ExecContext) -> c_uint {
 
 const FIFO_PREFIX: &CStr = c"fifo:";
 
+/// The jobserver fifo's path: `<tmpdir>/GmFIFO<pid>`, the pid zero-padded to
+/// at least three digits (what `sprintf("%s/GmFIFO%03lld")` produced).
+fn fifo_path_in(tmpdir: ::std::ffi::CString, pid: c_longlong) -> ::std::ffi::CString {
+    let mut path = tmpdir.into_bytes();
+    path.extend_from_slice(format!("/GmFIFO{pid:03}").as_bytes());
+    ::std::ffi::CString::new(path).expect("a C string and a numeric suffix hold no NUL")
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum JsType {
@@ -198,17 +206,12 @@ pub unsafe fn jobserver_setup(
     ctx.job_root.0.store(true, Ordering::Relaxed);
 
     if style.is_null() || strcmp(style, c"fifo".as_ptr()) == 0 {
-        let tmpdir = get_tmpdir(ctx);
-        let fifo_name =
-            xmalloc(tmpdir.count_bytes() + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
-                as *mut c_char;
-        sprintf(
-            fifo_name,
-            c"%s/GmFIFO%03lld".as_ptr(),
-            tmpdir.as_ptr(),
-            make_pid() as c_longlong,
-        );
-        ctx.fifo_name.0.set(fifo_name);
+        let fifo_path = fifo_path_in(get_tmpdir(ctx), make_pid() as c_longlong);
+        // The raw pointer the libc calls below take; `fifo_path` owns it.
+        let fifo_name = fifo_path.as_ptr();
+        // Recorded before `mkfifo`, so a fatal signal between the two still
+        // unlinks the fifo.
+        ctx.fifo_name.set(Some(fifo_path.clone()));
 
         loop {
             r = mkfifo(fifo_name, 0o600);
@@ -218,8 +221,7 @@ pub unsafe fn jobserver_setup(
         }
         if r < 0 {
             perror_with_name(ctx, c"jobserver mkfifo: ".as_ptr(), fifo_name);
-            free(fifo_name as *mut c_void);
-            ctx.fifo_name.0.set(null_mut());
+            ctx.fifo_name.set(None);
         } else {
             let mut fds = ctx.job_fds.0.get();
             loop {
@@ -340,8 +342,10 @@ pub unsafe fn jobserver_parse_auth(
     let mut wfd: i32 = 0;
 
     if strncmp(auth, FIFO_PREFIX.as_ptr(), FIFO_PREFIX.to_bytes().len()) == 0 {
-        let fifo_name = xstrdup(auth.add(FIFO_PREFIX.to_bytes().len()));
-        ctx.fifo_name.0.set(fifo_name);
+        let fifo_path = CStr::from_ptr(auth.add(FIFO_PREFIX.to_bytes().len())).to_owned();
+        // The raw pointer the libc calls below take; `fifo_path` owns it.
+        let fifo_name = fifo_path.as_ptr();
+        ctx.fifo_name.set(Some(fifo_path.clone()));
         let mut fds = ctx.job_fds.0.get();
         loop {
             fds[0] = open(fifo_name, O_RDONLY);
@@ -427,9 +431,13 @@ pub unsafe fn jobserver_parse_auth(
 /// The jobserver must be set up; must run single-threaded.
 pub unsafe fn jobserver_get_auth(ctx: &crate::execctx::ExecContext) -> *mut c_char {
     if js_type_get(ctx) == JsType::Fifo {
-        let fifo_name = ctx.fifo_name.0.get();
-        let auth = xmalloc(strlen(fifo_name) + FIFO_PREFIX.to_bytes().len() + 1) as *mut c_char;
-        sprintf(auth, c"fifo:%s".as_ptr(), fifo_name);
+        let fifo_name = ctx
+            .fifo_name
+            .get()
+            .expect("a fifo jobserver always has a recorded path");
+        let auth =
+            xmalloc(fifo_name.count_bytes() + FIFO_PREFIX.to_bytes().len() + 1) as *mut c_char;
+        sprintf(auth, c"fifo:%s".as_ptr(), fifo_name.as_ptr());
         auth
     } else {
         let fds = ctx.job_fds.0.get();
@@ -475,14 +483,19 @@ pub unsafe fn jobserver_clear() {
         }
         ctx.job_fds.0.set([-1, -1]);
 
-        let fifo_name = ctx.fifo_name.0.get();
-        if !fifo_name.is_null() {
+        if handling_fatal_signal(ctx) {
+            // The signal path only reads the name: it neither frees nor
+            // clears it (the process is about to die), and `try_with` never
+            // blocks or allocates. If the lock is held at this instant, the
+            // fifo file is left behind (see `FifoNameCell`).
             if ctx.job_root.0.load(Ordering::Relaxed) {
-                let _ = crate::misc::unlink_c(fifo_name);
+                let _ = ctx
+                    .fifo_name
+                    .try_with(|name| crate::misc::unlink_c(name.as_ptr()));
             }
-            if !handling_fatal_signal(ctx) {
-                free(fifo_name as *mut c_void);
-                ctx.fifo_name.0.set(null_mut());
+        } else if let Some(name) = ctx.fifo_name.take() {
+            if ctx.job_root.0.load(Ordering::Relaxed) {
+                let _ = crate::misc::unlink_c(name.as_ptr());
             }
         }
 
@@ -1496,5 +1509,77 @@ mod tests {
 
         assert_eq!(result, Err(crate::build_result::BuildError::Failure));
         assert!(ctx.dying.0.load(Ordering::Relaxed));
+    }
+
+    /// `fifo_path_in` against the `sprintf("%s/GmFIFO%03lld")` it replaced,
+    /// across short and long pids (the zero padding) and odd directories.
+    #[test]
+    #[cfg_attr(miri, ignore = "the oracle calls snprintf, a foreign function Miri cannot run")]
+    fn fifo_path_matches_the_sprintf_oracle() {
+        for tmpdir in [c"/tmp", c"/var/tmp/", c"/a b/c"] {
+            for pid in [0, 1, 7, 42, 999, 1000, 123_456, 4_194_304, i64::MAX] {
+                let mut buf = [0 as c_char; 128];
+                // SAFETY: `buf` is large enough for the longest case, and
+                // `snprintf` NUL-terminates within it.
+                let written = unsafe {
+                    libc::snprintf(
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        c"%s/GmFIFO%03lld".as_ptr(),
+                        tmpdir.as_ptr(),
+                        pid as c_longlong,
+                    )
+                };
+                assert!(written > 0 && (written as usize) < buf.len());
+                // SAFETY: `snprintf` left a NUL-terminated string in `buf`.
+                let want = unsafe { CStr::from_ptr(buf.as_ptr()) };
+                let got = fifo_path_in(tmpdir.to_owned(), pid);
+                assert_eq!(got.as_c_str(), want, "tmpdir {tmpdir:?}, pid {pid}");
+            }
+        }
+    }
+
+    /// `jobserver_clear`: on the ordinary path the job root unlinks the fifo
+    /// and everyone forgets its name; on the fatal-signal path it unlinks but
+    /// leaves the name alone (the process is about to die, and the handler
+    /// must not free or clear anything).
+    #[test]
+    fn jobserver_clear_unlinks_and_forgets_the_fifo_name() {
+        let ctx = crate::entry::install_default_exec_context_for_test();
+        let make = |tag: &str| {
+            let path = std::env::temp_dir()
+                .join(format!("makers_fifo_clear_{}_{tag}", std::process::id()));
+            std::fs::write(&path, b"").unwrap();
+            let name = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+            (path, name)
+        };
+
+        // Not the job root (an inherited jobserver): the file is not ours to
+        // remove, but the name is still dropped.
+        let (path, name) = make("child");
+        ctx.job_root.0.store(false, Ordering::Relaxed);
+        ctx.fifo_name.set(Some(name));
+        unsafe { jobserver_clear() };
+        assert!(path.exists(), "a non-root must not unlink the fifo");
+        assert!(ctx.fifo_name.get().is_none());
+        std::fs::remove_file(&path).unwrap();
+
+        // The job root, ordinary path: unlinked, and the name forgotten.
+        let (path, name) = make("root");
+        ctx.job_root.0.store(true, Ordering::Relaxed);
+        ctx.fifo_name.set(Some(name));
+        unsafe { jobserver_clear() };
+        assert!(!path.exists(), "the job root unlinks its fifo");
+        assert!(ctx.fifo_name.get().is_none());
+
+        // The job root, fatal-signal path: unlinked, name left in place.
+        let (path, name) = make("signal");
+        ctx.fifo_name.set(Some(name.clone()));
+        ctx.handling_fatal_signal.0.store(true, Ordering::Relaxed);
+        unsafe { jobserver_clear() };
+        ctx.handling_fatal_signal.0.store(false, Ordering::Relaxed);
+        assert!(!path.exists(), "the signal path still unlinks the fifo");
+        assert_eq!(ctx.fifo_name.get().as_deref(), Some(name.as_c_str()));
+        ctx.fifo_name.set(None);
     }
 }

@@ -514,12 +514,13 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     pub job_fds: JobFds,
 
     /// The fifo jobserver's path, the former posixos.rs `static mut
-    /// fifo_name`. `xmalloc`/`xstrdup`'d and `free`'d exactly as the
-    /// original static was — signal-reachable (`jobserver_clear` runs from
-    /// `fatal_error_signal`), so like [`Self::temp_stdin_name`] it stays a
-    /// raw-pointer `Cell` rather than an owned `RefCell<Vec<u8>>`, for the
-    /// same panic-in-signal-handler reason as [`Self::job_fds`].
-    pub fifo_name: MutPtrCell,
+    /// fifo_name`. Signal-reachable (`jobserver_clear` runs from
+    /// `fatal_error_signal`, where it only *reads* the name to unlink it), so
+    /// it is a [`FifoNameCell`]: an owned name behind a lock that ordinary code
+    /// holds only for a store/clone, and that the signal path takes with
+    /// `try_lock` (never blocking, allocating or panicking). Owned, so it adds
+    /// no raw pointer to `ExecContext` (#607).
+    pub fifo_name: FifoNameCell,
 
     /// The output-sync lock file's path, the former posixos.rs `static mut
     /// osync_tmpfile`. Same signal-reachability rationale as
@@ -1229,6 +1230,68 @@ pub struct MutPtrCell(pub ::core::cell::Cell<*mut ::core::ffi::c_char>);
 impl Default for MutPtrCell {
     fn default() -> Self {
         MutPtrCell(::core::cell::Cell::new(::core::ptr::null_mut()))
+    }
+}
+
+/// The fifo jobserver's path: an owned name that both ordinary code and the
+/// fatal-signal handler reach.
+///
+/// Ordinary code uses [`Self::set`]/[`Self::get`]/[`Self::take`], which hold the
+/// lock only for a store or a clone, so the lock is almost never held. The
+/// handler uses [`Self::try_with`], which cannot block (a handler that
+/// interrupted the lock's holder on the same thread would deadlock on
+/// `lock`), allocate, or panic. If the lock happens to be held at that
+/// instant, `try_with` does nothing — the one case where the handler leaves
+/// the fifo file behind. The raw pointer this replaces was freed and nulled
+/// as two steps, so a signal between them made the handler read a freed
+/// pointer; this trades that for a missed unlink in a window of a few
+/// instructions.
+///
+/// Poisoning is ignored throughout: the value is a plain `Option<CString>`
+/// that no panic can leave half-written. `ExecContext` clones snapshot the
+/// current value, as the atomic cells above do.
+#[derive(Debug, Default)]
+pub struct FifoNameCell(::std::sync::Mutex<Option<::std::ffi::CString>>);
+
+impl Clone for FifoNameCell {
+    fn clone(&self) -> Self {
+        Self(::std::sync::Mutex::new(self.get()))
+    }
+}
+
+impl FifoNameCell {
+    /// Record `name` (or clear it with `None`).
+    pub fn set(&self, name: Option<::std::ffi::CString>) {
+        *self.0.lock().unwrap_or_else(::std::sync::PoisonError::into_inner) = name;
+    }
+
+    /// A copy of the recorded name, if any.
+    pub fn get(&self) -> Option<::std::ffi::CString> {
+        self.0
+            .lock()
+            .unwrap_or_else(::std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Remove and return the recorded name.
+    pub fn take(&self) -> Option<::std::ffi::CString> {
+        self.0
+            .lock()
+            .unwrap_or_else(::std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    /// Run `f` on the recorded name without blocking, allocating or
+    /// panicking, for the fatal-signal path. Returns `None` if there is no
+    /// name, or if the lock is held right now.
+    pub fn try_with<R>(&self, f: impl FnOnce(&::std::ffi::CStr) -> R) -> Option<R> {
+        use ::std::sync::TryLockError;
+        let guard = match self.0.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        guard.as_deref().map(f)
     }
 }
 
@@ -2136,7 +2199,9 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConditionalsFrame, Config, ExecContext, FileArena, StderrSink, StdoutSink};
+    use super::{
+        ConditionalsFrame, Config, ExecContext, FifoNameCell, FileArena, StderrSink, StdoutSink,
+    };
 
     #[test]
     fn context_exposes_makelevel() {
@@ -2698,6 +2763,65 @@ mod tests {
             swapped.temp_stdin_name.borrow().as_deref(),
             Some(c"/tmp/GmStdin1")
         );
+    }
+
+    /// `FifoNameCell`'s ordinary operations: unset by default, `set`/`get`/
+    /// `take` round-trip an owned name, and a clone is an independent
+    /// snapshot (as `ExecContext::clone` needs).
+    #[test]
+    fn fifo_name_cell_round_trips_and_clones_as_a_snapshot() {
+        let cell = FifoNameCell::default();
+        assert!(cell.get().is_none() && cell.take().is_none());
+
+        cell.set(Some(c"/tmp/GmFIFO123".to_owned()));
+        assert_eq!(cell.get().as_deref(), Some(c"/tmp/GmFIFO123"));
+
+        let snapshot = cell.clone();
+        cell.set(None);
+        assert!(cell.get().is_none());
+        assert_eq!(snapshot.get().as_deref(), Some(c"/tmp/GmFIFO123"));
+
+        assert_eq!(snapshot.take().as_deref(), Some(c"/tmp/GmFIFO123"));
+        assert!(snapshot.get().is_none());
+    }
+
+    /// The signal-path reader: `try_with` runs on the name when there is one,
+    /// does nothing when there isn't, and — the property that makes it safe in
+    /// a handler — returns without blocking when the lock is already held
+    /// (by the very thread it interrupted, say) instead of deadlocking.
+    #[test]
+    fn fifo_name_cell_try_with_never_blocks() {
+        let cell = FifoNameCell::default();
+        assert_eq!(cell.try_with(|n| n.to_bytes().len()), None);
+
+        cell.set(Some(c"/tmp/GmFIFO1".to_owned()));
+        assert_eq!(cell.try_with(|n| n.to_bytes().len()), Some(12));
+
+        let held = cell.0.lock().unwrap();
+        assert_eq!(cell.try_with(|n| n.to_bytes().len()), None, "lock is held");
+        drop(held);
+        assert_eq!(cell.try_with(|n| n.to_bytes().len()), Some(12));
+    }
+
+    /// A holder that panics leaves the lock poisoned, but the value is a plain
+    /// `Option<CString>` no panic can half-write, so every operation —
+    /// including the signal-path `try_with` — keeps working.
+    #[test]
+    fn fifo_name_cell_ignores_poisoning() {
+        let cell = ::std::sync::Arc::new(FifoNameCell::default());
+        cell.set(Some(c"/p".to_owned()));
+        let poisoner = ::std::sync::Arc::clone(&cell);
+        let _ = ::std::thread::spawn(move || {
+            let _guard = poisoner.0.lock().unwrap();
+            panic!("poison the fifo name lock");
+        })
+        .join();
+        assert!(cell.0.is_poisoned());
+
+        assert_eq!(cell.try_with(|n| n.to_bytes().len()), Some(2));
+        assert_eq!(cell.get().as_deref(), Some(c"/p"));
+        cell.set(Some(c"/q".to_owned()));
+        assert_eq!(cell.take().as_deref(), Some(c"/q"));
     }
 
     /// `program` starts unset and survives the `main_0` carry-over and the
