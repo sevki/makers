@@ -422,7 +422,7 @@ pub fn convert_to_pattern(ctx: &crate::execctx::ExecContext) {
 /// struct without `Default`; warnings emitted with this carry no `file:line:`.
 fn null_floc() -> Floc {
     Floc {
-        filenm: ::core::ptr::null(),
+        filenm: None,
         lineno: 0,
         offset: 0,
     }
@@ -432,7 +432,7 @@ fn null_floc() -> Floc {
 fn finfo_of(n: &crate::file::FileNode) -> Floc {
     match &n.recipe {
         Some(r) => Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: r.defined_lineno,
             offset: 0,
         },

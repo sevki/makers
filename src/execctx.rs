@@ -1346,7 +1346,7 @@ impl Default for ShellVar {
             name: ::core::ptr::null_mut(),
             value: ::core::ptr::null_mut(),
             fileinfo: crate::floc::Floc {
-                filenm: ::core::ptr::null(),
+                filenm: None,
                 lineno: 0,
                 offset: 0,
             },
@@ -1501,7 +1501,7 @@ impl RecipeReadingFloc {
 impl Default for RecipeReadingFloc {
     fn default() -> Self {
         Self(Box::new(::core::cell::Cell::new(crate::floc::Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         })))
@@ -2491,7 +2491,7 @@ mod tests {
         );
 
         let floc_a = crate::floc::Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 1,
             offset: 0,
         };
@@ -2503,7 +2503,7 @@ mod tests {
         );
 
         let floc_b = crate::floc::Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 2,
             offset: 0,
         };
@@ -2515,7 +2515,7 @@ mod tests {
         );
 
         let floc_override = crate::floc::Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 99,
             offset: 0,
         };
@@ -2548,7 +2548,7 @@ mod tests {
     fn recipe_reading_floc_clone_preserves_the_current_value() {
         let ctx = ExecContext::default();
         ctx.recipe_reading_floc.0.set(crate::floc::Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 42,
             offset: 7,
         });

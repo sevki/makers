@@ -1319,7 +1319,7 @@ fn goal_name_bytes(ctx: &crate::execctx::ExecContext, g: &crate::dep::GoalDepNod
 /// and nothing else has to be kept alive beside it.
 fn goal_floc(ctx: &crate::execctx::ExecContext, g: &crate::dep::GoalDepNode) -> Option<Floc> {
     g.defined_in.as_ref().map(|f| Floc {
-        filenm: crate::strcache::strcache_intern(ctx, f).as_ptr(),
+        filenm: Some(crate::strcache::strcache_intern(ctx, f)),
         lineno: g.lineno,
         offset: g.offset,
     })
@@ -6591,7 +6591,6 @@ mod command_count_tests {
 mod goal_floc_tests {
     use super::goal_floc;
     use crate::{dep::GoalDepNode, execctx::ExecContext, strcache::strcache_iscached};
-    use ::core::ffi::CStr;
 
     #[test]
     fn goal_floc_interns_the_defined_in_name() {
@@ -6605,12 +6604,9 @@ mod goal_floc_tests {
 
         let floc = goal_floc(&ctx, &goal).expect("a goal with a source file has a floc");
 
-        assert_ne!(strcache_iscached(floc.filenm), 0, "the name is interned");
-        // SAFETY: an interned name is a valid NUL-terminated string for 'static.
-        assert_eq!(
-            unsafe { CStr::from_ptr(floc.filenm) }.to_bytes(),
-            b"goal-floc-test/inc.mk"
-        );
+        let filenm = floc.filenm.expect("the floc carries the goal's file name");
+        assert_ne!(strcache_iscached(filenm.as_ptr()), 0, "the name is interned");
+        assert_eq!(filenm.to_bytes(), b"goal-floc-test/inc.mk");
         assert_eq!((floc.lineno, floc.offset), (7, 3));
     }
 

@@ -86,7 +86,6 @@ use crate::{
     misc::{concat, cstr_bytes_or_empty},
     output::{fatal_err, msg},
     posixos::jobserver_get_invalid_auth,
-    strcache::strcache_add,
 };
 
 pub const o_invalid: variable_origin = 7;
@@ -315,14 +314,10 @@ unsafe fn c_str_to_vec(p: *const ::core::ffi::c_char) -> Vec<u8> {
 /// already knows whether it holds a live record.
 ///
 /// # Safety
-/// `vr`'s `name`/`value`/`fileinfo.filenm` must be valid NUL-terminated C
-/// strings (or null, which reads as absent) for the length of the call.
+/// `vr`'s `name`/`value` must be valid NUL-terminated C strings (or null,
+/// which reads as absent) for the length of the call.
 unsafe fn target_variable_from_c(vr: &variable) -> TargetVariable {
-    let defined_in = if vr.fileinfo.filenm.is_null() {
-        None
-    } else {
-        Some(c_str_to_vec(vr.fileinfo.filenm))
-    };
+    let defined_in = vr.fileinfo.filenm.map(|name| name.to_bytes().to_vec());
     TargetVariable {
         name: c_str_to_vec(vr.name),
         value: c_str_to_vec(vr.value),
@@ -361,9 +356,10 @@ fn c_variable_from_target(
         name: name_buf.as_ptr() as *mut ::core::ffi::c_char,
         value: value_buf.as_ptr() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: tv.defined_in.as_ref().map_or(::core::ptr::null(), |f| {
-                crate::strcache::strcache_intern(ctx, f).as_ptr()
-            }),
+            filenm: tv
+                .defined_in
+                .as_ref()
+                .map(|f| crate::strcache::strcache_intern(ctx, f)),
             lineno: tv.defined_lineno,
             offset: 0,
         },
@@ -675,7 +671,7 @@ unsafe fn redefine_existing(
         if let Some(floc) = flocp.as_ref() {
             vr.fileinfo = *floc;
         } else {
-            vr.fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
+            vr.fileinfo.filenm = None;
         }
         vr.set_origin(origin as variable_origin);
         vr.set_recursive(recursive as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -729,7 +725,7 @@ pub unsafe fn define_variable_in_set(
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -879,7 +875,7 @@ pub unsafe fn undefine_variable_in_set(
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -1061,7 +1057,7 @@ unsafe fn search_variable_set_list(
         name: name as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -1114,7 +1110,7 @@ pub unsafe fn lookup_variable_in_set(
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -1377,7 +1373,7 @@ pub unsafe fn install_file_context(
 /// # Safety
 /// `file` must be a valid pointer for the call.
 unsafe fn file_recipe_floc(file: *mut file) -> *const Floc {
-    if !(*file).cmds.is_null() && !(*(*file).cmds).fileinfo.filenm.is_null() {
+    if !(*file).cmds.is_null() && (*(*file).cmds).fileinfo.filenm.is_some() {
         &raw mut (*(*file).cmds).fileinfo
     } else {
         ::core::ptr::null::<Floc>()
@@ -1416,17 +1412,13 @@ unsafe fn populate_set_from_targets(
         // zeroed, matching the previous null-pointer path where the callee left
         // `fileinfo` untouched apart from clearing `filenm`.
         let mut floc_storage = Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         };
-        let mut file_buf: Option<Vec<u8>> = None;
         if let Some(ref f) = tv.defined_in {
-            let mut b = f.clone();
-            b.push(0);
-            floc_storage.filenm = strcache_add(ctx, b.as_ptr() as *const ::core::ffi::c_char);
+            floc_storage.filenm = Some(crate::strcache::strcache_intern(ctx, f));
             floc_storage.lineno = tv.defined_lineno;
-            file_buf = Some(b);
         }
         // Always hand `define_variable_in_set` a pointer to the on-stack
         // `floc_storage`, never a null pointer. When the target variable has no
@@ -1444,7 +1436,6 @@ unsafe fn populate_set_from_targets(
             set,
             flocp,
         )?;
-        let _ = file_buf;
         if !v.is_null() {
             (*v).set_flavor(tv.flavor as i32 as variable_flavor);
             (*v).set_export(tv.export as i32 as variable_export);
@@ -1673,11 +1664,9 @@ pub unsafe fn install_file_context_id(
                 .as_ref()
                 .and_then(|r| r.defined_in.as_ref().map(|f| (f.clone(), r.defined_lineno)))
         });
-        if let Some((mut fname, lineno)) = recipe_floc {
-            fname.push(0);
-            let filenm = strcache_add(ctx, fname.as_ptr() as *const ::core::ffi::c_char);
+        if let Some((fname, lineno)) = recipe_floc {
             ctx.recipe_reading_floc.0.set(Floc {
-                filenm,
+                filenm: Some(crate::strcache::strcache_intern(ctx, &fname)),
                 lineno,
                 offset: 0,
             });
@@ -2723,7 +2712,7 @@ pub unsafe fn try_variable_definition(
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -3045,10 +3034,10 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
     if (*v).private_var() != 0 {
         crate::output::trace_out(b" private");
     }
-    if !(*v).fileinfo.filenm.is_null() {
+    if let Some(filenm) = (*v).fileinfo.filenm {
         crate::output::trace_parts(&[
             b" (from '",
-            ::core::ffi::CStr::from_ptr((*v).fileinfo.filenm).to_bytes(),
+            filenm.to_bytes(),
             b"', line ",
             (*v).fileinfo
                 .lineno
@@ -4235,7 +4224,6 @@ mod global_variables_tests {
 mod c_variable_from_target_tests {
     use super::c_variable_from_target;
     use crate::{execctx::ExecContext, strcache::strcache_iscached, target_var::TargetVariable};
-    use ::core::ffi::CStr;
 
     #[test]
     fn the_source_file_is_interned_and_a_synthetic_variable_has_none() {
@@ -4249,12 +4237,9 @@ mod c_variable_from_target_tests {
             ..TargetVariable::default()
         };
         let (cv, _name, _value) = c_variable_from_target(&ctx, &defined);
-        assert_ne!(strcache_iscached(cv.fileinfo.filenm), 0, "the name is interned");
-        // SAFETY: an interned name is a valid NUL-terminated string for 'static.
-        assert_eq!(
-            unsafe { CStr::from_ptr(cv.fileinfo.filenm) }.to_bytes(),
-            b"c-variable-test/Makefile"
-        );
+        let filenm = cv.fileinfo.filenm.expect("the variable carries its file name");
+        assert_ne!(strcache_iscached(filenm.as_ptr()), 0, "the name is interned");
+        assert_eq!(filenm.to_bytes(), b"c-variable-test/Makefile");
         assert_eq!(cv.fileinfo.lineno, 12);
 
         let synthetic = TargetVariable {
@@ -4262,6 +4247,6 @@ mod c_variable_from_target_tests {
             ..TargetVariable::default()
         };
         let (cv, _name, _value) = c_variable_from_target(&ctx, &synthetic);
-        assert!(cv.fileinfo.filenm.is_null(), "no source file, no name");
+        assert!(cv.fileinfo.filenm.is_none(), "no source file, no name");
     }
 }

@@ -454,19 +454,33 @@ pub unsafe fn unblock_all_sigs() {
 /// Build the `<file>:<line>` location label for a failed child's error message,
 /// or the static `<builtin>` when the recipe has no source location. Any heap
 /// buffer is pushed onto `allocations` so it outlives the `error()` call that
-/// reads it. Split out of `child_error`; the only unsafety (formatting through
-/// the recipe's `filenm` C string) is confined to the block below.
+/// reads it. Split out of `child_error`.
 fn child_error_label(floc: &Floc, allocations: &mut Vec<Vec<u8>>) -> *const ::core::ffi::c_char {
-    if floc.filenm.is_null() {
+    let Some(filenm) = floc.filenm else {
         return b"<builtin>\0" as *const u8 as *const ::core::ffi::c_char;
-    }
-    // SAFETY: `filenm` is a non-null, NUL-terminated C string taken from the
-    // recipe's `fileinfo`; the buffer is sized to hold "<filenm>:<lineno>" and
-    // is owned by `allocations`, so the returned pointer stays valid.
+    };
+    let mut label = filenm.to_bytes().to_vec();
+    label.push(b':');
+    label.extend_from_slice(floc.lineno.wrapping_add(floc.offset).to_string().as_bytes());
+    label.push(0);
+    allocations.push(label);
+    allocations.last().unwrap().as_ptr() as *const ::core::ffi::c_char
+}
+
+/// The original `sprintf`-based body of [`child_error_label`], kept as the
+/// differential-test oracle for the safe version.
+#[cfg(test)]
+fn child_error_label_unsafe_oracle(
+    floc: &Floc,
+    allocations: &mut Vec<Vec<u8>>,
+) -> *const ::core::ffi::c_char {
+    let Some(filenm) = floc.filenm else {
+        return b"<builtin>\0" as *const u8 as *const ::core::ffi::c_char;
+    };
     unsafe {
         allocations.push(::std::vec::from_elem(
             0,
-            strlen(floc.filenm)
+            strlen(filenm.as_ptr())
                 .wrapping_add(6)
                 .wrapping_add(INTSTR_LENGTH)
                 .wrapping_add(1) as usize,
@@ -476,7 +490,7 @@ fn child_error_label(floc: &Floc, allocations: &mut Vec<Vec<u8>>) -> *const ::co
         sprintf(
             a,
             b"%s:%lu\0" as *const u8 as *const ::core::ffi::c_char,
-            floc.filenm,
+            filenm.as_ptr(),
             floc.lineno.wrapping_add(floc.offset),
         );
         a
@@ -523,7 +537,7 @@ fn recipe_floc(ctx: &crate::execctx::ExecContext, file: FileId, offset: u64) -> 
     match defined_in {
         Some(name) => {
             Floc {
-                filenm: crate::strcache::strcache_intern(ctx, &name).as_ptr(),
+                filenm: Some(crate::strcache::strcache_intern(ctx, &name)),
                 lineno,
                 // The error reports `lineno + offset`; the offset is the failing
                 // command's 0-based index in the recipe (C: `fileinfo.offset =
@@ -532,7 +546,7 @@ fn recipe_floc(ctx: &crate::execctx::ExecContext, file: FileId, offset: u64) -> 
             }
         }
         None => Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -3734,7 +3748,7 @@ mod collapse_dollar_refs_tests {
 #[cfg(test)]
 mod child_error_helper_tests {
     use {
-        super::{child_error_label, smode_or_empty, Floc},
+        super::{child_error_label, child_error_label_unsafe_oracle, smode_or_empty, Floc},
         std::ffi::{CStr, CString},
     };
 
@@ -3784,7 +3798,7 @@ mod child_error_helper_tests {
     #[test]
     fn label_is_builtin_without_source() {
         let fl = Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         };
@@ -3801,7 +3815,7 @@ mod child_error_helper_tests {
     fn label_formats_file_and_line() {
         let fl = Floc {
             // A `Floc` name is always interned or static, never a local buffer.
-            filenm: c"Makefile".as_ptr(),
+            filenm: Some(c"Makefile"),
             lineno: 10,
             offset: 2,
         };
@@ -3810,6 +3824,30 @@ mod child_error_helper_tests {
         let label = unsafe { CStr::from_ptr(label) };
         assert_eq!(label.to_bytes(), b"Makefile:12");
         assert_eq!(allocations.len(), 1, "formatted label owns one buffer");
+    }
+
+    /// The safe label matches the preserved `sprintf` oracle byte for byte,
+    /// including the wrapping `lineno + offset` sum.
+    #[cfg_attr(miri, ignore = "the oracle calls libc sprintf/strlen")]
+    #[test]
+    fn label_matches_the_sprintf_oracle() {
+        for (filenm, lineno, offset) in [
+            (None, 0, 0),
+            (Some(c"Makefile"), 1, 0),
+            (Some(c"sub/dir/inc.mk"), 4_000_000_000, 7),
+            (Some(c""), 3, 1),
+            (Some(c"wrap.mk"), u64::MAX, 2),
+        ] {
+            let fl = Floc {
+                filenm,
+                lineno,
+                offset,
+            };
+            let (mut a, mut b): (Vec<Vec<u8>>, Vec<Vec<u8>>) = (Vec::new(), Vec::new());
+            let safe = unsafe { CStr::from_ptr(child_error_label(&fl, &mut a)) };
+            let oracle = unsafe { CStr::from_ptr(child_error_label_unsafe_oracle(&fl, &mut b)) };
+            assert_eq!(safe.to_bytes(), oracle.to_bytes(), "{filenm:?} {lineno} {offset}");
+        }
     }
 }
 

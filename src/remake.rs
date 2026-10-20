@@ -276,7 +276,7 @@ pub fn check_also_make(ctx: &crate::execctx::ExecContext, file: FileId) {
         let n = node.lock().expect("file node lock poisoned");
         let floc = n.recipe.as_ref().map(|r| {
             Floc {
-                filenm: ::core::ptr::null(),
+                filenm: None,
                 lineno: r.defined_lineno,
                 offset: 0,
             }
@@ -573,7 +573,7 @@ pub fn show_goal_error(ctx: &crate::execctx::ExecContext) {
                     // it from the goal's owned `defined_in`/lineno/offset, with
                     // the name interned so no buffer has to outlive the `Floc`.
                     let floc = goal.defined_in.as_ref().map(|defined_in| Floc {
-                        filenm: crate::strcache::strcache_intern(ctx, defined_in).as_ptr(),
+                        filenm: Some(crate::strcache::strcache_intern(ctx, defined_in)),
                         lineno: goal.lineno,
                         offset: goal.offset,
                     });

@@ -778,9 +778,8 @@ unsafe fn push_error_prefix(
     makelevel: u32,
     fatal_marker: bool,
 ) {
-    if let Some(fl) = flocp.as_ref().filter(|fl| !fl.filenm.is_null()) {
-        // `filenm` is non-null in this arm, so it is always `Some`.
-        push_cstr(out, Some(::core::ffi::CStr::from_ptr(fl.filenm)));
+    if let Some((fl, filenm)) = flocp.as_ref().and_then(|fl| fl.filenm.map(|f| (fl, f))) {
+        push_cstr(out, Some(filenm));
         out.push(b':');
         out.extend_from_slice(fl.lineno.wrapping_add(fl.offset).to_string().as_bytes());
         out.extend_from_slice(b": ");
@@ -987,21 +986,18 @@ pub mod msg {
 
     fn build_prefix(ctx: &ExecContext, loc: Option<&Floc>, fatal_marker: bool) -> String {
         let marker = if fatal_marker { "*** " } else { "" };
-        // SAFETY: `(*flocp).filenm` is a NUL-terminated C string when non-null.
-        unsafe {
-            match loc {
-                Some(f) if !f.filenm.is_null() => {
-                    let fnm = ::core::ffi::CStr::from_ptr(f.filenm).to_string_lossy();
-                    format!("{}:{}: {}", fnm, f.lineno.wrapping_add(f.offset), marker)
-                }
-                _ => {
-                    let lvl = ctx.makelevel();
-                    let prog = program_name(ctx);
-                    if lvl == 0 {
-                        format!("{prog}: {marker}")
-                    } else {
-                        format!("{prog}[{lvl}]: {marker}")
-                    }
+        match loc.and_then(|f| f.filenm.map(|name| (f, name))) {
+            Some((f, filenm)) => {
+                let fnm = filenm.to_string_lossy();
+                format!("{}:{}: {}", fnm, f.lineno.wrapping_add(f.offset), marker)
+            }
+            None => {
+                let lvl = ctx.makelevel();
+                let prog = program_name(ctx);
+                if lvl == 0 {
+                    format!("{prog}: {marker}")
+                } else {
+                    format!("{prog}[{lvl}]: {marker}")
                 }
             }
         }
