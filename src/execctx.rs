@@ -303,9 +303,10 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// `get_tmpdir`. Computed once at startup (before the build-phase context
     /// rebuild) and cached; carried across the rebuild so later temp-file
     /// users don't re-probe the environment and re-warn about an invalid
-    /// value. Interned, `'static`, or `xstrdup`'d storage backs the pointer
-    /// (never freed, matching the former static's lifetime).
-    pub tmpdir: PtrCell,
+    /// value. `None` until first computed. An owned copy, so it neither
+    /// aliases the process environment nor adds a raw pointer to
+    /// `ExecContext` (#607).
+    pub tmpdir: ::core::cell::RefCell<Option<::std::ffi::CString>>,
 
     /// `--shuffle` mode/seed and the PRNG state it drives (see
     /// [`crate::shuffle::ShuffleState`]) — the former shuffle.rs `static

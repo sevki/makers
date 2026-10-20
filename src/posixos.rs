@@ -200,12 +200,12 @@ pub unsafe fn jobserver_setup(
     if style.is_null() || strcmp(style, c"fifo".as_ptr()) == 0 {
         let tmpdir = get_tmpdir(ctx);
         let fifo_name =
-            xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
+            xmalloc(tmpdir.count_bytes() + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
                 as *mut c_char;
         sprintf(
             fifo_name,
             c"%s/GmFIFO%03lld".as_ptr(),
-            tmpdir,
+            tmpdir.as_ptr(),
             make_pid() as c_longlong,
         );
         ctx.fifo_name.0.set(fifo_name);
@@ -976,7 +976,7 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
 
     if ctx.tmpfile_works.0.load(Ordering::Relaxed) {
         loop {
-            fd = open(tdir, O_RDWR | O_TMPFILE | O_EXCL, 0o600_i32);
+            fd = open(tdir.as_ptr(), O_RDWR | O_TMPFILE | O_EXCL, 0o600_i32);
             if !(fd == -1 && *__errno_location() == EINTR) {
                 break;
             }
@@ -988,7 +988,7 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
             let err = ::core::ffi::CStr::from_ptr(strerror(*__errno_location()));
             let mut msg = Vec::with_capacity(64);
             msg.extend_from_slice(b"Cannot open '");
-            msg.extend_from_slice(::core::ffi::CStr::from_ptr(tdir).to_bytes());
+            msg.extend_from_slice(tdir.to_bytes());
             msg.extend_from_slice(b"' with O_TMPFILE: ");
             msg.extend_from_slice(err.to_bytes());
             msg.extend_from_slice(b".\n");
@@ -1004,7 +1004,7 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
     // bytes. The separate 'dup:' error path is gone: we own the fd, so no
     // dup happens (C could hit it only by exhausting fds on the dup after
     // a successful tmpfile; that now fails at the open with 'tmpfile:').
-    if strcmp(tdir, c"/tmp".as_ptr()) == 0 {
+    if tdir.as_c_str() == c"/tmp" {
         match anon_unlinked_tmp() {
             Ok(file) => fd = <std::fs::File as std::os::fd::IntoRawFd>::into_raw_fd(file),
             Err(e) => {
