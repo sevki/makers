@@ -1,6 +1,6 @@
 //! Test-only oracle: the original `getopt_long`-based `decode_switches`
 //! implementation, preserved verbatim (per AGENTS.md rule 3) so the clap-based
-//! replacement in `make_main` can be differentially fuzzed against it before
+//! replacement in `entry` can be differentially fuzzed against it before
 //! being trusted. Compiled only for `cargo test` — never part of the shipping
 //! `make`/`libmake` binary, and the only place `optarg`/`optind`/`opterr`/
 //! `getopt_long` are referenced anywhere in this crate.
@@ -304,8 +304,9 @@ pub unsafe fn decode_switches_oracle(
                                                 }
                                                 options.stdin_offset.set(list.len() as i32);
                                                 let cached = strcache_add(ctx, coptarg);
-                                                ctx.temp_stdin_name.0.set(cached);
-                                                ::core::ffi::CStr::from_ptr(cached).to_owned()
+                                                let name = ::core::ffi::CStr::from_ptr(cached).to_owned();
+                                                *ctx.temp_stdin_name.borrow_mut() = Some(name.clone());
+                                                name
                                             } else {
                                                 ::core::ffi::CStr::from_ptr(
                                                     expand_command_line_file(ctx, coptarg)?,

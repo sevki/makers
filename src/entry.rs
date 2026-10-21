@@ -1,3 +1,5 @@
+#[cfg(target_family = "wasm")]
+use crate::compat::{stpcpy, ttyname};
 pub use crate::ffi_types::{
     __clock_t,
     __off64_t,
@@ -40,16 +42,15 @@ use {
         putenv,
         setlocale,
         sprintf,
-        stpcpy,
         strchr,
         strcmp,
         strerror,
-        strrchr,
         tolower,
-        ttyname,
     },
     std::sync::atomic::Ordering,
 };
+#[cfg(unix)]
+use libc::{stpcpy, ttyname};
 
 /// Differential-test oracle for the clap-based `decode_switches`: the
 /// original `getopt_long`-based implementation, preserved verbatim per
@@ -63,11 +64,34 @@ use {
 #[path = "getopt_oracle_test.rs"]
 mod getopt_oracle_test;
 
+// Signal handling has no wasm equivalent (no signal delivery in WASI); see
+// the matching note in job.rs. These four are declared by hand (bypassing
+// `libc`'s per-target gating), so wasm needs its own stand-ins to link.
+#[cfg(unix)]
 extern "C" {
     fn sigemptyset(__set: *mut sigset_t) -> i32;
     fn sigaddset(__set: *mut sigset_t, __signo: i32) -> i32;
     fn sigprocmask(__how: i32, __set: *const sigset_t, __oset: *mut sigset_t) -> i32;
     fn sigaction(__sig: i32, __act: *const Sigaction, __oact: *mut Sigaction) -> i32;
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigemptyset(_set: *mut sigset_t) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigaddset(_set: *mut sigset_t, _signo: i32) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigprocmask(_how: i32, _set: *const sigset_t, _oset: *mut sigset_t) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigaction(_sig: i32, _act: *const Sigaction, _oact: *mut Sigaction) -> i32 {
+    0
+}
+
+extern "C" {
     static mut environ: *mut *mut ::core::ffi::c_char;
     fn __ctype_b_loc() -> *mut *const ::core::ffi::c_ushort;
     fn atexit(__func: Option<unsafe extern "C" fn() -> ()>) -> i32;
@@ -390,7 +414,7 @@ pub const NULL: *mut ::core::ffi::c_void = ::core::ptr::null_mut::<::core::ffi::
 pub const PATH_MAX: i32 = 4096_i32;
 pub const GET_PATH_MAX: i32 = PATH_MAX;
 pub const EXIT_SUCCESS: i32 = 0;
-pub const SIZE_MAX: ::core::ffi::c_ulong = 18446744073709551615 as ::core::ffi::c_ulong;
+pub const SIZE_MAX: ::core::ffi::c_ulong = ::core::ffi::c_ulong::MAX;
 pub const __LC_ALL: i32 = 6;
 pub const LC_ALL: i32 = __LC_ALL;
 pub const DB_NONE: i32 = 0;
@@ -688,7 +712,7 @@ pub struct Options {
     /// through [`opt_command_count`] to invalidate stat/contents entries
     /// recorded before the latest command. Reached via `ctx.options`
     /// (through [`opt_command_count`]).
-    pub command_count: ::core::cell::Cell<::core::ffi::c_ulong>,
+    pub command_count: ::core::cell::Cell<u64>,
     /// `snap_deps`-complete latch for this run, the former `file::SNAPPED_DEPS`
     /// global. Set once at the end of `snap_deps` via [`mark_snapped_deps`] and
     /// read by `record_files` through [`opt_snapped_deps`] to reject
@@ -1135,7 +1159,7 @@ pub fn opt_job_slots(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_uint {
 /// read through the `with_options` borrow channel by the directory cache
 /// (`find_directory`) and the `update_goal_chain` loop, which carry no
 /// `&Options`.
-pub fn opt_command_count(ctx: &crate::execctx::ExecContext) -> ::core::ffi::c_ulong {
+pub fn opt_command_count(ctx: &crate::execctx::ExecContext) -> u64 {
     with_options(ctx, |o| o.command_count.get())
 }
 /// Bump the command-generation counter, once per shell command run
@@ -1290,35 +1314,15 @@ fn goal_name_bytes(ctx: &crate::execctx::ExecContext, g: &crate::dep::GoalDepNod
     Vec::new()
 }
 
-/// Materialize a goal's source location as an owned `Floc` whose `filenm` lives
-/// for the returned value's lifetime (the bytes are stored alongside it).
-fn goal_floc(g: &crate::dep::GoalDepNode) -> Option<GoalFloc> {
-    g.defined_in.as_ref().map(|f| {
-        let mut bytes = f.clone();
-        bytes.push(0);
-        GoalFloc {
-            floc: Floc {
-                filenm: bytes.as_ptr() as *const ::core::ffi::c_char,
-                lineno: g.lineno,
-                offset: g.offset,
-            },
-            _bytes: bytes,
-        }
+/// Materialize a goal's source location as an owned `Floc`. Its `filenm` is the
+/// interned copy of the goal's `defined_in`, so it outlives the returned value
+/// and nothing else has to be kept alive beside it.
+fn goal_floc(ctx: &crate::execctx::ExecContext, g: &crate::dep::GoalDepNode) -> Option<Floc> {
+    g.defined_in.as_ref().map(|f| Floc {
+        filenm: Some(crate::strcache::strcache_intern(ctx, f)),
+        lineno: g.lineno,
+        offset: g.offset,
     })
-}
-
-/// Owns the NUL-terminated `filenm` bytes referenced by `floc.filenm`. Deref
-/// to `Floc` for the c2rust APIs that still take a `*const Floc`.
-struct GoalFloc {
-    floc: Floc,
-    _bytes: Vec<u8>,
-}
-
-impl ::core::ops::Deref for GoalFloc {
-    type Target = Floc;
-    fn deref(&self) -> &Floc {
-        &self.floc
-    }
 }
 
 /// The synthetic "new file" mtime used for `-W`/`--what-if` targets: the
@@ -1881,11 +1885,11 @@ pub fn print_usage(ctx: &crate::execctx::ExecContext, options: &Options, bad: i3
     // Flush explicitly: a fatal path ending in libc `exit()` would drop an
     // unflushed Rust buffer.
     if bad != 0 {
-        let mut err = ctx.stderr.borrow_mut();
+        let mut err = ctx.stderr_lock();
         let _ = err.write_all(text.as_bytes());
         let _ = err.flush();
     } else {
-        let mut out = ctx.stdout.borrow_mut();
+        let mut out = ctx.stdout_lock();
         if let Err(e) = out.write_all(text.as_bytes()).and_then(|()| out.flush()) {
             crate::output::record_stdout_error(&e);
         }
@@ -1918,15 +1922,46 @@ pub unsafe fn reset_jobserver_mirror(ctx: &crate::execctx::ExecContext) {
 /// # Safety
 /// `dir` must be a valid NUL-terminated path.
 unsafe fn chdir_c(dir: *const ::core::ffi::c_char) -> i32 {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let os = ::std::ffi::OsStr::from_bytes(::core::ffi::CStr::from_ptr(dir).to_bytes());
-    match ::std::env::set_current_dir(os) {
+    chdir_path(::std::path::Path::new(os))
+}
+
+/// [`chdir_c`] for a path already held as a `Path`: no raw pointer needed.
+fn chdir_path(dir: &::std::path::Path) -> i32 {
+    match ::std::env::set_current_dir(dir) {
         Ok(()) => 0,
         Err(e) => {
-            *__errno_location() = e.raw_os_error().unwrap_or(0);
+            // SAFETY: `__errno_location` returns this thread's valid errno slot.
+            unsafe { *__errno_location() = e.raw_os_error().unwrap_or(0) };
             -1
         }
     }
+}
+
+/// `basename(argv[0])` the way startup derives the program name: everything
+/// after the last '/', or all of it when there is none (so an `argv[0]` ending
+/// in '/' yields the empty name).
+fn program_basename(argv0: &[u8]) -> &[u8] {
+    argv0.rsplit(|&b| b == b'/').next().unwrap_or(argv0)
+}
+
+/// The NUL-terminated path in a [`getcwd_into`] buffer, as an owned path
+/// (empty when the buffer holds the empty string).
+fn cwd_buffer_path(buf: &[::core::ffi::c_char]) -> ::std::path::PathBuf {
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    ::std::path::PathBuf::from(::std::ffi::OsStr::from_bytes(&bytes))
 }
 
 /// getcwd(3) via `std::env::current_dir`, copied into the fixed buffer the
@@ -1935,7 +1970,10 @@ unsafe fn chdir_c(dir: *const ::core::ffi::c_char) -> i32 {
 /// # Safety
 /// `buf` must be valid for writes of `size` bytes.
 unsafe fn getcwd_into(buf: *mut ::core::ffi::c_char, size: usize) -> bool {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     match ::std::env::current_dir() {
         Ok(p) => {
             let b = p.as_os_str().as_bytes();
@@ -1963,8 +2001,11 @@ unsafe fn getcwd_into(buf: *mut ::core::ffi::c_char, size: usize) -> bool {
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
 pub unsafe fn temp_stdin_unlink(ctx: &crate::execctx::ExecContext) {
-    if opt_stdin_offset(ctx) >= 0 && !ctx.temp_stdin_name.0.get().is_null() {
-        let nm: *const ::core::ffi::c_char = ctx.temp_stdin_name.0.get();
+    // A shared borrow, not a clone: this runs on the fatal-signal path, where
+    // allocating is best avoided.
+    let registered = ctx.temp_stdin_name.borrow();
+    if let (true, Some(nm)) = (opt_stdin_offset(ctx) >= 0, registered.as_deref()) {
+        let nm = nm.as_ptr();
         with_options(ctx, |o| o.stdin_offset.set(-1));
         let r = crate::misc::unlink_c(nm);
         if r < 0 && *__errno_location() != ENOENT && !handling_fatal_signal(ctx) {
@@ -2038,18 +2079,14 @@ pub unsafe fn main_0(
         *fresh33 = b"\0" as *const u8 as *const ::core::ffi::c_char as *mut ::core::ffi::c_char;
     }
     if *(*argv.offset(0_i32 as isize)).offset(0_i32 as isize) as i32 == 0 {
-        ctx.program
-            .0
-            .set(b"make\0" as *const u8 as *const ::core::ffi::c_char);
+        *ctx.program.borrow_mut() = Some(c"make".to_owned());
     } else {
-        let mut prog: *const ::core::ffi::c_char =
-            strrchr(*argv.offset(0_i32 as isize), '/' as i32);
-        if prog.is_null() {
-            prog = *argv.offset(0_i32 as isize);
-        } else {
-            prog = prog.offset(1_i32 as isize);
-        }
-        ctx.program.0.set(prog);
+        // basename(argv[0]): everything after the last '/', or all of it.
+        // (An argv[0] ending in '/' yields the empty name, as `strrchr` + 1
+        // did.)
+        let base = program_basename(cstr_bytes_or_empty(*argv.offset(0_i32 as isize)));
+        *ctx.program.borrow_mut() =
+            Some(::std::ffi::CString::new(base).expect("a C string has no interior NUL"));
     }
     initialize_global_hash_tables(&ctx);
     get_tmpdir(&ctx);
@@ -2063,13 +2100,9 @@ pub unsafe fn main_0(
             b"\0" as *const u8 as *const ::core::ffi::c_char,
         );
         current_directory[0_i32 as usize] = 0;
-        ctx.directory_before_chdir
-            .0
-            .set(::core::ptr::null_mut::<::core::ffi::c_char>());
+        *ctx.directory_before_chdir.borrow_mut() = None;
     } else {
-        ctx.directory_before_chdir.0.set(xstrdup(
-            &raw mut current_directory as *mut ::core::ffi::c_char,
-        ));
+        *ctx.directory_before_chdir.borrow_mut() = Some(cwd_buffer_path(&current_directory));
     }
     define_special(&ctx, b"MAKEFLAGS\0")?;
     define_special(&ctx, b".VARIABLES\0")?;
@@ -2188,7 +2221,10 @@ pub unsafe fn main_0(
     let env_slots: Option<u32> = options.arg_job_slots.get();
     options.arg_job_slots.set(None);
     let cli_tokens: Vec<::std::ffi::OsString> = {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         (1..argc)
             .map(|i| {
                 let cstr = ::core::ffi::CStr::from_ptr(*argv.offset(i as isize));
@@ -2259,7 +2295,6 @@ pub unsafe fn main_0(
     let carried_directories = ::core::mem::take(&mut ctx.directories);
     let carried_directory_contents = ::core::mem::take(&mut ctx.directory_contents);
     let carried_read_dirstream_buf = ::core::mem::take(&mut ctx.read_dirstream_buf);
-    let carried_read_dirstream_bufsz = ::core::mem::take(&mut ctx.read_dirstream_bufsz);
     // `parse_file_seq`'s scratch buffer is populated during parsing
     // ($(wildcard), prerequisite lists) and reused during the build
     // (function.rs, implicit.rs), so it rides along for the same reason.
@@ -2345,7 +2380,6 @@ pub unsafe fn main_0(
         directories: carried_directories,
         directory_contents: carried_directory_contents,
         read_dirstream_buf: carried_read_dirstream_buf,
-        read_dirstream_bufsz: carried_read_dirstream_bufsz,
         file_seq_tmpbuf: carried_file_seq_tmpbuf,
         filenodes: carried_files,
         temp_stdin_name: carried_temp_stdin,
@@ -2405,9 +2439,7 @@ pub unsafe fn main_0(
             .as_ptr() as *const ::core::ffi::c_char,
         );
     }
-    ctx.starting_directory
-        .0
-        .set(&raw mut current_directory as *mut ::core::ffi::c_char);
+    *ctx.starting_directory.borrow_mut() = Some(cwd_buffer_path(&current_directory));
     if !options.directories.borrow().is_empty() {
         for entry in options.directories.borrow().iter() {
             let dir: *const ::core::ffi::c_char = entry.as_ptr();
@@ -2426,13 +2458,9 @@ pub unsafe fn main_0(
                 b"getcwd\0" as *const u8 as *const ::core::ffi::c_char,
                 b"\0" as *const u8 as *const ::core::ffi::c_char,
             );
-            ctx.starting_directory
-                .0
-                .set(::core::ptr::null_mut::<::core::ffi::c_char>());
+            *ctx.starting_directory.borrow_mut() = None;
         } else {
-            ctx.starting_directory
-                .0
-                .set(&raw mut current_directory as *mut ::core::ffi::c_char);
+            *ctx.starting_directory.borrow_mut() = Some(cwd_buffer_path(&current_directory));
         }
     }
     crate::variable::define_named(
@@ -2447,7 +2475,10 @@ pub unsafe fn main_0(
         let inc_paths: Vec<std::path::PathBuf> = include_dirs
             .iter()
             .map(|s| {
+                #[cfg(unix)]
                 use std::os::unix::ffi::OsStrExt;
+                #[cfg(target_os = "wasi")]
+                use std::os::wasi::ffi::OsStrExt;
                 std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
             })
             .collect();
@@ -2612,7 +2643,8 @@ pub unsafe fn main_0(
                 options.makefiles.borrow_mut()[i_1] =
                     ::core::ffi::CStr::from_ptr(cached).to_owned();
                 options.stdin_offset.set(i_1 as i32);
-                ctx.temp_stdin_name.0.set(cached);
+                *ctx.temp_stdin_name.borrow_mut() =
+                    Some(::core::ffi::CStr::from_ptr(cached).to_owned());
                 free(newnm as *mut ::core::ffi::c_void);
             }
             i_1 = i_1.wrapping_add(1);
@@ -3017,11 +3049,11 @@ pub unsafe fn main_0(
             let mut name_bytes = goal_name_bytes(&ctx, d_1);
             name_bytes.push(0);
             let d1_name = name_bytes.as_ptr() as *const ::core::ffi::c_char;
-            let floc = goal_floc(d_1);
+            let floc = goal_floc(&ctx, d_1);
             error(
                 &ctx,
                 floc.as_ref()
-                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                    .map_or(::core::ptr::null(), |f| f as *const Floc),
                 (strlen(d1_name) as size_t).wrapping_add(strlen(err) as size_t),
                 b"%s: %s\0" as *const u8 as *const ::core::ffi::c_char,
                 &[
@@ -3045,11 +3077,11 @@ pub unsafe fn main_0(
                         .map(|n| n.lock().expect("file node poisoned").unloaded)
                         .unwrap_or(false);
                     if unloaded {
-                        let floc = goal_floc(d_2);
+                        let floc = goal_floc(&ctx, d_2);
                         if load_file(
                             &ctx,
                             floc.as_ref()
-                                .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                .map_or(::core::ptr::null(), |f| f as *const Floc),
                             ::core::ptr::null_mut::<file>(),
                             0,
                         ) == 0
@@ -3059,7 +3091,7 @@ pub unsafe fn main_0(
                             return Err(fatal_err(
                                 &ctx,
                                 floc.as_ref()
-                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                    .map_or(::core::ptr::null(), |f| f as *const Floc),
                                 strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
                                 b"%s: failed to load\0" as *const u8 as *const ::core::ffi::c_char,
                                 &[FmtArg::Str((nm.as_ptr()) as *const ::core::ffi::c_char)],
@@ -3103,11 +3135,11 @@ pub unsafe fn main_0(
                         } else if !d_4.dep.flags.contains(crate::dep::DepFlags::DONTCARE) {
                             let mut nm = name.clone();
                             nm.push(0);
-                            let floc = goal_floc(d_4);
+                            let floc = goal_floc(&ctx, d_4);
                             error(
                                 &ctx,
                                 floc.as_ref()
-                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                    .map_or(::core::ptr::null(), |f| f as *const Floc),
                                 strlen(nm.as_ptr() as *const ::core::ffi::c_char) as size_t,
                                 b"failed to remake makefile '%s'\0" as *const u8
                                     as *const ::core::ffi::c_char,
@@ -3129,11 +3161,11 @@ pub unsafe fn main_0(
                         nm.push(0);
                         let dnm = nm.as_ptr() as *const ::core::ffi::c_char;
                         if d_4.dep.flags.contains(crate::dep::DepFlags::INCLUDED) {
-                            let floc = goal_floc(d_4);
+                            let floc = goal_floc(&ctx, d_4);
                             error(
                                 &ctx,
                                 floc.as_ref()
-                                    .map_or(::core::ptr::null(), |f| &f.floc as *const Floc),
+                                    .map_or(::core::ptr::null(), |f| f as *const Floc),
                                 strlen(dnm) as size_t,
                                 b"included makefile '%s' was not found\0" as *const u8
                                     as *const ::core::ffi::c_char,
@@ -3340,8 +3372,8 @@ pub unsafe fn main_0(
             }
             if !options.directories.borrow().is_empty() {
                 let mut bad: i32 = 1;
-                if !ctx.directory_before_chdir.0.get().is_null() {
-                    if chdir_c(ctx.directory_before_chdir.0.get()) < 0 {
+                if let Some(dir) = ctx.directory_before_chdir.borrow().as_deref() {
+                    if chdir_path(dir) < 0 {
                         perror_with_name(
                             &ctx,
                             b"chdir\0" as *const u8 as *const ::core::ffi::c_char,
@@ -3447,8 +3479,8 @@ pub unsafe fn main_0(
             // process image — the Rust counterpart of the C fflush pair.
             {
                 use std::io::Write;
-                let _ = ctx.stdout.borrow_mut().flush();
-                let _ = ctx.stderr.borrow_mut().flush();
+                let _ = ctx.stdout_lock().flush();
+                let _ = ctx.stderr_lock().flush();
             }
             osync_clear();
             jobserver_pre_child(&ctx, 1);
@@ -3698,7 +3730,10 @@ pub unsafe fn reset_makeflags(
         let inc_paths: Vec<std::path::PathBuf> = include_dirs
             .iter()
             .map(|s| {
+                #[cfg(unix)]
                 use std::os::unix::ffi::OsStrExt;
+                #[cfg(target_os = "wasi")]
+                use std::os::wasi::ffi::OsStrExt;
                 std::path::PathBuf::from(std::ffi::OsStr::from_bytes(s.as_bytes()))
             })
             .collect();
@@ -3800,7 +3835,10 @@ fn normalize_argv_for_clap(
     switches: &[CommandSwitch],
     tokens: &[::std::ffi::OsString],
 ) -> Vec<::std::ffi::OsString> {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     // Byte-level `"{a}={b}"` concatenation, avoiding any UTF-8 assumption
     // about `a`/`b` (a switch value like `-l`'s can be arbitrary bytes past
     // its first char -- the original hand-rolled lookahead is byte-based,
@@ -3931,7 +3969,10 @@ fn apply_value_switch(
     origin: variable_origin,
     bad: &mut i32,
 ) -> Result<(), crate::build_result::BuildError> {
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     if !doit {
         return Ok(());
     }
@@ -4051,8 +4092,9 @@ fn apply_value_switch(
                 // Its return value is a strcache-owned, valid NUL-terminated
                 // string for the process lifetime.
                 let cached = unsafe { strcache_add(ctx, coptarg) };
-                ctx.temp_stdin_name.0.set(cached);
-                unsafe { ::core::ffi::CStr::from_ptr(cached) }.to_owned()
+                let name = unsafe { ::core::ffi::CStr::from_ptr(cached) }.to_owned();
+                *ctx.temp_stdin_name.borrow_mut() = Some(name.clone());
+                name
             } else {
                 // SAFETY: `expand_command_line_file` requires a valid
                 // NUL-terminated C string (`coptarg`, as above) and returns
@@ -4260,7 +4302,10 @@ fn decode_switches(
             if !doit {
                 continue;
             }
+            #[cfg(unix)]
             use std::os::unix::ffi::OsStrExt;
+            #[cfg(target_os = "wasi")]
+            use std::os::wasi::ffi::OsStrExt;
             let is_sentinel = raw_value.as_os_str() == ::std::ffi::OsStr::new(NOARG_SENTINEL);
             if cs.c == 'j' as i32 {
                 if is_sentinel {
@@ -4313,7 +4358,10 @@ fn decode_switches(
 
     // Non-switch tokens (targets, `VAR=value`), in original relative order.
     if let Some(rest) = matches.get_many::<::std::ffi::OsString>("__rest") {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
         let mut found_wait: ::core::ffi::c_uint = 0;
         for tok in rest {
             let ctok = ::std::ffi::CString::new(tok.as_bytes()).unwrap_or_default();
@@ -4416,7 +4464,10 @@ unsafe fn decode_env_switches(
     if bytes.is_empty() {
         return Ok(());
     }
+    #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     let words = split_makeflags_value(bytes);
     let mut tokens: Vec<::std::ffi::OsString> = words
         .iter()
@@ -5173,13 +5224,14 @@ unsafe fn die_cleanup_body(ctx: &crate::execctx::ExecContext, status: i32) {
         }
         crate::output::output_close(ctx, ::core::ptr::null_mut::<output>());
         osync_clear();
-        if !ctx.directory_before_chdir.0.get().is_null() {
-            let _ = chdir_c(ctx.directory_before_chdir.0.get());
+        if let Some(dir) = ctx.directory_before_chdir.borrow().as_deref() {
+            let _ = chdir_path(dir);
         }
     }
 }
 pub const __CHAR_BIT__: i32 = 8;
 pub const __SCHAR_MAX__: i32 = 127;
+
 
 /// The command-line switch table, freshly built with its real contents — the
 /// former `.init_array` `run_static_initializers` body that populated the
@@ -6141,6 +6193,83 @@ mod output_sync_tests {
     }
 }
 
+/// `chdir_path` (safe, `&Path`) against the raw-pointer `chdir_c` it was split
+/// from, which stays as the oracle: same status and same errno for the same
+/// directory. Only the current directory and a missing one are used, so the
+/// process-wide cwd is never actually moved.
+#[cfg(test)]
+mod chdir_path_tests {
+    use super::{__errno_location, chdir_c, chdir_path};
+    use std::ffi::CString;
+    use std::path::Path;
+
+    fn errno() -> i32 {
+        // SAFETY: `__errno_location` returns this thread's valid errno slot.
+        unsafe { *__errno_location() }
+    }
+
+    fn assert_same(dir: &Path) -> i32 {
+        let c = CString::new(dir.to_str().unwrap()).unwrap();
+        // SAFETY: `c` is a valid NUL-terminated path.
+        let want = unsafe { chdir_c(c.as_ptr()) };
+        let want_errno = errno();
+        let got = chdir_path(dir);
+        assert_eq!(got, want);
+        if want < 0 {
+            assert_eq!(errno(), want_errno);
+        }
+        got
+    }
+
+    #[test]
+    fn chdir_path_matches_the_raw_pointer_oracle() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(assert_same(&cwd), 0);
+        assert_eq!(assert_same(Path::new("/no/such/dir/for/chdir_path")), -1);
+        assert_eq!(errno(), 2); // ENOENT
+    }
+}
+
+/// `program_basename` against the `strrchr`-based computation it replaced,
+/// kept here verbatim as the oracle.
+#[cfg(test)]
+mod program_basename_tests {
+    use super::program_basename;
+    use std::ffi::CString;
+
+    /// The former startup code: `strrchr(argv0, '/')`, then +1 or the whole
+    /// string, read back as bytes.
+    fn program_basename_unsafe_oracle(argv0: &CString) -> Vec<u8> {
+        // SAFETY: `argv0` is a valid NUL-terminated string, and `prog` stays
+        // within it (or one past the last '/').
+        unsafe {
+            let mut prog: *const ::core::ffi::c_char = libc::strrchr(argv0.as_ptr(), '/' as i32);
+            if prog.is_null() {
+                prog = argv0.as_ptr();
+            } else {
+                prog = prog.offset(1_i32 as isize);
+            }
+            ::core::ffi::CStr::from_ptr(prog).to_bytes().to_vec()
+        }
+    }
+
+    #[test]
+    fn matches_the_strrchr_oracle() {
+        for argv0 in [
+            "make", "./make", "/usr/bin/make", "a//b", "dir/", "/", "x", "../up/gmake", "sp ace/m k",
+        ] {
+            let c = CString::new(argv0).unwrap();
+            assert_eq!(
+                program_basename(argv0.as_bytes()),
+                program_basename_unsafe_oracle(&c).as_slice(),
+                "argv0 = {argv0:?}"
+            );
+        }
+        assert_eq!(program_basename(b"/usr/bin/make"), b"make");
+        assert_eq!(program_basename(b"dir/"), b"");
+    }
+}
+
 #[cfg(test)]
 mod special_target_latches_tests {
     use super::{
@@ -6453,6 +6582,38 @@ mod command_count_tests {
         assert_eq!(opt_command_count(ctx), 3, "two bumps through the channel");
 
         with_options(ctx, |o| o.command_count.set(1));
+    }
+}
+
+/// `goal_floc` builds a goal's source location with an interned file name, so
+/// the `Floc` stays valid on its own (no buffer kept beside it).
+#[cfg(test)]
+mod goal_floc_tests {
+    use super::goal_floc;
+    use crate::{dep::GoalDepNode, execctx::ExecContext, strcache::strcache_iscached};
+
+    #[test]
+    fn goal_floc_interns_the_defined_in_name() {
+        let ctx = ExecContext::default();
+        let goal = GoalDepNode {
+            defined_in: Some(b"goal-floc-test/inc.mk".to_vec()),
+            lineno: 7,
+            offset: 3,
+            ..GoalDepNode::default()
+        };
+
+        let floc = goal_floc(&ctx, &goal).expect("a goal with a source file has a floc");
+
+        let filenm = floc.filenm.expect("the floc carries the goal's file name");
+        assert_ne!(strcache_iscached(filenm.as_ptr()), 0, "the name is interned");
+        assert_eq!(filenm.to_bytes(), b"goal-floc-test/inc.mk");
+        assert_eq!((floc.lineno, floc.offset), (7, 3));
+    }
+
+    #[test]
+    fn goal_floc_is_none_for_a_synthetic_goal() {
+        let ctx = ExecContext::default();
+        assert!(goal_floc(&ctx, &GoalDepNode::default()).is_none());
     }
 }
 
@@ -6834,7 +6995,7 @@ mod jobserver_and_stdin_cleanup_tests {
         let ctx = crate::execctx::ExecContext::default();
         unsafe {
             with_options(&ctx, |o| o.stdin_offset.set(-1));
-            ctx.temp_stdin_name.0.set(::core::ptr::null());
+            *ctx.temp_stdin_name.borrow_mut() = None;
             temp_stdin_unlink(&ctx);
         }
 
@@ -6844,16 +7005,23 @@ mod jobserver_and_stdin_cleanup_tests {
         std::fs::write(&path, b"all:\n").unwrap();
         assert!(path.exists());
         let cpath = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        *ctx.temp_stdin_name.borrow_mut() = Some(cpath);
+
+        // Registered but `stdin_offset < 0` (no `-f -` in play): the file is
+        // left alone.
+        unsafe {
+            with_options(&ctx, |o| o.stdin_offset.set(-1));
+            temp_stdin_unlink(&ctx);
+        }
+        assert!(path.exists(), "no unlink while stdin_offset is unset");
+
+        // Registered and live: unlinked, and the offset is reset.
         unsafe {
             with_options(&ctx, |o| o.stdin_offset.set(0));
-            ctx.temp_stdin_name.0.set(cpath.as_ptr());
             temp_stdin_unlink(&ctx);
-            // Restore globals before `cpath` is dropped to avoid a dangling ptr.
-            ctx.temp_stdin_name.0.set(::core::ptr::null());
-            with_options(&ctx, |o| o.stdin_offset.set(-1));
         }
         assert!(!path.exists(), "temp stdin file should have been unlinked");
-        drop(cpath);
+        assert_eq!(crate::entry::opt_stdin_offset(&ctx), -1);
     }
 }
 
@@ -7153,7 +7321,10 @@ mod decode_switches_clap_vs_getopt_tests {
     /// tokens) and asserts directly on the stored bytes.
     #[test]
     fn non_utf8_filename_argument_round_trips_exact_bytes() {
+        #[cfg(unix)]
         use std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use std::os::wasi::ffi::OsStrExt;
 
         super::initialize_stopchar_map();
         let ctx = ExecContext::default();

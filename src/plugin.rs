@@ -36,6 +36,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::dep::GoalDepNode;
 use crate::depgraph::{DepGraph, NodeId};
 use crate::execctx::ExecContext;
+// make's own variable record and origin enum. `VarOrigin` is
+// deliberately unqualified while the WIT one stays `host::VarOrigin`:
+// the two are different vocabularies and the mapping between them
+// (`lookup_global`) reads better when that is visible at each arm.
+use crate::target_var::{VarExport, VarOrigin};
 use host::{AnalyzerPlugin, Caps, FailurePolicy, OutputSlot, Phase, PluginInfo, PluginStore};
 
 /// Default fuel budget for one plugin instance.
@@ -236,16 +241,14 @@ pub fn run_plugins_if_requested(ctx: &ExecContext, goals: &[GoalDepNode]) -> boo
     let mut providers: FxHashMap<NodeId, Vec<host::Provider>> = FxHashMap::default();
     let mut fatal = false;
 
-    with_context(ctx, || {
-        for spec in &specs {
-            match run_instance(spec, &graph, &session, &mut providers) {
-                Ok(instance_fatal) => fatal |= instance_fatal,
-                Err(err) => {
-                    eprintln!("make: {}: plugin failed: {err:#}", spec.name);
-                }
+    for spec in &specs {
+        match run_instance(spec, &graph, &session, ctx, &mut providers) {
+            Ok(instance_fatal) => fatal |= instance_fatal,
+            Err(err) => {
+                eprintln!("make: {}: plugin failed: {err:#}", spec.name);
             }
         }
-    });
+    }
     fatal
 }
 
@@ -268,18 +271,29 @@ impl SessionFacts {
             // `MAKEFILE_LIST` is make's own record of what it read, kept
             // correct through `include`, `-f` and remade makefiles — far
             // more reliable than re-deriving the list here.
-            makefiles: lookup_global_raw("MAKEFILE_LIST")
+            makefiles: lookup_global_raw(ctx, "MAKEFILE_LIST")
                 .unwrap_or_default()
                 .split_whitespace()
                 .map(str::to_string)
                 .collect(),
+            // As written on the command line, which is what the WIT doc
+            // promises and what a plugin can use to tell one make from
+            // another. It used to be the goal's `FileId` when it had one,
+            // a hash no plugin can do anything with.
             goal_names: goals
                 .iter()
                 .map(|g| {
+                    if !g.dep.name.is_empty() {
+                        return g.dep.name.clone();
+                    }
                     g.dep
                         .file
-                        .map(|f| f.to_string())
-                        .unwrap_or_else(|| g.dep.name.clone())
+                        .and_then(|f| ctx.filenodes.get(f))
+                        .map(|n| {
+                            String::from_utf8_lossy(&n.lock().expect("file node poisoned").name)
+                                .into_owned()
+                        })
+                        .unwrap_or_default()
                 })
                 .collect(),
             dry_run: crate::entry::opt_just_print(ctx),
@@ -295,6 +309,7 @@ fn run_instance(
     spec: &InstanceSpec,
     graph: &DepGraph,
     session: &SessionFacts,
+    ctx: &ExecContext,
     providers: &mut FxHashMap<NodeId, Vec<host::Provider>>,
 ) -> anyhow::Result<bool> {
     let mut config = wasmtime::Config::new();
@@ -334,11 +349,13 @@ fn run_instance(
     }
 
     // Step 3: the real store, carrying exactly the granted authority.
-    let digest = input_digest(graph, &spec.settings, &global_variables());
+    let digest = input_digest(graph, &spec.settings, &global_variables(ctx));
     let outputs = resolve_outputs(&info, spec, &session.working_dir);
     let mut store = wasmtime::Store::new(
         &engine,
         PluginStore {
+            // SAFETY: `ctx` outlives the store, which is dropped before return.
+            ctx: unsafe { host::ContextRef::new(ctx) },
             graph: graph.clone(),
             sets: Default::default(),
             providers: std::mem::take(providers),
@@ -439,6 +456,7 @@ fn describe(
     let mut store = wasmtime::Store::new(
         engine,
         PluginStore {
+            ctx: Default::default(),
             graph: DepGraph::new(),
             sets: Default::default(),
             providers: FxHashMap::default(),
@@ -814,17 +832,20 @@ fn input_digest(
     // build in the same tree, and a `deterministic` plugin that never gets
     // a cache hit has a promise that costs it something and buys nothing.
     //
-    // The cost is a real hole, and it is worth naming rather than burying:
-    // `vars.get` is gated on `read-variables` alone, so a plugin can read
-    // an environment-origin variable that this digest does not cover, and
-    // a cache keyed on the digest can then serve output built from a
-    // different value. Command-line assignments — `make CC=gcc`, the case
-    // above — are origin `command line`, not `environment`, so the common
-    // way of varying a build *is* covered; what is not is `CC=gcc make`.
-    // Closing it properly means gating environment-origin reads behind
-    // `read-environment`, which changes what an existing capability
-    // governs. `vars.get` reports the true origin, so a plugin that cares
-    // can at least see which of its reads fall outside.
+    // An exclusion is only sound if a plugin cannot read what it excludes,
+    // so the capability boundary is drawn to match: environment-origin
+    // values are withheld from `vars.get`, `node.variable` and
+    // `node.own-variables` unless `read-environment` was granted (see
+    // `PluginStore::environment_permitting`). What stays readable is what
+    // this loop hashes, which is the property the whole arrangement turns
+    // on. Command-line assignments — `make CC=gcc`, the case above — are
+    // origin `command line`, not `environment`, so the common way of
+    // varying a build is both covered here and readable there.
+    //
+    // One route is open by construction: `vars.expand` runs make's expander,
+    // so `$(HOME)` can reach a plugin holding `expand-variables` without
+    // naming an origin the host could gate on. That capability is refused
+    // alongside `deterministic` for exactly this reason.
     hasher.0.update(b"--globals--");
     for var in globals {
         if from_environment(var.origin) {
@@ -847,7 +868,7 @@ fn input_digest(
         // is not reliably initialised; see `flavor_of`.
         hasher
             .0
-            .update(&[var.origin as u8, var.recursive as u8, var.exported as u8]);
+            .update(&[var.origin as u8, var.recursive as u8, exported(var) as u8]);
     }
     hasher.0.finalize().to_hex().to_string()
 }
@@ -927,57 +948,26 @@ fn memory_limit(settings: &BTreeMap<String, String>) -> usize {
         .unwrap_or(DEFAULT_MEMORY_BYTES)
 }
 
-// ─── Reaching `ExecContext` from a host callback ─────────────────────────
-
-// The `ExecContext` the running plugin pass is reading. Installed for the
-// duration of `run_plugins_if_requested` only: the generated host traits
-// carry no lifetime parameter to thread a borrow through, so this follows
-// the same borrow-channel convention `loadapi.rs` already uses for the
-// `gmk_*` entry points.
-thread_local! {
-    static CTX_PTR: std::cell::Cell<*const ExecContext> =
-        const { std::cell::Cell::new(std::ptr::null()) };
-}
-
-fn with_context<R>(ctx: &ExecContext, f: impl FnOnce() -> R) -> R {
-    let previous = CTX_PTR.replace(ctx as *const ExecContext);
-    let r = f();
-    CTX_PTR.set(previous);
-    r
-}
-
-/// The installed context pointer, or null outside a plugin pass.
-///
-/// Returned raw rather than as a reference: fabricating a `&'static
-/// ExecContext` here would be a lifetime the borrow checker cannot police,
-/// so the dereference stays inside the two `unsafe` blocks that already need
-/// one for their C-ABI calls, under one `SAFETY` comment each.
-fn ctx_ptr() -> *const ExecContext {
-    CTX_PTR.get()
-}
-
 /// One entry of make's global variable set.
 ///
-/// `value` is what `$(value ...)` would give: the expanded text for a
-/// `simple` variable, the raw unexpanded text for a `recursive` one.
-/// Expanding it here would mean running `$(shell ...)` from inside the
-/// digest, which is both a side effect and exactly the authority
-/// `expand-variables` exists to withhold.
+/// This is [`crate::target_var::TargetVariable`], the variable layer's own
+/// owned record, rather than a shape private to the plugin host. It used to
+/// be the latter, which meant this module carried a second definition of
+/// "what a variable is" and its own walk over make's hash table to fill it
+/// — the duplication `@codex` flagged on #655. The record is the same one
+/// either way: `TargetVariable` is named for where it was first needed, not
+/// for a scope it is limited to.
 ///
-/// Both are bytes rather than `String`. A variable's value can hold whatever
-/// the makefile put there, and lossy UTF-8 conversion maps distinct byte
-/// sequences onto the same replacement characters — which for a digest is a
-/// collision, not a display wart. The rest of this function hashes target
-/// names byte-exactly for the same reason.
-pub(crate) struct GlobalVar {
-    pub name: Vec<u8>,
-    pub value: Vec<u8>,
-    pub origin: crate::entry::variable_origin,
-    /// Whether the value is expanded at use (`=`) rather than at definition
-    /// (`:=`). See [`flavor_of`] for why this, and not the `flavor` field.
-    pub recursive: bool,
-    pub exported: bool,
-}
+/// What the fields mean here: `value` is what `$(value ...)` would give —
+/// the expanded text for a `simple` variable, the raw unexpanded text for a
+/// `recursive` one. Expanding it would mean running `$(shell ...)` from
+/// inside the digest, which is both a side effect and exactly the authority
+/// `expand-variables` exists to withhold. `name` and `value` are bytes
+/// rather than `String` because a value holds whatever the makefile put
+/// there, and lossy UTF-8 conversion maps distinct byte sequences onto the
+/// same replacement characters — for a digest that is a collision, not a
+/// display wart.
+pub(crate) type GlobalVar = crate::target_var::TargetVariable;
 
 /// A variable's WIT flavor, from make's `recursive` flag.
 ///
@@ -1003,131 +993,76 @@ fn flavor_of(recursive: bool) -> host::VarFlavor {
     }
 }
 
+/// Whether a variable is unconditionally exported to recipes.
+///
+/// `export` is three-valued in make (`v_default`, `v_export`, `v_noexport`,
+/// plus `v_ifset`), while the WIT `variable` record and the digest both want
+/// the yes/no question. Only an explicit `export` counts: `v_default` means
+/// "follow whatever the global export rules say", which is a property of the
+/// run and not of this variable.
+pub(crate) fn exported(var: &GlobalVar) -> bool {
+    var.export == VarExport::Export
+}
+
 /// Whether a variable's current value came from the process environment.
 ///
 /// The two environment origins are distinct to `$(origin ...)` — plain
 /// `o_env`, and `o_env_override` for the same thing under `-e` — but they
 /// answer the same question here, which is whether the value was decided
 /// outside every file the digest already covers.
-pub(crate) fn from_environment(origin: crate::entry::variable_origin) -> bool {
-    origin == crate::entry::o_env || origin == crate::entry::o_env_override
+pub(crate) fn from_environment(origin: crate::target_var::VarOrigin) -> bool {
+    matches!(origin, VarOrigin::Environment | VarOrigin::EnvOverride)
 }
 
-/// Make's entire global variable set, sorted by name.
+/// Make's entire global variable set, sorted.
 ///
-/// This walks the global hash table the way `.VARIABLES` does rather than
-/// reading `.VARIABLES` itself, for two reasons. That special variable
-/// rebuilds its value into an `xrealloc`ed buffer as a side effect of being
-/// read, and a digest has no business mutating what it measures. And one
-/// pass yields each variable's origin and recursive flag, where a name-only
-/// listing would need a second lookup per name to recover them — origin
-/// being the field the whole exclusion rule turns on.
+/// The walk itself lives in [`crate::variable::global_variables`] — the layer
+/// that owns the table — so this module reads the set through a safe call
+/// rather than reaching through `ExecContext` into a raw slot array of its
+/// own. Reading the table rather than expanding `.VARIABLES` is that
+/// accessor's documented reason for existing: the special variable rebuilds
+/// its value into a fresh buffer as a side effect of being looked up, and a
+/// digest has no business mutating what it measures.
 ///
-/// Sorted because hash-table order is a function of the table's size and
-/// insertion history, not of anything about the build. A digest built in
-/// that order would change when nothing had, which is precisely the failure
-/// a digest exists to prevent.
-pub(crate) fn global_variables() -> Vec<GlobalVar> {
-    let ctx = ctx_ptr();
-    if ctx.is_null() {
-        return Vec::new();
-    }
-    let mut out: Vec<GlobalVar> = Vec::new();
-    // SAFETY: `CTX_PTR` is non-null only inside `with_context`, which
-    // outlives every host callback a guest can make, so `ctx` points at a
-    // live `ExecContext`. `global_variable_set` is make's own long-lived
-    // table, and `ht_vec`/`ht_size` delimit it exactly as
-    // `lookup_special_var` reads them — so a non-null `ht_vec` is valid for
-    // `ht_size` slot-sized elements and the slice covers precisely them.
-    // Nothing mutates the table for the slice's lifetime: this runs
-    // synchronously inside the analysis pass, which neither reads makefiles
-    // nor expands anything. The two sentinels a slot can hold — null and
-    // `hash_deleted_item` — are skipped before any field is touched, and
-    // each surviving `variable` is owned by the table and outlives this read.
-    unsafe {
-        let table = &(*(*ctx).variable_globals.global_variable_set.as_ptr()).table;
-        // A hash table can legitimately hold a null `ht_vec` with `ht_size`
-        // 0 before it is populated (see `ExecContext`'s own initialisers), and
-        // `slice::from_raw_parts` is undefined on a null pointer even for an
-        // empty slice. So the emptiness check is on the pointer, not the size.
-        let slots: &[*mut crate::variable::variable] = if table.ht_vec.is_null() {
-            &[]
-        } else {
-            std::slice::from_raw_parts(
-                table.ht_vec as *const *mut crate::variable::variable,
-                table.ht_size as usize,
-            )
-        };
-        for &v in slots {
-            if v.is_null()
-                || std::ptr::eq(
-                    v as *const ::core::ffi::c_void,
-                    crate::hash::hash_deleted_item,
-                )
-                || (*v).name.is_null()
-            {
-                continue;
-            }
-            out.push(GlobalVar {
-                name: std::ffi::CStr::from_ptr((*v).name).to_bytes().to_vec(),
-                // A defined variable with a null value is an empty one, not
-                // a missing one: `FOO :=` is a perfectly ordinary
-                // definition and must still reach the digest.
-                value: if (*v).value.is_null() {
-                    Vec::new()
-                } else {
-                    std::ffi::CStr::from_ptr((*v).value).to_bytes().to_vec()
-                },
-                origin: (*v).origin(),
-                recursive: (*v).recursive() != 0,
-                exported: (*v).export() == crate::entry::v_export,
-            });
-        }
-    }
+/// Sorted here rather than there because the ordering requirement is this
+/// caller's: hash-table order is a function of the table's size and
+/// insertion history, not of anything about the build, so a digest built in
+/// that order would change when nothing had — precisely the failure a digest
+/// exists to prevent.
+pub(crate) fn global_variables(ctx: &ExecContext) -> Vec<GlobalVar> {
+    let mut out = crate::variable::global_variables(ctx);
     // By the whole tuple, not by name alone. Names are unique within one
     // hash table, so ordering by name is already total in practice — but
     // `sort_by` is stable, so a tie would silently fall back to hash-table
     // order, and "silently falls back to an unstable order" is the one
     // property a digest must not have.
     out.sort_by(|a, b| {
-        (&a.name, &a.value, a.origin, a.recursive).cmp(&(&b.name, &b.value, b.origin, b.recursive))
+        (&a.name, &a.value, a.origin as u8, a.recursive).cmp(&(
+            &b.name,
+            &b.value,
+            b.origin as u8,
+            b.recursive,
+        ))
     });
     out
 }
 
-/// Value of a global variable with its provenance, or `None` if undefined.
-fn lookup_global_full(name: &str) -> Option<(String, bool, crate::entry::variable_origin, bool)> {
-    let ctx = ctx_ptr();
-    if ctx.is_null() {
-        return None;
-    }
-    let name_c = std::ffi::CString::new(name).ok()?;
-    let len = name_c.as_bytes().len() as crate::ffi_types::size_t;
-    // SAFETY: `CTX_PTR` is non-null only inside `with_context`, which outlives
-    // every host callback a guest can make (guests run synchronously within
-    // that scope), so `ctx` points at a live `ExecContext`. `name_c` is a live
-    // NUL-terminated buffer for the whole call, meeting `lookup_variable`'s
-    // pointer/length contract, and the returned `variable` is owned by the
-    // global set and outlives the read.
-    unsafe {
-        let v = crate::variable::lookup_variable(&*ctx, name_c.as_ptr(), len).ok()?;
-        if v.is_null() || (*v).value.is_null() {
-            return None;
-        }
-        Some((
-            std::ffi::CStr::from_ptr((*v).value)
-                .to_string_lossy()
-                .into_owned(),
-            (*v).recursive() != 0,
-            (*v).origin(),
-            (*v).export() == crate::entry::v_export,
-        ))
-    }
+/// One global variable's record, or `None` if undefined.
+///
+/// The lookup itself is [`crate::variable::lookup_global_variable`], for the
+/// same reason the whole-set read is: resolving a name is the variable
+/// layer's job, and doing it here meant this module held a second raw
+/// `lookup_variable` call with its own null handling.
+fn lookup_global_full(ctx: &ExecContext, name: &str) -> Option<GlobalVar> {
+    crate::variable::lookup_global_variable(ctx, name)
 }
 
 /// Raw expanded value of a global variable, or `None` if undefined.
-fn lookup_global_raw(name: &str) -> Option<String> {
-    lookup_global_full(name).map(|(value, ..)| value)
+///
+/// Lossy because this feeds the WIT `string` fields, which are UTF-8 by
+/// definition; the digest path deliberately keeps the bytes instead.
+fn lookup_global_raw(ctx: &ExecContext, name: &str) -> Option<String> {
+    lookup_global_full(ctx, name).map(|v| String::from_utf8_lossy(&v.value).into_owned())
 }
 
 /// A global variable as the WIT interface describes it.
@@ -1143,19 +1078,19 @@ fn lookup_global_raw(name: &str) -> Option<String> {
 /// global set except its environment-origin members, so `origin` is how a
 /// plugin can tell which of the values it just read are outside the digest's
 /// coverage. A hardcoded `file` would hide exactly that.
-pub(crate) fn lookup_global(name: &str) -> Option<host::Variable> {
-    let (value, recursive, origin, exported) = lookup_global_full(name)?;
+pub(crate) fn lookup_global(ctx: &ExecContext, name: &str) -> Option<host::Variable> {
+    let var = lookup_global_full(ctx, name)?;
     Some(host::Variable {
         name: name.to_string(),
-        value,
-        flavor: flavor_of(recursive),
-        origin: match origin {
-            crate::entry::o_default => host::VarOrigin::Default,
-            crate::entry::o_env => host::VarOrigin::Environment,
-            crate::entry::o_env_override => host::VarOrigin::EnvOverride,
-            crate::entry::o_command => host::VarOrigin::CommandLine,
-            crate::entry::o_override => host::VarOrigin::Override,
-            crate::entry::o_automatic => host::VarOrigin::Automatic,
+        value: String::from_utf8_lossy(&var.value).into_owned(),
+        flavor: flavor_of(var.recursive),
+        origin: match var.origin {
+            VarOrigin::Default => host::VarOrigin::Default,
+            VarOrigin::Environment => host::VarOrigin::Environment,
+            VarOrigin::EnvOverride => host::VarOrigin::EnvOverride,
+            VarOrigin::Command => host::VarOrigin::CommandLine,
+            VarOrigin::Override => host::VarOrigin::Override,
+            VarOrigin::Automatic => host::VarOrigin::Automatic,
             _ => host::VarOrigin::File,
         },
         // `defined_at` stays `None`: the global record carries a `fileinfo`,
@@ -1163,7 +1098,7 @@ pub(crate) fn lookup_global(name: &str) -> Option<host::Variable> {
         // built-ins rather than the user's makefiles, and a location a
         // plugin cannot open is worse than no location.
         defined_at: None,
-        exported,
+        exported: exported(&var),
         // Private is a per-target notion — `private` on a global definition
         // controls inheritance *into* target scopes, which `node.variable`
         // already resolves before it answers.
@@ -1172,19 +1107,14 @@ pub(crate) fn lookup_global(name: &str) -> Option<host::Variable> {
 }
 
 /// Expand makefile text through make's own expander, in the global scope.
-pub(crate) fn expand_global(text: &str) -> Result<String, String> {
-    let ctx = ctx_ptr();
-    if ctx.is_null() {
-        return Err("no make context available".to_string());
-    }
+pub(crate) fn expand_global(ctx: &ExecContext, text: &str) -> Result<String, String> {
     let input = std::ffi::CString::new(text).map_err(|_| "text contains a NUL byte".to_string())?;
-    // SAFETY: `ctx` is live for the same reason as in `lookup_global_raw`;
-    // `input` outlives the call; the null `file` pointer is the documented
+    // SAFETY: `input` outlives the call; the null `file` pointer is the documented
     // "global scope" argument, exactly as `gmk_expand` passes it; and the
     // returned buffer is a `malloc`ed NUL-terminated string this call owns.
     unsafe {
         let expanded = crate::expand::allocated_expand_string_for_file(
-            &*ctx,
+            ctx,
             input.as_ptr(),
             std::ptr::null_mut::<crate::file::File>(),
         )
@@ -1198,6 +1128,90 @@ pub(crate) fn expand_global(text: &str) -> Result<String, String> {
         libc::free(expanded as *mut libc::c_void);
         Ok(out)
     }
+}
+
+/// Expand `text` in `file`'s scope with its automatic variables set, as
+/// make does while preparing the target's recipe.
+///
+/// Derives `$@ $< $^ $+ $? $* $| $%` through the same
+/// [`crate::commands::set_file_variables`] the job runner calls, so a plugin
+/// sees the values make would use rather than a second implementation of
+/// them. The automatics are left on the node afterwards — they are per-target
+/// variables make would set on it a moment later anyway.
+pub(crate) fn expand_for_file(
+    ctx: &ExecContext,
+    file: crate::file::FileId,
+    text: &str,
+) -> Result<String, String> {
+    crate::commands::set_file_variables(ctx, file, None)
+        .map_err(|_| "could not set automatic variables".to_string())?;
+    let mut bytes = text.as_bytes().to_vec();
+    if bytes.contains(&0) {
+        return Err("text contains a NUL byte".to_string());
+    }
+    bytes.push(0);
+    let mut out = crate::expand::expand_string_for_file(ctx, &bytes, file)
+        .map_err(|_| "expansion failed".to_string())?;
+    if out.last() == Some(&0) {
+        out.pop();
+    }
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// The environment make would give `file`'s recipe, reduced to what make
+/// itself added or changed.
+///
+/// Built by the same [`crate::variable::target_environment`] the job runner
+/// uses, so exports, `.EXPORT_ALL_VARIABLES`, `unexport` and recursive
+/// expansion all behave as they do for a real recipe. The process's own
+/// environment is then subtracted: an entry survives only if the process did
+/// not have it or had it with a different value. See `node.recipe-environment`
+/// in `graph.wit` for why.
+pub(crate) fn recipe_environment(
+    ctx: &ExecContext,
+    file: crate::file::FileId,
+) -> Result<Vec<(String, String)>, String> {
+    // SAFETY: `target_environment` returns a NULL-terminated array of
+    // `malloc`ed `NAME=value` strings that this function owns; each string and
+    // the array are freed below exactly as `job::free_childbase` does.
+    let entries = unsafe {
+        let env = crate::variable::target_environment(ctx, Some(file), 1)
+            .map_err(|_| "could not build the recipe environment".to_string())?;
+        let mut out = Vec::new();
+        let mut p = env;
+        while !p.is_null() && !(*p).is_null() {
+            out.push(std::ffi::CStr::from_ptr(*p).to_bytes().to_vec());
+            libc::free(*p as *mut libc::c_void);
+            p = p.add(1);
+        }
+        libc::free(env as *mut libc::c_void);
+        out
+    };
+    let inherited: std::collections::HashMap<Vec<u8>, Vec<u8>> = std::env::vars_os()
+        .map(|(k, v)| {
+            use std::os::unix::ffi::OsStrExt;
+            (k.as_bytes().to_vec(), v.as_bytes().to_vec())
+        })
+        .collect();
+    let mut result: Vec<(String, String)> = entries
+        .into_iter()
+        .filter_map(|e| {
+            let eq = e.iter().position(|&b| b == b'=')?;
+            let (name, value) = (&e[..eq], &e[eq + 1..]);
+            if matches!(name, b"MAKEFLAGS" | b"MFLAGS" | b"MAKELEVEL")
+                || name.starts_with(b"MAKE_TERM")
+                || inherited.get(name).map(|v| v.as_slice()) == Some(value)
+            {
+                return None;
+            }
+            Some((
+                String::from_utf8_lossy(name).into_owned(),
+                String::from_utf8_lossy(value).into_owned(),
+            ))
+        })
+        .collect();
+    result.sort();
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -1365,13 +1379,12 @@ mod tests {
         );
     }
 
-    fn global(name: &str, value: &str, origin: crate::entry::variable_origin) -> GlobalVar {
+    fn global(name: &str, value: &str, origin: crate::target_var::VarOrigin) -> GlobalVar {
         GlobalVar {
             name: name.as_bytes().to_vec(),
             value: value.as_bytes().to_vec(),
             origin,
-            recursive: false,
-            exported: false,
+            ..Default::default()
         }
     }
 
@@ -1388,12 +1401,12 @@ mod tests {
         let gcc = input_digest(
             &graph,
             &settings,
-            &[global("CC", "gcc", crate::entry::o_command)],
+            &[global("CC", "gcc", VarOrigin::Command)],
         );
         let clang = input_digest(
             &graph,
             &settings,
-            &[global("CC", "clang", crate::entry::o_command)],
+            &[global("CC", "clang", VarOrigin::Command)],
         );
         assert_ne!(gcc, clang, "a command-line CC must reach the digest");
 
@@ -1417,7 +1430,7 @@ mod tests {
         let settings = BTreeMap::new();
         let bare = input_digest(&graph, &settings, &[]);
 
-        for origin in [crate::entry::o_env, crate::entry::o_env_override] {
+        for origin in [VarOrigin::Environment, VarOrigin::EnvOverride] {
             assert_eq!(
                 bare,
                 input_digest(&graph, &settings, &[global("TERM", "xterm", origin)]),
@@ -1445,24 +1458,20 @@ mod tests {
             input_digest(
                 &graph,
                 &settings,
-                &[global("CC", "gcc", crate::entry::o_command)]
+                &[global("CC", "gcc", VarOrigin::Command)]
             ),
             input_digest(
                 &graph,
                 &settings,
-                &[global("CC", "gcc", crate::entry::o_env)]
+                &[global("CC", "gcc", VarOrigin::Environment)]
             ),
         );
         assert_ne!(
+            input_digest(&graph, &settings, &[global("CC", "gcc", VarOrigin::File)]),
             input_digest(
                 &graph,
                 &settings,
-                &[global("CC", "gcc", crate::entry::o_file)]
-            ),
-            input_digest(
-                &graph,
-                &settings,
-                &[global("CC", "gcc", crate::entry::o_override)]
+                &[global("CC", "gcc", VarOrigin::Override)]
             ),
         );
     }
@@ -1492,15 +1501,11 @@ mod tests {
     fn input_digest_separates_a_recursive_global_from_a_simple_one() {
         let graph = chain_graph();
         let settings = BTreeMap::new();
-        let mut recursive = global("CC", "gcc", crate::entry::o_file);
+        let mut recursive = global("CC", "gcc", VarOrigin::File);
         recursive.recursive = true;
         assert_ne!(
             input_digest(&graph, &settings, &[recursive]),
-            input_digest(
-                &graph,
-                &settings,
-                &[global("CC", "gcc", crate::entry::o_file)]
-            ),
+            input_digest(&graph, &settings, &[global("CC", "gcc", VarOrigin::File)]),
         );
     }
 
@@ -1513,16 +1518,8 @@ mod tests {
         let graph = chain_graph();
         let settings = BTreeMap::new();
         assert_ne!(
-            input_digest(
-                &graph,
-                &settings,
-                &[global("A=B", "C", crate::entry::o_file)]
-            ),
-            input_digest(
-                &graph,
-                &settings,
-                &[global("A", "B=C", crate::entry::o_file)]
-            ),
+            input_digest(&graph, &settings, &[global("A=B", "C", VarOrigin::File)]),
+            input_digest(&graph, &settings, &[global("A", "B=C", VarOrigin::File)]),
         );
     }
 
