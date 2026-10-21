@@ -203,8 +203,10 @@ unsafe impl Send for ContextRef {}
 unsafe impl Sync for ContextRef {}
 
 impl ContextRef {
-    /// Callers must keep `ctx` borrowed until the store holding the result
-    /// is dropped.
+    /// # Safety
+    ///
+    /// `ctx` must stay borrowed, and on this thread, until the store holding
+    /// the result is dropped.
     pub unsafe fn new(ctx: &ExecContext) -> Self {
         Self(Some(std::ptr::NonNull::from(ctx)))
     }
