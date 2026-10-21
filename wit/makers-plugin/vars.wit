@@ -56,23 +56,17 @@ interface vars {
     /// plugin is both a correctness disaster and a maintenance one.
     expand: func(text: string) -> result<string, error>;
 
-    /// There is deliberately no `expand-for(target, text)`.
+    /// For text that depends on a target's automatic variables — `$@`,
+    /// `$<`, `$^`, `$*` — use `node.expand`, which expands in that target's
+    /// scope with the automatics set. This function runs in the global
+    /// scope, where they are empty.
     ///
-    /// The reason a caller would want one is `$@`/`$<`/`$^`/`$*`, and those
-    /// are not variables in any useful sense — they are properties of the
-    /// edge make is currently building, which is why they only exist while a
-    /// recipe is being prepared. The analysis phase is not building
-    /// anything, so a host-side "expand for this target" would have to
-    /// fabricate them, and would be quietly wrong the moment a target has
-    /// several recipes or a grouped rule.
-    ///
-    /// A plugin already has every automatic from this package's own
-    /// interfaces: `$@` is `node.name`, `$<` is the first element of
-    /// `node.deps`, `$^` is all of them, `$*` is `node.stem`. Substituting
-    /// those is plain string work the SDK does for you
-    /// (`makers_plugin::automatics`), and what is left — `$(CC)`,
-    /// `$(CFLAGS)`, user functions — is exactly what `expand` handles. The
-    /// genuinely target-scoped case (`main.o: CFLAGS += -O2`) is served by
-    /// `node.variable`, which walks per-target and pattern-specific
-    /// definitions before the global set.
+    /// An earlier version of this interface had no per-target expansion, on
+    /// the grounds that the automatics are properties of the edge make is
+    /// building and analysis builds nothing. That held for a plugin that
+    /// could substitute them itself (`makers_plugin::automatics`) and needed
+    /// only plain variables expanded. It stopped holding for a makefile
+    /// whose commands are *constructed* from the automatics by make
+    /// functions, because substituting before the function runs and
+    /// expanding after it are different answers.
 }

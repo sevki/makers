@@ -496,6 +496,47 @@ impl HostNode for PluginStore {
             }))
     }
 
+    fn expand(
+        &mut self,
+        this: Resource<NodeHandle>,
+        text: String,
+    ) -> wasmtime::Result<Result<String, WitError>> {
+        if !self.granted.contains(Caps::EXPAND_VARIABLES) {
+            return Ok(Err(denied("expand-variables", "node.expand")));
+        }
+        let id = self.node_of(&this)?;
+        let NodeId::File(file) = id else {
+            return Ok(Err(WitError {
+                message: "node.expand needs a file node".to_string(),
+                location: None,
+            }));
+        };
+        Ok(crate::plugin::expand_for_file(file, &text).map_err(|message| WitError {
+            message,
+            location: None,
+        }))
+    }
+
+    fn recipe_environment(
+        &mut self,
+        this: Resource<NodeHandle>,
+    ) -> wasmtime::Result<Result<Vec<(String, String)>, WitError>> {
+        if !self.granted.contains(Caps::EXPAND_VARIABLES) {
+            return Ok(Err(denied("expand-variables", "node.recipe-environment")));
+        }
+        let id = self.node_of(&this)?;
+        let NodeId::File(file) = id else {
+            return Ok(Err(WitError {
+                message: "node.recipe-environment needs a file node".to_string(),
+                location: None,
+            }));
+        };
+        Ok(crate::plugin::recipe_environment(file).map_err(|message| WitError {
+            message,
+            location: None,
+        }))
+    }
+
     fn matched_rule(&mut self, this: Resource<NodeHandle>) -> wasmtime::Result<Option<String>> {
         let id = self.node_of(&this)?;
         let rule = match id {

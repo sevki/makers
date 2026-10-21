@@ -520,6 +520,28 @@ analyses, policy gates, caches) are programs, not scripts.
 
 ---
 
+### Per-target expansion and the recipe environment
+
+Two calls on `node` exist for a plugin that turns a recipe into something run
+elsewhere, and both need `expand-variables`.
+
+`node.expand(text)` expands makefile text in that target's scope with the
+automatic variables (`$@ $< $^ $+ $? $* $|`) set, which is what `vars.expand`
+cannot do. It is required when a command is *constructed* from the automatics
+by make functions — Kbuild's `$(call if_changed_rule,cc_o_c)` is a compile
+line only once `$@` and `$<` are known — because substituting before the
+function runs and expanding after it are different answers.
+
+`node.recipe-environment()` is the environment make would give that recipe,
+reduced to what make added or changed: makefiles pass information to recipes
+by `export` (`KBUILD_LDS`, `LDFLAGS_vmlinux`, `srctree` and a hundred more
+reach `scripts/link-vmlinux.sh` that way), and a plugin that wraps the recipe
+needs it. What the process already had is left out, so no credentials reach
+the plugin, as is make's own bookkeeping (`MAKEFLAGS`, `MAKELEVEL`, ...).
+
+`plugins/expand-probe` exercises both from outside; `bazel-export`'s Kbuild
+mode (in [makers-bazel-plugin][bazel-plugin]) is the user they were added for.
+
 ## 5. The example plugins
 
 **`plugins/compile-commands`** produces `compile_commands.json`. This is the

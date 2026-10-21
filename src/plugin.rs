@@ -278,13 +278,24 @@ impl SessionFacts {
                 .split_whitespace()
                 .map(str::to_string)
                 .collect(),
+            // As written on the command line, which is what the WIT doc
+            // promises and what a plugin can use to tell one make from
+            // another. It used to be the goal's `FileId` when it had one,
+            // a hash no plugin can do anything with.
             goal_names: goals
                 .iter()
                 .map(|g| {
+                    if !g.dep.name.is_empty() {
+                        return g.dep.name.clone();
+                    }
                     g.dep
                         .file
-                        .map(|f| f.to_string())
-                        .unwrap_or_else(|| g.dep.name.clone())
+                        .and_then(|f| ctx.filenodes.get(f))
+                        .map(|n| {
+                            String::from_utf8_lossy(&n.lock().expect("file node poisoned").name)
+                                .into_owned()
+                        })
+                        .unwrap_or_default()
                 })
                 .collect(),
             dry_run: crate::entry::opt_just_print(ctx),
@@ -1165,6 +1176,98 @@ pub(crate) fn expand_global(text: &str) -> Result<String, String> {
         libc::free(expanded as *mut libc::c_void);
         Ok(out)
     }
+}
+
+/// Expand `text` in `file`'s scope with its automatic variables set, as
+/// make does while preparing the target's recipe.
+///
+/// Derives `$@ $< $^ $+ $? $* $| $%` through the same
+/// [`crate::commands::set_file_variables`] the job runner calls, so a plugin
+/// sees the values make would use rather than a second implementation of
+/// them. The automatics are left on the node afterwards — they are per-target
+/// variables make would set on it a moment later anyway.
+pub(crate) fn expand_for_file(file: crate::file::FileId, text: &str) -> Result<String, String> {
+    let ctx = ctx_ptr();
+    if ctx.is_null() {
+        return Err("no make context available".to_string());
+    }
+    // SAFETY: as in `lookup_global_full` — `CTX_PTR` is non-null only inside
+    // `with_context`, which outlives every host callback a guest makes.
+    let ctx = unsafe { &*ctx };
+    crate::commands::set_file_variables(ctx, file, None)
+        .map_err(|_| "could not set automatic variables".to_string())?;
+    let mut bytes = text.as_bytes().to_vec();
+    if bytes.contains(&0) {
+        return Err("text contains a NUL byte".to_string());
+    }
+    bytes.push(0);
+    let mut out = crate::expand::expand_string_for_file(ctx, &bytes, file)
+        .map_err(|_| "expansion failed".to_string())?;
+    if out.last() == Some(&0) {
+        out.pop();
+    }
+    Ok(String::from_utf8_lossy(&out).into_owned())
+}
+
+/// The environment make would give `file`'s recipe, reduced to what make
+/// itself added or changed.
+///
+/// Built by the same [`crate::variable::target_environment`] the job runner
+/// uses, so exports, `.EXPORT_ALL_VARIABLES`, `unexport` and recursive
+/// expansion all behave as they do for a real recipe. The process's own
+/// environment is then subtracted: an entry survives only if the process did
+/// not have it or had it with a different value. See `node.recipe-environment`
+/// in `graph.wit` for why.
+pub(crate) fn recipe_environment(
+    file: crate::file::FileId,
+) -> Result<Vec<(String, String)>, String> {
+    let ctx = ctx_ptr();
+    if ctx.is_null() {
+        return Err("no make context available".to_string());
+    }
+    // SAFETY: as in `lookup_global_full`.
+    let ctx = unsafe { &*ctx };
+    // SAFETY: `target_environment` returns a NULL-terminated array of
+    // `malloc`ed `NAME=value` strings that this function owns; each string and
+    // the array are freed below exactly as `job::free_childbase` does.
+    let entries = unsafe {
+        let env = crate::variable::target_environment(ctx, Some(file), 1)
+            .map_err(|_| "could not build the recipe environment".to_string())?;
+        let mut out = Vec::new();
+        let mut p = env;
+        while !p.is_null() && !(*p).is_null() {
+            out.push(std::ffi::CStr::from_ptr(*p).to_bytes().to_vec());
+            libc::free(*p as *mut libc::c_void);
+            p = p.add(1);
+        }
+        libc::free(env as *mut libc::c_void);
+        out
+    };
+    let inherited: std::collections::HashMap<Vec<u8>, Vec<u8>> = std::env::vars_os()
+        .map(|(k, v)| {
+            use std::os::unix::ffi::OsStrExt;
+            (k.as_bytes().to_vec(), v.as_bytes().to_vec())
+        })
+        .collect();
+    let mut result: Vec<(String, String)> = entries
+        .into_iter()
+        .filter_map(|e| {
+            let eq = e.iter().position(|&b| b == b'=')?;
+            let (name, value) = (&e[..eq], &e[eq + 1..]);
+            if matches!(name, b"MAKEFLAGS" | b"MFLAGS" | b"MAKELEVEL")
+                || name.starts_with(b"MAKE_TERM")
+                || inherited.get(name).map(|v| v.as_slice()) == Some(value)
+            {
+                return None;
+            }
+            Some((
+                String::from_utf8_lossy(name).into_owned(),
+                String::from_utf8_lossy(value).into_owned(),
+            ))
+        })
+        .collect();
+    result.sort();
+    Ok(result)
 }
 
 #[cfg(test)]
