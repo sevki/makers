@@ -704,38 +704,41 @@ unsafe fn eval_tmpdir_var(
 
 /// Return the directory for temporary files: `$MAKE_TMPDIR`, `$TMPDIR`, or
 /// the default, in that order, warning about set-but-unusable values. The
-/// result is computed once per run and cached on `ctx.tmpdir`.
+/// result is computed once per run and cached, as an owned copy, on
+/// `ctx.tmpdir`.
 ///
 /// # Safety
 /// Reads the environment; the caller's `ExecContext` must not be shared
 /// across concurrent callers without synchronization.
-pub unsafe fn get_tmpdir(ctx: &crate::execctx::ExecContext) -> *const c_char {
-    if ctx.tmpdir.0.get().is_null() {
-        let mut found = false;
-        for var in [c"MAKE_TMPDIR", c"TMPDIR"] {
-            match eval_tmpdir_var(ctx, var) {
-                TmpdirCandidate::Unset => {}
-                TmpdirCandidate::Usable(val) => {
-                    ctx.tmpdir.0.set(val);
-                    return val;
-                }
-                TmpdirCandidate::Invalid => found = true,
+pub unsafe fn get_tmpdir(ctx: &crate::execctx::ExecContext) -> ::std::ffi::CString {
+    if let Some(cached) = ctx.tmpdir.borrow().clone() {
+        return cached;
+    }
+    let mut found = false;
+    for var in [c"MAKE_TMPDIR", c"TMPDIR"] {
+        match eval_tmpdir_var(ctx, var) {
+            TmpdirCandidate::Unset => {}
+            TmpdirCandidate::Usable(val) => {
+                let dir = ::core::ffi::CStr::from_ptr(val).to_owned();
+                *ctx.tmpdir.borrow_mut() = Some(dir.clone());
+                return dir;
             }
-        }
-
-        let tmpdir = DEFAULT_TMPDIR.as_ptr();
-        ctx.tmpdir.0.set(tmpdir);
-        if found {
-            error(
-                ctx,
-                null::<Floc>(),
-                0,
-                c"using default temporary directory '%s'".as_ptr(),
-                &[FmtArg::Str(tmpdir)],
-            );
+            TmpdirCandidate::Invalid => found = true,
         }
     }
-    ctx.tmpdir.0.get()
+
+    let dir = DEFAULT_TMPDIR.to_owned();
+    *ctx.tmpdir.borrow_mut() = Some(dir.clone());
+    if found {
+        error(
+            ctx,
+            null::<Floc>(),
+            0,
+            c"using default temporary directory '%s'".as_ptr(),
+            &[FmtArg::Str(dir.as_ptr())],
+        );
+    }
+    dir
 }
 
 /// Build an `xmalloc`'d mkstemp template `<tmpdir>/GmXXXXXX`.
@@ -744,8 +747,9 @@ pub unsafe fn get_tmpdir(ctx: &crate::execctx::ExecContext) -> *const c_char {
 pub unsafe fn get_tmptemplate(ctx: &crate::execctx::ExecContext) -> *mut c_char {
     let tmpdir = get_tmpdir(ctx);
 
-    let template = xmalloc(strlen(tmpdir) + DEFAULT_TMPFILE.to_bytes().len() + 2) as *mut c_char;
-    let mut cp = stpcpy(template, tmpdir);
+    let template =
+        xmalloc(tmpdir.count_bytes() + DEFAULT_TMPFILE.to_bytes().len() + 2) as *mut c_char;
+    let mut cp = stpcpy(template, tmpdir.as_ptr());
     if !stop_set(*cp.sub(1), MAP_DIRSEP) {
         *cp = '/' as c_char;
         cp = cp.add(1);
@@ -921,6 +925,77 @@ mod bufio_tests {
         assert!(fd >= 0, "open_anon_tmpfd failed");
         // SAFETY: fresh fd owned by this test.
         unsafe { <std::fs::File as std::os::fd::FromRawFd>::from_raw_fd(fd) }
+    }
+}
+
+/// `get_tmpdir`/`get_tmptemplate` over the owned `ctx.tmpdir` cache. The
+/// process environment is only read, never changed: parallel tests consult
+/// `TMPDIR` too.
+#[cfg(test)]
+mod tmpdir_tests {
+    use super::{get_tmpdir, get_tmptemplate};
+    use crate::execctx::ExecContext;
+    use ::core::ffi::CStr;
+
+    /// The algorithm `get_tmpdir` replaced, restated over `std`: the first of
+    /// `$MAKE_TMPDIR`/`$TMPDIR` that is non-empty and names a directory, else
+    /// `/tmp`.
+    fn tmpdir_oracle() -> Vec<u8> {
+        use std::os::unix::ffi::OsStrExt;
+        for var in ["MAKE_TMPDIR", "TMPDIR"] {
+            if let Some(val) = std::env::var_os(var) {
+                if !val.is_empty() && std::fs::metadata(&val).is_ok_and(|m| m.is_dir()) {
+                    return val.as_bytes().to_vec();
+                }
+            }
+        }
+        b"/tmp".to_vec()
+    }
+
+    #[test]
+    fn computes_once_and_matches_the_environment_oracle() {
+        let ctx = ExecContext::default();
+        assert!(ctx.tmpdir.borrow().is_none());
+
+        // SAFETY: single-threaded use of a private context.
+        let first = unsafe { get_tmpdir(&ctx) };
+        assert_eq!(first.to_bytes(), tmpdir_oracle().as_slice());
+        // Cached as an owned copy, and handed back unchanged.
+        assert_eq!(ctx.tmpdir.borrow().as_deref(), Some(first.as_c_str()));
+        assert_eq!(unsafe { get_tmpdir(&ctx) }, first);
+    }
+
+    #[test]
+    fn a_cached_directory_is_used_without_consulting_the_environment() {
+        let ctx = ExecContext::default();
+        *ctx.tmpdir.borrow_mut() = Some(c"/cached".to_owned());
+        assert_eq!(unsafe { get_tmpdir(&ctx) }.as_c_str(), c"/cached");
+
+        // SAFETY: `get_tmptemplate` returns an `xmalloc`'d NUL-terminated
+        // string; it is read once and freed. (A trailing-'/' directory is not
+        // exercised: whether it is joined without a second '/' depends on the
+        // process-global `MAP_DIRSEP` stopchar map, which other tests set up.)
+        unsafe {
+            let template = get_tmptemplate(&ctx);
+            assert_eq!(
+                CStr::from_ptr(template).to_str().unwrap(),
+                "/cached/GmXXXXXX"
+            );
+            ::libc::free(template as *mut ::core::ffi::c_void);
+        }
+    }
+
+    #[test]
+    fn the_cache_survives_the_main_0_carry_over() {
+        let mut ctx = ExecContext::default();
+        *ctx.tmpdir.borrow_mut() = Some(c"/kept".to_owned());
+        let carried = ::core::mem::take(&mut ctx.tmpdir);
+        assert!(ctx.tmpdir.borrow().is_none());
+        let rebuilt = ExecContext {
+            tmpdir: carried,
+            ..ExecContext::default()
+        };
+        assert_eq!(unsafe { get_tmpdir(&rebuilt) }.as_c_str(), c"/kept");
     }
 }
 

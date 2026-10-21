@@ -298,18 +298,15 @@ pub const PARSEFS_NONE: i32 = 0;
 /// the `filenm` C string into owned bytes (`None` for a null `filenm`).
 ///
 /// # Safety
-/// `flocp` must be null or a valid `Floc` with a null-or-valid `filenm`.
+/// `flocp` must be null or a valid `Floc`.
 unsafe fn floc_owned(flocp: *const Floc) -> (Option<Vec<u8>>, u64, u64) {
     match flocp.as_ref() {
         None => (None, 0, 0),
-        Some(f) => {
-            let defined_in = if f.filenm.is_null() {
-                None
-            } else {
-                Some(::std::ffi::CStr::from_ptr(f.filenm).to_bytes().to_vec())
-            };
-            (defined_in, f.lineno as u64, f.offset as u64)
-        }
+        Some(f) => (
+            f.filenm.map(|name| name.to_bytes().to_vec()),
+            f.lineno,
+            f.offset,
+        ),
     }
 }
 /// Count the nodes in a `NameSeq` chain, starting from its head node (or
@@ -500,7 +497,7 @@ unsafe fn eval_makefile(
         size: 0,
         fp: ::core::ptr::null_mut::<lines::MakefileReader>(),
         floc: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -512,7 +509,13 @@ unsafe fn eval_makefile(
         rf.push(crate::dep::GoalDepNode::default());
         idx
     };
-    ebuf.floc.filenm = filename;
+    // The interned copy of the name, not the caller's pointer: callers differ in
+    // what backs it (an interned string, a static table entry, or a local
+    // `Vec` for an `include`), and interning is idempotent for the first two.
+    ebuf.floc.filenm = Some(crate::strcache::strcache_intern(
+        ctx,
+        ::core::ffi::CStr::from_ptr(filename).to_bytes(),
+    ));
     ebuf.floc.lineno = 1;
     ebuf.floc.offset = 0;
     if 0x2_i32 & db_level(ctx) != 0 {
@@ -727,7 +730,7 @@ pub unsafe fn eval_buffer(
         size: 0,
         fp: ::core::ptr::null_mut::<lines::MakefileReader>(),
         floc: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -742,7 +745,7 @@ pub unsafe fn eval_buffer(
     } else if !ctx.reading_file.0.get().is_null() {
         ebuf.floc = *ctx.reading_file.0.get();
     } else {
-        ebuf.floc.filenm = ::core::ptr::null::<::core::ffi::c_char>();
+        ebuf.floc.filenm = None;
         ebuf.floc.lineno = 1;
         ebuf.floc.offset = 0;
     }
@@ -907,7 +910,7 @@ pub unsafe fn eval(
     let mut pattern_percent: *const ::core::ffi::c_char;
     let fstart: *mut Floc;
     let mut fi: Floc = Floc {
-        filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+        filenm: None,
         lineno: 0,
         offset: 0,
     };
@@ -952,10 +955,10 @@ pub unsafe fn eval(
             {
                 line = line.offset(3_i32 as isize);
                 if 0x1_i32 & db_level(ctx) != 0 {
-                    if !(*ebuf).floc.filenm.is_null() {
+                    if let Some(filenm) = (*ebuf).floc.filenm {
                         crate::output::trace_parts(&[
                             b"Skipping UTF-8 BOM in makefile '",
-                            ::core::ffi::CStr::from_ptr((*ebuf).floc.filenm).to_bytes(),
+                            filenm.to_bytes(),
                             b"'\n",
                         ]);
                     } else {
@@ -2119,7 +2122,7 @@ unsafe fn do_define(
         name: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         value: ::core::ptr::null_mut::<::core::ffi::c_char>(),
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },

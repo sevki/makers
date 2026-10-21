@@ -15,7 +15,7 @@ use std::sync::atomic::Ordering;
 
 use libc::{
     __errno_location, close, fcntl, free, open, perror, read, sigset_t, sprintf, sscanf,
-    strcmp, strerror, strlen, strncmp, timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET,
+    strcmp, strerror, strncmp, timespec, write, EAGAIN, EBADF, EINTR, FD_CLOEXEC, FD_SET,
     FD_ZERO, F_GETFD, F_GETFL, F_SETFD, F_SETFL, O_APPEND, O_EXCL, O_NONBLOCK, O_RDONLY, O_RDWR,
     O_WRONLY, SEEK_SET,
 };
@@ -35,7 +35,7 @@ use crate::{
     commands::handling_fatal_signal,
     entry::db_level,
     floc::Floc,
-    misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc, xstrdup},
+    misc::{get_tmpdir, make_pid, open_named_tmpfd, xmalloc},
     output::{
         error,
         fatal_err,
@@ -101,6 +101,14 @@ pub unsafe fn check_io_state(ctx: &crate::execctx::ExecContext) -> c_uint {
 // Jobserver.
 
 const FIFO_PREFIX: &CStr = c"fifo:";
+
+/// The jobserver fifo's path: `<tmpdir>/GmFIFO<pid>`, the pid zero-padded to
+/// at least three digits (what `sprintf("%s/GmFIFO%03lld")` produced).
+fn fifo_path_in(tmpdir: ::std::ffi::CString, pid: c_longlong) -> ::std::ffi::CString {
+    let mut path = tmpdir.into_bytes();
+    path.extend_from_slice(format!("/GmFIFO{pid:03}").as_bytes());
+    ::std::ffi::CString::new(path).expect("a C string and a numeric suffix hold no NUL")
+}
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -198,17 +206,12 @@ pub unsafe fn jobserver_setup(
     ctx.job_root.0.store(true, Ordering::Relaxed);
 
     if style.is_null() || strcmp(style, c"fifo".as_ptr()) == 0 {
-        let tmpdir = get_tmpdir(ctx);
-        let fifo_name =
-            xmalloc(strlen(tmpdir) + FIFO_PREFIX.to_bytes().len() + 1 + INTSTR_LENGTH + 2)
-                as *mut c_char;
-        sprintf(
-            fifo_name,
-            c"%s/GmFIFO%03lld".as_ptr(),
-            tmpdir,
-            make_pid() as c_longlong,
-        );
-        ctx.fifo_name.0.set(fifo_name);
+        let fifo_path = fifo_path_in(get_tmpdir(ctx), make_pid() as c_longlong);
+        // The raw pointer the libc calls below take; `fifo_path` owns it.
+        let fifo_name = fifo_path.as_ptr();
+        // Recorded before `mkfifo`, so a fatal signal between the two still
+        // unlinks the fifo.
+        ctx.fifo_name.set(Some(fifo_path.clone()));
 
         loop {
             r = mkfifo(fifo_name, 0o600);
@@ -218,8 +221,7 @@ pub unsafe fn jobserver_setup(
         }
         if r < 0 {
             perror_with_name(ctx, c"jobserver mkfifo: ".as_ptr(), fifo_name);
-            free(fifo_name as *mut c_void);
-            ctx.fifo_name.0.set(null_mut());
+            ctx.fifo_name.set(None);
         } else {
             let mut fds = ctx.job_fds.0.get();
             loop {
@@ -340,8 +342,10 @@ pub unsafe fn jobserver_parse_auth(
     let mut wfd: i32 = 0;
 
     if strncmp(auth, FIFO_PREFIX.as_ptr(), FIFO_PREFIX.to_bytes().len()) == 0 {
-        let fifo_name = xstrdup(auth.add(FIFO_PREFIX.to_bytes().len()));
-        ctx.fifo_name.0.set(fifo_name);
+        let fifo_path = CStr::from_ptr(auth.add(FIFO_PREFIX.to_bytes().len())).to_owned();
+        // The raw pointer the libc calls below take; `fifo_path` owns it.
+        let fifo_name = fifo_path.as_ptr();
+        ctx.fifo_name.set(Some(fifo_path.clone()));
         let mut fds = ctx.job_fds.0.get();
         loop {
             fds[0] = open(fifo_name, O_RDONLY);
@@ -427,9 +431,13 @@ pub unsafe fn jobserver_parse_auth(
 /// The jobserver must be set up; must run single-threaded.
 pub unsafe fn jobserver_get_auth(ctx: &crate::execctx::ExecContext) -> *mut c_char {
     if js_type_get(ctx) == JsType::Fifo {
-        let fifo_name = ctx.fifo_name.0.get();
-        let auth = xmalloc(strlen(fifo_name) + FIFO_PREFIX.to_bytes().len() + 1) as *mut c_char;
-        sprintf(auth, c"fifo:%s".as_ptr(), fifo_name);
+        let fifo_name = ctx
+            .fifo_name
+            .get()
+            .expect("a fifo jobserver always has a recorded path");
+        let auth =
+            xmalloc(fifo_name.count_bytes() + FIFO_PREFIX.to_bytes().len() + 1) as *mut c_char;
+        sprintf(auth, c"fifo:%s".as_ptr(), fifo_name.as_ptr());
         auth
     } else {
         let fds = ctx.job_fds.0.get();
@@ -475,14 +483,19 @@ pub unsafe fn jobserver_clear() {
         }
         ctx.job_fds.0.set([-1, -1]);
 
-        let fifo_name = ctx.fifo_name.0.get();
-        if !fifo_name.is_null() {
+        if handling_fatal_signal(ctx) {
+            // The signal path only reads the name: it neither frees nor
+            // clears it (the process is about to die), and `try_with` never
+            // blocks or allocates. If the lock is held at this instant, the
+            // fifo file is left behind (see `SignalPathCell`).
             if ctx.job_root.0.load(Ordering::Relaxed) {
-                let _ = crate::misc::unlink_c(fifo_name);
+                let _ = ctx
+                    .fifo_name
+                    .try_with(|name| crate::misc::unlink_c(name.as_ptr()));
             }
-            if !handling_fatal_signal(ctx) {
-                free(fifo_name as *mut c_void);
-                ctx.fifo_name.0.set(null_mut());
+        } else if let Some(name) = ctx.fifo_name.take() {
+            if ctx.job_root.0.load(Ordering::Relaxed) {
+                let _ = crate::misc::unlink_c(name.as_ptr());
             }
         }
 
@@ -732,7 +745,11 @@ pub fn osync_enabled(ctx: &crate::execctx::ExecContext) -> c_uint {
 /// Must run single-threaded during startup.
 pub unsafe fn osync_setup(ctx: &crate::execctx::ExecContext) {
     let (h, nm) = open_named_tmpfd(ctx);
-    ctx.osync_tmpfile.0.set(nm);
+    // `nm` is an `xmalloc`'d name (null on failure): keep an owned copy and
+    // free the original, which this function used to adopt as-is.
+    let name = (!nm.is_null()).then(|| CStr::from_ptr(nm).to_owned());
+    free(nm as *mut c_void);
+    ctx.osync_tmpfile.set(name);
     ctx.osync_handle.0.store(h, Ordering::Relaxed);
     fd_noinherit(h);
     ctx.sync_root.0.store(true, Ordering::Relaxed);
@@ -747,9 +764,13 @@ pub unsafe fn osync_get_mutex(ctx: &crate::execctx::ExecContext) -> *mut c_char 
     if osync_enabled(ctx) == 0 {
         return null_mut();
     }
-    let osync_tmpfile = ctx.osync_tmpfile.0.get();
-    let mutex = xmalloc(strlen(osync_tmpfile) + MUTEX_PREFIX.to_bytes().len() + 1) as *mut c_char;
-    sprintf(mutex, c"fnm:%s".as_ptr(), osync_tmpfile);
+    let osync_tmpfile = ctx
+        .osync_tmpfile
+        .get()
+        .expect("an enabled output sync mutex always has a recorded path");
+    let mutex =
+        xmalloc(osync_tmpfile.count_bytes() + MUTEX_PREFIX.to_bytes().len() + 1) as *mut c_char;
+    sprintf(mutex, c"fnm:%s".as_ptr(), osync_tmpfile.as_ptr());
     mutex
 }
 
@@ -779,9 +800,11 @@ pub unsafe fn osync_parse_mutex(
         return Ok(0);
     }
 
-    free(ctx.osync_tmpfile.0.get() as *mut c_void);
-    let osync_tmpfile = xstrdup(mutex.add(MUTEX_PREFIX.to_bytes().len()));
-    ctx.osync_tmpfile.0.set(osync_tmpfile);
+    let osync_path = CStr::from_ptr(mutex.add(MUTEX_PREFIX.to_bytes().len())).to_owned();
+    // The raw pointer the libc calls below take; `osync_path` owns it.
+    let osync_tmpfile = osync_path.as_ptr();
+    // Replaces (and drops) any earlier name, as the `free` of the old pointer did.
+    ctx.osync_tmpfile.set(Some(osync_path.clone()));
 
     loop {
         let h = open(osync_tmpfile, O_WRONLY);
@@ -821,11 +844,20 @@ pub unsafe fn osync_clear() {
             close(h);
             ctx.osync_handle.0.store(-1, Ordering::Relaxed);
         }
-        let osync_tmpfile = ctx.osync_tmpfile.0.get();
-        if ctx.sync_root.0.load(Ordering::Relaxed) && !osync_tmpfile.is_null() {
-            let _ = crate::misc::unlink_c(osync_tmpfile);
-            free(osync_tmpfile as *mut c_void);
-            ctx.osync_tmpfile.0.set(null_mut());
+        // Only the process that created the lock file removes it; one that
+        // merely adopted an inherited mutex keeps its recorded name.
+        if ctx.sync_root.0.load(Ordering::Relaxed) {
+            if handling_fatal_signal(ctx) {
+                // The signal path only reads the name: `try_with` never
+                // blocks or allocates, and nothing is freed or cleared (the
+                // process is about to die). If the lock is held at this
+                // instant, the file is left behind (see `SignalPathCell`).
+                let _ = ctx
+                    .osync_tmpfile
+                    .try_with(|name| crate::misc::unlink_c(name.as_ptr()));
+            } else if let Some(name) = ctx.osync_tmpfile.take() {
+                let _ = crate::misc::unlink_c(name.as_ptr());
+            }
         }
     });
 }
@@ -976,7 +1008,7 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
 
     if ctx.tmpfile_works.0.load(Ordering::Relaxed) {
         loop {
-            fd = open(tdir, O_RDWR | O_TMPFILE | O_EXCL, 0o600_i32);
+            fd = open(tdir.as_ptr(), O_RDWR | O_TMPFILE | O_EXCL, 0o600_i32);
             if !(fd == -1 && *__errno_location() == EINTR) {
                 break;
             }
@@ -988,7 +1020,7 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
             let err = ::core::ffi::CStr::from_ptr(strerror(*__errno_location()));
             let mut msg = Vec::with_capacity(64);
             msg.extend_from_slice(b"Cannot open '");
-            msg.extend_from_slice(::core::ffi::CStr::from_ptr(tdir).to_bytes());
+            msg.extend_from_slice(tdir.to_bytes());
             msg.extend_from_slice(b"' with O_TMPFILE: ");
             msg.extend_from_slice(err.to_bytes());
             msg.extend_from_slice(b".\n");
@@ -1004,7 +1036,7 @@ pub unsafe fn os_anontmp(ctx: &crate::execctx::ExecContext) -> i32 {
     // bytes. The separate 'dup:' error path is gone: we own the fd, so no
     // dup happens (C could hit it only by exhausting fds on the dup after
     // a successful tmpfile; that now fails at the open with 'tmpfile:').
-    if strcmp(tdir, c"/tmp".as_ptr()) == 0 {
+    if tdir.as_c_str() == c"/tmp" {
         match anon_unlinked_tmp() {
             Ok(file) => fd = <std::fs::File as std::os::fd::IntoRawFd>::into_raw_fd(file),
             Err(e) => {
@@ -1496,5 +1528,180 @@ mod tests {
 
         assert_eq!(result, Err(crate::build_result::BuildError::Failure));
         assert!(ctx.dying.0.load(Ordering::Relaxed));
+    }
+
+    /// `fifo_path_in` against the `sprintf("%s/GmFIFO%03lld")` it replaced,
+    /// across short and long pids (the zero padding) and odd directories.
+    #[test]
+    #[cfg_attr(miri, ignore = "the oracle calls snprintf, a foreign function Miri cannot run")]
+    fn fifo_path_matches_the_sprintf_oracle() {
+        for tmpdir in [c"/tmp", c"/var/tmp/", c"/a b/c"] {
+            for pid in [0, 1, 7, 42, 999, 1000, 123_456, 4_194_304, i64::MAX] {
+                let mut buf = [0 as c_char; 128];
+                // SAFETY: `buf` is large enough for the longest case, and
+                // `snprintf` NUL-terminates within it.
+                let written = unsafe {
+                    libc::snprintf(
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        c"%s/GmFIFO%03lld".as_ptr(),
+                        tmpdir.as_ptr(),
+                        pid as c_longlong,
+                    )
+                };
+                assert!(written > 0 && (written as usize) < buf.len());
+                // SAFETY: `snprintf` left a NUL-terminated string in `buf`.
+                let want = unsafe { CStr::from_ptr(buf.as_ptr()) };
+                let got = fifo_path_in(tmpdir.to_owned(), pid);
+                assert_eq!(got.as_c_str(), want, "tmpdir {tmpdir:?}, pid {pid}");
+            }
+        }
+    }
+
+    /// `jobserver_clear`: on the ordinary path the job root unlinks the fifo
+    /// and everyone forgets its name; on the fatal-signal path it unlinks but
+    /// leaves the name alone (the process is about to die, and the handler
+    /// must not free or clear anything).
+    #[test]
+    fn jobserver_clear_unlinks_and_forgets_the_fifo_name() {
+        let ctx = crate::entry::install_default_exec_context_for_test();
+        let make = |tag: &str| {
+            let path = std::env::temp_dir()
+                .join(format!("makers_fifo_clear_{}_{tag}", std::process::id()));
+            std::fs::write(&path, b"").unwrap();
+            let name = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+            (path, name)
+        };
+
+        // Not the job root (an inherited jobserver): the file is not ours to
+        // remove, but the name is still dropped.
+        let (path, name) = make("child");
+        ctx.job_root.0.store(false, Ordering::Relaxed);
+        ctx.fifo_name.set(Some(name));
+        unsafe { jobserver_clear() };
+        assert!(path.exists(), "a non-root must not unlink the fifo");
+        assert!(ctx.fifo_name.get().is_none());
+        std::fs::remove_file(&path).unwrap();
+
+        // The job root, ordinary path: unlinked, and the name forgotten.
+        let (path, name) = make("root");
+        ctx.job_root.0.store(true, Ordering::Relaxed);
+        ctx.fifo_name.set(Some(name));
+        unsafe { jobserver_clear() };
+        assert!(!path.exists(), "the job root unlinks its fifo");
+        assert!(ctx.fifo_name.get().is_none());
+
+        // The job root, fatal-signal path: unlinked, name left in place.
+        let (path, name) = make("signal");
+        ctx.fifo_name.set(Some(name.clone()));
+        ctx.handling_fatal_signal.0.store(true, Ordering::Relaxed);
+        unsafe { jobserver_clear() };
+        ctx.handling_fatal_signal.0.store(false, Ordering::Relaxed);
+        assert!(!path.exists(), "the signal path still unlinks the fifo");
+        assert_eq!(ctx.fifo_name.get().as_deref(), Some(name.as_c_str()));
+        ctx.fifo_name.set(None);
+    }
+
+    /// `osync_clear`: only the process that created the lock file
+    /// (`sync_root`) unlinks it and forgets its name; one that merely adopted an
+    /// inherited mutex keeps its name; and on the fatal-signal path the creator
+    /// unlinks but leaves the name alone.
+    #[test]
+    fn osync_clear_unlinks_only_for_the_creator() {
+        let ctx = crate::entry::install_default_exec_context_for_test();
+        let make = |tag: &str| {
+            let path = std::env::temp_dir()
+                .join(format!("makers_osync_clear_{}_{tag}", std::process::id()));
+            std::fs::write(&path, b"").unwrap();
+            let name = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+            (path, name)
+        };
+
+        // An adopter: the file is not ours to remove, and the name is kept.
+        let (path, name) = make("adopter");
+        ctx.sync_root.0.store(false, Ordering::Relaxed);
+        ctx.osync_tmpfile.set(Some(name.clone()));
+        unsafe { osync_clear() };
+        assert!(path.exists(), "an adopter must not unlink the lock file");
+        assert_eq!(ctx.osync_tmpfile.get().as_deref(), Some(name.as_c_str()));
+        std::fs::remove_file(&path).unwrap();
+
+        // The creator, ordinary path: unlinked, and the name forgotten.
+        let (path, name) = make("creator");
+        ctx.sync_root.0.store(true, Ordering::Relaxed);
+        ctx.osync_tmpfile.set(Some(name));
+        unsafe { osync_clear() };
+        assert!(!path.exists(), "the creator unlinks the lock file");
+        assert!(ctx.osync_tmpfile.get().is_none());
+
+        // The creator, fatal-signal path: unlinked, name left in place.
+        let (path, name) = make("signal");
+        ctx.osync_tmpfile.set(Some(name.clone()));
+        ctx.handling_fatal_signal.0.store(true, Ordering::Relaxed);
+        unsafe { osync_clear() };
+        ctx.handling_fatal_signal.0.store(false, Ordering::Relaxed);
+        assert!(!path.exists(), "the signal path still unlinks the lock file");
+        assert_eq!(ctx.osync_tmpfile.get().as_deref(), Some(name.as_c_str()));
+        ctx.osync_tmpfile.set(None);
+        ctx.sync_root.0.store(false, Ordering::Relaxed);
+    }
+
+    /// The creator's whole lifecycle: `osync_setup` copies the `xmalloc`'d name
+    /// `open_named_tmpfd` returns into an owned one (and frees the original),
+    /// `osync_get_mutex` reports it as `fnm:<path>`, and `osync_clear` removes
+    /// the file and forgets it.
+    #[test]
+    fn osync_setup_records_an_owned_name_that_get_mutex_and_clear_use() {
+        use std::os::unix::ffi::OsStrExt;
+        let ctx = crate::entry::install_default_exec_context_for_test();
+
+        unsafe { osync_setup(ctx) };
+        let name = ctx
+            .osync_tmpfile
+            .get()
+            .expect("setup records the lock file's name");
+        let path = std::path::Path::new(std::ffi::OsStr::from_bytes(name.to_bytes()));
+        assert!(path.exists(), "setup creates the lock file");
+        assert_ne!(osync_enabled(ctx), 0);
+
+        // SAFETY: `osync_get_mutex` returns an `xmalloc`'d NUL-terminated
+        // string, read once and freed.
+        let reported = unsafe {
+            let mutex = osync_get_mutex(ctx);
+            let bytes = CStr::from_ptr(mutex).to_bytes().to_vec();
+            free(mutex.cast());
+            bytes
+        };
+        assert_eq!(reported, [b"fnm:".as_slice(), name.to_bytes()].concat());
+
+        unsafe { osync_clear() };
+        assert!(!path.exists(), "clear removes the lock file");
+        assert!(ctx.osync_tmpfile.get().is_none());
+        assert_eq!(osync_enabled(ctx), 0, "clear closes the handle");
+        ctx.sync_root.0.store(false, Ordering::Relaxed);
+    }
+
+    /// `osync_parse_mutex` adopts an inherited `fnm:<path>`: the path is
+    /// recorded as an owned name (replacing any earlier one) and the file is
+    /// opened.
+    #[test]
+    fn osync_parse_mutex_adopts_an_inherited_path() {
+        let ctx = crate::execctx::ExecContext::default();
+        let path = std::env::temp_dir().join(format!("makers_osync_parse_{}", std::process::id()));
+        std::fs::write(&path, b"").unwrap();
+        ctx.osync_tmpfile.set(Some(c"/some/earlier/path".to_owned()));
+
+        let mutex = std::ffi::CString::new(format!("fnm:{}", path.to_str().unwrap())).unwrap();
+        let result = unsafe { osync_parse_mutex(&ctx, mutex.as_ptr()) };
+
+        assert_eq!(result, Ok(1));
+        assert_eq!(
+            ctx.osync_tmpfile.get().as_deref().map(CStr::to_bytes),
+            Some(path.to_str().unwrap().as_bytes()),
+        );
+        let handle = ctx.osync_handle.0.load(Ordering::Relaxed);
+        assert!(handle >= 0, "the inherited lock file was opened");
+        unsafe { close(handle) };
+        std::fs::remove_file(&path).unwrap();
     }
 }
