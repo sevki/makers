@@ -310,7 +310,7 @@ named by the plugin at runtime through `artifacts.open-in`.
 > every directory that owns targets — and which directories those are is not
 > known until the graph has been walked. A manifest cannot list them. This
 > is the case that [#632][pr632] solved by putting a `--dump-bazel` flag and
-> a `std::fs::write` loop in `src/depgraph.rs`; `plugins/bazel-export`
+> a `std::fs::write` loop in `src/depgraph.rs`; `bazel-export`
 > (§5) does the same job as a plugin.
 
 [pr632]: https://github.com/sevki/makers/pull/632
@@ -568,7 +568,7 @@ it.
 ---
 
 
-**`plugins/bazel-export`** is [#632][pr632-5] rebuilt as a plugin, and the
+**`bazel-export`** (now [sevki/makers-bazel-plugin][bazel-plugin]) is [#632][pr632-5] rebuilt as a plugin, and the
 reason `directory` outputs exist. It emits the same per-package genrules that
 version emitted from `src/depgraph.rs` behind a `--dump-bazel` flag. Three
 differences are the interface earning its keep rather than a rewrite for its
@@ -598,7 +598,7 @@ sub-make), and its `built-in.a` archives are thin, naming `.o` files a
 per-target action would not have kept. `--plugin-arg bazel:mode=wrap` emits a
 `MODULE.bazel` and one hermetic `kernel` genrule instead — copy the tree, run
 `make`, return the declared `outs` — the same trade Android's Kleaf makes. See
-the module docs in `plugins/bazel-export/src/lib.rs` for the settings. For
+the [plugin's README][bazel-plugin] for the settings. For
 Linux 6.6 (verified: `bazel build //:kernel` yields `vmlinux` and `bzImage`):
 
 ```sh
@@ -802,3 +802,5 @@ capability that would let it substitute compilers.
 * **Shape B.** `world plugin-host` names the host side so that the
   `jco`-based shim from `docs/wasm-extension-system.md` has something
   concrete to implement. Whether it can is unproven.
+
+[bazel-plugin]: https://github.com/sevki/makers-bazel-plugin
