@@ -241,16 +241,14 @@ pub fn run_plugins_if_requested(ctx: &ExecContext, goals: &[GoalDepNode]) -> boo
     let mut providers: FxHashMap<NodeId, Vec<host::Provider>> = FxHashMap::default();
     let mut fatal = false;
 
-    with_context(ctx, || {
-        for spec in &specs {
-            match run_instance(spec, &graph, &session, &mut providers) {
-                Ok(instance_fatal) => fatal |= instance_fatal,
-                Err(err) => {
-                    eprintln!("make: {}: plugin failed: {err:#}", spec.name);
-                }
+    for spec in &specs {
+        match run_instance(spec, &graph, &session, ctx, &mut providers) {
+            Ok(instance_fatal) => fatal |= instance_fatal,
+            Err(err) => {
+                eprintln!("make: {}: plugin failed: {err:#}", spec.name);
             }
         }
-    });
+    }
     fatal
 }
 
@@ -273,7 +271,7 @@ impl SessionFacts {
             // `MAKEFILE_LIST` is make's own record of what it read, kept
             // correct through `include`, `-f` and remade makefiles — far
             // more reliable than re-deriving the list here.
-            makefiles: lookup_global_raw("MAKEFILE_LIST")
+            makefiles: lookup_global_raw(ctx, "MAKEFILE_LIST")
                 .unwrap_or_default()
                 .split_whitespace()
                 .map(str::to_string)
@@ -307,10 +305,11 @@ impl SessionFacts {
 
 // ─── One instance ────────────────────────────────────────────────────────
 
-fn run_instance(
+fn run_instance<'a>(
     spec: &InstanceSpec,
     graph: &DepGraph,
     session: &SessionFacts,
+    ctx: &'a ExecContext,
     providers: &mut FxHashMap<NodeId, Vec<host::Provider>>,
 ) -> anyhow::Result<bool> {
     let mut config = wasmtime::Config::new();
@@ -350,11 +349,13 @@ fn run_instance(
     }
 
     // Step 3: the real store, carrying exactly the granted authority.
-    let digest = input_digest(graph, &spec.settings, &global_variables());
+    let digest = input_digest(graph, &spec.settings, &global_variables(ctx));
     let outputs = resolve_outputs(&info, spec, &session.working_dir);
     let mut store = wasmtime::Store::new(
         &engine,
         PluginStore {
+            // SAFETY: `ctx` outlives the store, which is dropped before return.
+            ctx: unsafe { host::ContextRef::new(ctx) },
             graph: graph.clone(),
             sets: Default::default(),
             providers: std::mem::take(providers),
@@ -455,6 +456,7 @@ fn describe(
     let mut store = wasmtime::Store::new(
         engine,
         PluginStore {
+            ctx: Default::default(),
             graph: DepGraph::new(),
             sets: Default::default(),
             providers: FxHashMap::default(),
@@ -946,35 +948,6 @@ fn memory_limit(settings: &BTreeMap<String, String>) -> usize {
         .unwrap_or(DEFAULT_MEMORY_BYTES)
 }
 
-// ─── Reaching `ExecContext` from a host callback ─────────────────────────
-
-// The `ExecContext` the running plugin pass is reading. Installed for the
-// duration of `run_plugins_if_requested` only: the generated host traits
-// carry no lifetime parameter to thread a borrow through, so this follows
-// the same borrow-channel convention `loadapi.rs` already uses for the
-// `gmk_*` entry points.
-thread_local! {
-    static CTX_PTR: std::cell::Cell<*const ExecContext> =
-        const { std::cell::Cell::new(std::ptr::null()) };
-}
-
-fn with_context<R>(ctx: &ExecContext, f: impl FnOnce() -> R) -> R {
-    let previous = CTX_PTR.replace(ctx as *const ExecContext);
-    let r = f();
-    CTX_PTR.set(previous);
-    r
-}
-
-/// The installed context pointer, or null outside a plugin pass.
-///
-/// Returned raw rather than as a reference: fabricating a `&'static
-/// ExecContext` here would be a lifetime the borrow checker cannot police,
-/// so the dereference stays inside the two `unsafe` blocks that already need
-/// one for their C-ABI calls, under one `SAFETY` comment each.
-fn ctx_ptr() -> *const ExecContext {
-    CTX_PTR.get()
-}
-
 /// One entry of make's global variable set.
 ///
 /// This is [`crate::target_var::TargetVariable`], the variable layer's own
@@ -1056,16 +1029,8 @@ pub(crate) fn from_environment(origin: crate::target_var::VarOrigin) -> bool {
 /// insertion history, not of anything about the build, so a digest built in
 /// that order would change when nothing had — precisely the failure a digest
 /// exists to prevent.
-pub(crate) fn global_variables() -> Vec<GlobalVar> {
-    let ctx = ctx_ptr();
-    if ctx.is_null() {
-        return Vec::new();
-    }
-    // SAFETY: `CTX_PTR` is non-null only inside `with_context`, which
-    // outlives every host callback a guest can make, so `ctx` points at a
-    // live `ExecContext`. The reference is handed straight to a safe
-    // accessor and not held past it.
-    let mut out = unsafe { crate::variable::global_variables(&*ctx) };
+pub(crate) fn global_variables(ctx: &ExecContext) -> Vec<GlobalVar> {
+    let mut out = crate::variable::global_variables(ctx);
     // By the whole tuple, not by name alone. Names are unique within one
     // hash table, so ordering by name is already total in practice — but
     // `sort_by` is stable, so a tie would silently fall back to hash-table
@@ -1088,24 +1053,16 @@ pub(crate) fn global_variables() -> Vec<GlobalVar> {
 /// same reason the whole-set read is: resolving a name is the variable
 /// layer's job, and doing it here meant this module held a second raw
 /// `lookup_variable` call with its own null handling.
-fn lookup_global_full(name: &str) -> Option<GlobalVar> {
-    let ctx = ctx_ptr();
-    if ctx.is_null() {
-        return None;
-    }
-    // SAFETY: `CTX_PTR` is non-null only inside `with_context`, which
-    // outlives every host callback a guest can make (guests run
-    // synchronously within that scope), so `ctx` points at a live
-    // `ExecContext`. The reference is handed straight to a safe accessor.
-    unsafe { crate::variable::lookup_global_variable(&*ctx, name) }
+fn lookup_global_full(ctx: &ExecContext, name: &str) -> Option<GlobalVar> {
+    crate::variable::lookup_global_variable(ctx, name)
 }
 
 /// Raw expanded value of a global variable, or `None` if undefined.
 ///
 /// Lossy because this feeds the WIT `string` fields, which are UTF-8 by
 /// definition; the digest path deliberately keeps the bytes instead.
-fn lookup_global_raw(name: &str) -> Option<String> {
-    lookup_global_full(name).map(|v| String::from_utf8_lossy(&v.value).into_owned())
+fn lookup_global_raw(ctx: &ExecContext, name: &str) -> Option<String> {
+    lookup_global_full(ctx, name).map(|v| String::from_utf8_lossy(&v.value).into_owned())
 }
 
 /// A global variable as the WIT interface describes it.
@@ -1121,8 +1078,8 @@ fn lookup_global_raw(name: &str) -> Option<String> {
 /// global set except its environment-origin members, so `origin` is how a
 /// plugin can tell which of the values it just read are outside the digest's
 /// coverage. A hardcoded `file` would hide exactly that.
-pub(crate) fn lookup_global(name: &str) -> Option<host::Variable> {
-    let var = lookup_global_full(name)?;
+pub(crate) fn lookup_global(ctx: &ExecContext, name: &str) -> Option<host::Variable> {
+    let var = lookup_global_full(ctx, name)?;
     Some(host::Variable {
         name: name.to_string(),
         value: String::from_utf8_lossy(&var.value).into_owned(),
@@ -1150,19 +1107,14 @@ pub(crate) fn lookup_global(name: &str) -> Option<host::Variable> {
 }
 
 /// Expand makefile text through make's own expander, in the global scope.
-pub(crate) fn expand_global(text: &str) -> Result<String, String> {
-    let ctx = ctx_ptr();
-    if ctx.is_null() {
-        return Err("no make context available".to_string());
-    }
+pub(crate) fn expand_global(ctx: &ExecContext, text: &str) -> Result<String, String> {
     let input = std::ffi::CString::new(text).map_err(|_| "text contains a NUL byte".to_string())?;
-    // SAFETY: `ctx` is live for the same reason as in `lookup_global_raw`;
-    // `input` outlives the call; the null `file` pointer is the documented
+    // SAFETY: `input` outlives the call; the null `file` pointer is the documented
     // "global scope" argument, exactly as `gmk_expand` passes it; and the
     // returned buffer is a `malloc`ed NUL-terminated string this call owns.
     unsafe {
         let expanded = crate::expand::allocated_expand_string_for_file(
-            &*ctx,
+            ctx,
             input.as_ptr(),
             std::ptr::null_mut::<crate::file::File>(),
         )
@@ -1186,14 +1138,11 @@ pub(crate) fn expand_global(text: &str) -> Result<String, String> {
 /// sees the values make would use rather than a second implementation of
 /// them. The automatics are left on the node afterwards — they are per-target
 /// variables make would set on it a moment later anyway.
-pub(crate) fn expand_for_file(file: crate::file::FileId, text: &str) -> Result<String, String> {
-    let ctx = ctx_ptr();
-    if ctx.is_null() {
-        return Err("no make context available".to_string());
-    }
-    // SAFETY: as in `lookup_global_full` — `CTX_PTR` is non-null only inside
-    // `with_context`, which outlives every host callback a guest makes.
-    let ctx = unsafe { &*ctx };
+pub(crate) fn expand_for_file(
+    ctx: &ExecContext,
+    file: crate::file::FileId,
+    text: &str,
+) -> Result<String, String> {
     crate::commands::set_file_variables(ctx, file, None)
         .map_err(|_| "could not set automatic variables".to_string())?;
     let mut bytes = text.as_bytes().to_vec();
@@ -1219,14 +1168,9 @@ pub(crate) fn expand_for_file(file: crate::file::FileId, text: &str) -> Result<S
 /// not have it or had it with a different value. See `node.recipe-environment`
 /// in `graph.wit` for why.
 pub(crate) fn recipe_environment(
+    ctx: &ExecContext,
     file: crate::file::FileId,
 ) -> Result<Vec<(String, String)>, String> {
-    let ctx = ctx_ptr();
-    if ctx.is_null() {
-        return Err("no make context available".to_string());
-    }
-    // SAFETY: as in `lookup_global_full`.
-    let ctx = unsafe { &*ctx };
     // SAFETY: `target_environment` returns a NULL-terminated array of
     // `malloc`ed `NAME=value` strings that this function owns; each string and
     // the array are freed below exactly as `job::free_childbase` does.

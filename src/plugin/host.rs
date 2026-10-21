@@ -8,6 +8,7 @@
 //! side effects it has accumulated — providers published, diagnostics
 //! emitted, artifacts opened.
 
+use crate::execctx::ExecContext;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -187,7 +188,32 @@ pub const MAX_DIRECTORY_ENTRIES: usize = 50_000;
 // ─── Store state ─────────────────────────────────────────────────────────
 
 /// Everything one plugin instance can see and everything it has done.
+/// The make context a plugin run is serving, handed to the store by
+/// `run_instance`.
+///
+/// wasmtime wants the store to be `'static + Send + Sync`, which a borrow of
+/// the `Cell`-based `ExecContext` cannot be, so the borrow is carried as a
+/// pointer. It is only created in `run_instance`, which keeps the context
+/// borrowed for as long as the store lives and drops the store before
+/// returning, and the store never leaves that thread.
+#[derive(Clone, Copy, Default)]
+pub struct ContextRef(Option<std::ptr::NonNull<ExecContext>>);
+
+unsafe impl Send for ContextRef {}
+unsafe impl Sync for ContextRef {}
+
+impl ContextRef {
+    /// Callers must keep `ctx` borrowed until the store holding the result
+    /// is dropped.
+    pub unsafe fn new(ctx: &ExecContext) -> Self {
+        Self(Some(std::ptr::NonNull::from(ctx)))
+    }
+}
+
 pub struct PluginStore {
+    /// The make context the plugin pass is reading. Borrowed for the whole
+    /// pass: the store lives inside `run_instance`, which holds the borrow.
+    pub ctx: ContextRef,
     pub graph: DepGraph,
     pub sets: Sets,
     /// Providers published on nodes, shared across every instance in this
@@ -229,6 +255,19 @@ impl WasiView for PluginStore {
 }
 
 impl PluginStore {
+    /// The context of the run in progress; plugins queried before a run
+    /// (`describe`) have none.
+    fn context(&self) -> Result<&ExecContext, WitError> {
+        match self.ctx.0 {
+            // SAFETY: see `ContextRef`.
+            Some(p) => Ok(unsafe { p.as_ref() }),
+            None => Err(WitError {
+                message: "no make context outside a run".to_string(),
+                location: None,
+            }),
+        }
+    }
+
     /// Withhold a variable whose value came from the process environment
     /// unless `read-environment` was granted.
     ///
@@ -511,7 +550,11 @@ impl HostNode for PluginStore {
                 location: None,
             }));
         };
-        Ok(crate::plugin::expand_for_file(file, &text).map_err(|message| WitError {
+        let ctx = match self.context() {
+            Ok(c) => c,
+            Err(e) => return Ok(Err(e)),
+        };
+        Ok(crate::plugin::expand_for_file(ctx, file, &text).map_err(|message| WitError {
             message,
             location: None,
         }))
@@ -531,7 +574,11 @@ impl HostNode for PluginStore {
                 location: None,
             }));
         };
-        Ok(crate::plugin::recipe_environment(file).map_err(|message| WitError {
+        let ctx = match self.context() {
+            Ok(c) => c,
+            Err(e) => return Ok(Err(e)),
+        };
+        Ok(crate::plugin::recipe_environment(ctx, file).map_err(|message| WitError {
             message,
             location: None,
         }))
@@ -618,7 +665,12 @@ impl HostNode for PluginStore {
                 return Ok(self.environment_permitting(Some(hit)));
             }
         }
-        Ok(self.environment_permitting(crate::plugin::lookup_global(&name)))
+        let ctx = match self.context() {
+            Ok(c) => c,
+            Err(_) => return Ok(None),
+        };
+        let found = crate::plugin::lookup_global(ctx, &name);
+        Ok(self.environment_permitting(found))
     }
 
     fn own_variables(&mut self, this: Resource<NodeHandle>) -> wasmtime::Result<Vec<Variable>> {
@@ -812,15 +864,24 @@ impl self::makers::plugin::vars::Host for PluginStore {
         if !self.granted.contains(Caps::READ_VARIABLES) {
             return Ok(None);
         }
-        Ok(self.environment_permitting(crate::plugin::lookup_global(&name)))
+        let ctx = match self.context() {
+            Ok(c) => c,
+            Err(_) => return Ok(None),
+        };
+        let found = crate::plugin::lookup_global(ctx, &name);
+        Ok(self.environment_permitting(found))
     }
 
     fn expand(&mut self, text: String) -> wasmtime::Result<Result<String, WitError>> {
         if !self.granted.contains(Caps::EXPAND_VARIABLES) {
             return Ok(Err(denied("expand-variables", "vars.expand")));
         }
+        let ctx = match self.context() {
+            Ok(c) => c,
+            Err(e) => return Ok(Err(e)),
+        };
         Ok(
-            crate::plugin::expand_global(&text).map_err(|message| WitError {
+            crate::plugin::expand_global(ctx, &text).map_err(|message| WitError {
                 message,
                 location: None,
             }),
