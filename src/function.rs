@@ -4663,22 +4663,10 @@ fn abspath_result(list: &[u8], starting_dir: &[u8]) -> Vec<u8> {
 /// Make's recorded working directory as owned bytes (empty when unknown),
 /// read from `ExecContext::starting_directory` through the borrow channel:
 /// `$(abspath)` dispatch goes through the pure `SafeFunc` table, which
-/// carries no context parameter. Confines the one raw-pointer read to a
-/// single accessor so the path builtins stay fully safe.
+/// carries no context parameter.
 fn starting_directory_bytes() -> Vec<u8> {
-    crate::entry::try_with_exec_context(|ctx| {
-        let p = ctx.starting_directory.0.get();
-        if p.is_null() {
-            Vec::new()
-        } else {
-            // SAFETY: a non-null `starting_directory` is a NUL-terminated C
-            // string in `main_0`'s frame, live for the whole run.
-            unsafe { ::core::ffi::CStr::from_ptr(p) }
-                .to_bytes()
-                .to_vec()
-        }
-    })
-    .unwrap_or_default()
+    crate::entry::try_with_exec_context(|ctx| ctx.starting_directory_bytes().unwrap_or_default())
+        .unwrap_or_default()
 }
 fn func_abspath(_name: &[u8], args: &[&[u8]]) -> Vec<u8> {
     abspath_result(args[0], &starting_directory_bytes())

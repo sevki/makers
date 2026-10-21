@@ -9,7 +9,6 @@ pub use crate::ffi_types::{__ino_t, __off_t, __size_t, dev_t, ino_t, size_t, tim
 use crate::{
     entry::db_level,
     floc::Floc,
-    misc::xrealloc,
     output::{fatal_err, FmtArg},
     strcache::strcache_add_len,
 };
@@ -22,7 +21,7 @@ use {
     rustc_hash::FxHashMap,
 };
 
-use libc::{memcpy, strlen};
+use libc::strlen;
 
 pub use crate::sys_stat::{stat, timespec};
 
@@ -50,7 +49,7 @@ pub struct glob_t {
 /// `struct dirent` layout handed back to glob by [`read_dirstream`]; the
 /// name is truncated/extended to the actual length, so this header is
 /// what counts.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct dirent {
     pub d_ino: __ino_t,
@@ -59,6 +58,16 @@ pub struct dirent {
     pub d_type: c_uchar,
     pub d_name: [c_char; 256],
 }
+
+/// An all-zero [`dirent`], the filler [`read_dirstream`]'s scratch buffer grows
+/// with.
+pub(crate) const EMPTY_DIRENT: dirent = dirent {
+    d_ino: 0,
+    d_off: 0,
+    d_reclen: 0,
+    d_type: 0,
+    d_name: [0; 256],
+};
 
 /// A directory name; `contents` points to the dev/ino-keyed cache entry
 /// shared by every name for the same directory.
@@ -809,25 +818,26 @@ pub extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
         let sz = ::core::mem::size_of::<dirent>() as size_t
             - ::core::mem::size_of::<[c_char; 256]>() as size_t
             + len;
-        if sz > ctx.read_dirstream_bufsz.get() {
-            let bufsz = (ctx.read_dirstream_bufsz.get() * 2).max(sz);
-            ctx.read_dirstream_bufsz.set(bufsz);
-            ctx.read_dirstream_buf
-                .set(xrealloc(ctx.read_dirstream_buf.get() as *mut c_void, bufsz) as *mut c_char);
+        // The buffer is a `Vec<dirent>`, so grow it in whole `dirent`s (which
+        // also keeps `dirent`'s alignment); like the byte block it replaces it
+        // only ever grows, doubling.
+        let mut buf = ctx.read_dirstream_buf.borrow_mut();
+        let needed = sz.div_ceil(::core::mem::size_of::<dirent>());
+        if buf.len() < needed {
+            let grown = (buf.len() * 2).max(needed);
+            buf.resize(grown, EMPTY_DIRENT);
         }
-        let d = (ctx.read_dirstream_buf.get() as *mut dirent)
-            .as_mut()
-            .expect("xrealloc never returns null");
-        d.d_ino = 1;
-        d.d_type = d_type_of(*kind);
-        memcpy(
-            d.d_name.as_mut_ptr().cast(),
-            name.as_ptr() as *const c_void,
-            name.len(),
-        );
+        // Derive the pointer from the whole allocation, not from `buf[0]`: a
+        // name longer than `d_name` is written past element 0, into the
+        // elements allocated for it.
+        let d = buf.as_mut_ptr();
+        (*d).d_ino = 1;
+        (*d).d_type = d_type_of(*kind);
+        let d_name = (&raw mut (*d).d_name).cast::<u8>();
+        ::core::ptr::copy_nonoverlapping(name.as_ptr(), d_name, name.len());
         // NUL-terminate (the snapshot name has no terminator).
-        *d.d_name.as_mut_ptr().add(name.len()) = 0;
-        &raw mut *d
+        *d_name.add(name.len()) = 0;
+        d
     })
 }
 
@@ -1000,5 +1010,149 @@ mod open_directories_tests {
 
         // A second, independent context keeps its own count.
         assert_eq!(ExecContext::default().open_directories.get(), 0);
+    }
+}
+
+/// `read_dirstream` over its owned `Vec<dirent>` scratch buffer, differentially
+/// tested against the `malloc`/`realloc`'d byte block it replaced.
+#[cfg(test)]
+mod read_dirstream_tests {
+    use super::{d_type_of, dirent, read_dirstream, DirStream};
+    use crate::fs::FileKind;
+    use ::core::ffi::{c_char, c_void, CStr};
+
+    /// The pre-conversion `read_dirstream` body, verbatim, with the
+    /// context's `read_dirstream_buf`/`read_dirstream_bufsz` cells replaced by
+    /// explicit `buf`/`bufsz` so it can run beside the new code.
+    unsafe fn read_dirstream_unsafe_oracle(
+        buf: &mut *mut c_char,
+        bufsz: &mut usize,
+        name: &[u8],
+        kind: Option<FileKind>,
+    ) -> *mut dirent {
+        let len = name.len() + 1;
+        let sz = ::core::mem::size_of::<dirent>() - ::core::mem::size_of::<[c_char; 256]>() + len;
+        if sz > *bufsz {
+            let grown = (*bufsz * 2).max(sz);
+            *bufsz = grown;
+            *buf = crate::misc::xrealloc(*buf as *mut c_void, grown) as *mut c_char;
+        }
+        let d = (*buf as *mut dirent)
+            .as_mut()
+            .expect("xrealloc never returns null");
+        d.d_ino = 1;
+        d.d_type = d_type_of(kind);
+        libc::memcpy(
+            d.d_name.as_mut_ptr().cast(),
+            name.as_ptr() as *const c_void,
+            name.len(),
+        );
+        *d.d_name.as_mut_ptr().add(name.len()) = 0;
+        &raw mut *d
+    }
+
+    /// Not run under Miri: Miri flags the oracle itself. Its
+    /// `(*buf as *mut dirent).as_mut()` forms a `&mut dirent` over a block
+    /// sized to the actual name, which for short names is smaller than a whole
+    /// `dirent` — latent undefined behavior in the original that the
+    /// `Vec<dirent>` buffer removes (see
+    /// `new_buffer_is_sound_and_correct_including_growth` for the Miri-checked
+    /// side).
+    #[test]
+    #[cfg_attr(miri, ignore = "the preserved oracle has the UB this conversion removes")]
+    fn matches_the_realloc_block_oracle_including_growth() {
+        let ctx = crate::entry::install_default_exec_context_for_test();
+        let long = |n: usize| vec![b'x'; n].into_boxed_slice();
+        // Short names, names right at and past `d_name`'s 256 bytes (forcing
+        // the buffer to grow beyond one `dirent`), then a short one again
+        // (the buffer must not shrink or corrupt).
+        let entries: Vec<(Box<[u8]>, Option<FileKind>)> = vec![
+            (b"a".to_vec().into_boxed_slice(), None),
+            (b"Makefile".to_vec().into_boxed_slice(), Some(FileKind::File)),
+            (long(255), Some(FileKind::Dir)),
+            (long(256), Some(FileKind::Symlink)),
+            (long(1000), Some(FileKind::Other)),
+            (b"z".to_vec().into_boxed_slice(), Some(FileKind::File)),
+        ];
+        let want_names: Vec<Box<[u8]>> = entries.iter().map(|(n, _)| n.clone()).collect();
+        let mut ds = DirStream { entries, index: 0 };
+        let stream = &raw mut ds as *mut c_void;
+
+        let mut buf: *mut c_char = ::core::ptr::null_mut();
+        let mut bufsz: usize = 0;
+        let mut prev_len = 0;
+        for (i, want_name) in want_names.iter().enumerate() {
+            let kind = ds.entries[i].1;
+            // SAFETY: `stream` is a live `DirStream`; each returned pointer is
+            // read before the next call can invalidate it.
+            unsafe {
+                let new = read_dirstream(stream);
+                assert!(!new.is_null());
+                let old = read_dirstream_unsafe_oracle(&mut buf, &mut bufsz, want_name, kind);
+
+                assert_eq!((*new).d_ino, (*old).d_ino);
+                assert_eq!((*new).d_type, (*old).d_type);
+                let new_name = CStr::from_ptr((*new).d_name.as_ptr()).to_bytes();
+                let old_name = CStr::from_ptr((*old).d_name.as_ptr()).to_bytes();
+                assert_eq!(new_name, &**want_name);
+                assert_eq!(new_name, old_name);
+            }
+            // Only ever grows.
+            let len = ctx.read_dirstream_buf.borrow().len();
+            assert!(len >= prev_len, "buffer shrank at entry {i}");
+            prev_len = len;
+        }
+        // The 1000-byte name needed more than one `dirent`.
+        assert!(prev_len > 1);
+
+        // Exhausted: null, as before.
+        assert!(read_dirstream(stream).is_null());
+        // SAFETY: `buf` came from `xrealloc` (malloc-family).
+        unsafe { libc::free(buf.cast()) };
+    }
+
+    /// The new buffer on its own, with no oracle, so it can run under Miri:
+    /// every returned `dirent` carries the right fields and name (including
+    /// names written past `d_name` into the elements grown for them), the
+    /// buffer only grows, and each returned pointer is readable until the next
+    /// call.
+    #[test]
+    fn new_buffer_is_sound_and_correct_including_growth() {
+        let ctx = crate::entry::install_default_exec_context_for_test();
+        let long = |n: usize| vec![b'y'; n].into_boxed_slice();
+        let entries: Vec<(Box<[u8]>, Option<FileKind>)> = vec![
+            (b"a".to_vec().into_boxed_slice(), None),
+            (long(255), Some(FileKind::Dir)),
+            (long(256), Some(FileKind::Symlink)),
+            (long(1000), Some(FileKind::Other)),
+            (b"z".to_vec().into_boxed_slice(), Some(FileKind::File)),
+        ];
+        let want: Vec<(Box<[u8]>, u8)> = entries
+            .iter()
+            .map(|(name, kind)| (name.clone(), d_type_of(*kind)))
+            .collect();
+        let mut ds = DirStream { entries, index: 0 };
+        let stream = &raw mut ds as *mut c_void;
+
+        let mut prev_len = 0;
+        for (name, d_type) in &want {
+            // SAFETY: `stream` is a live `DirStream`; the returned pointer is
+            // read before the next call can invalidate it.
+            unsafe {
+                let d = read_dirstream(stream);
+                assert!(!d.is_null());
+                assert_eq!((*d).d_ino, 1);
+                assert_eq!((*d).d_type, *d_type);
+                let d_name = (&raw const (*d).d_name).cast::<u8>();
+                let got = ::core::slice::from_raw_parts(d_name, name.len() + 1);
+                assert_eq!(&got[..name.len()], &**name);
+                assert_eq!(got[name.len()], 0, "name is NUL-terminated");
+            }
+            let len = ctx.read_dirstream_buf.borrow().len();
+            assert!(len >= prev_len, "buffer must not shrink");
+            prev_len = len;
+        }
+        assert!(prev_len > 1, "the 1000-byte name needed several dirents");
+        assert!(read_dirstream(stream).is_null());
     }
 }

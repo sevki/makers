@@ -276,7 +276,7 @@ pub fn check_also_make(ctx: &crate::execctx::ExecContext, file: FileId) {
         let n = node.lock().expect("file node lock poisoned");
         let floc = n.recipe.as_ref().map(|r| {
             Floc {
-                filenm: ::core::ptr::null(),
+                filenm: None,
                 lineno: r.defined_lineno,
                 offset: 0,
             }
@@ -570,15 +570,12 @@ pub fn show_goal_error(ctx: &crate::execctx::ExecContext) {
                     let cn = cname(&name);
                     // The error is located at the goal's source floc (the
                     // include directive), the c2rust `&goal->floc`. Materialize
-                    // it from the goal's owned `defined_in`/lineno/offset.
-                    let mut floc_name: Vec<u8> = goal.defined_in.clone().unwrap_or_default();
-                    let floc = goal.defined_in.as_ref().map(|_| {
-                        floc_name.push(0);
-                        Floc {
-                            filenm: floc_name.as_ptr() as *const ::core::ffi::c_char,
-                            lineno: goal.lineno,
-                            offset: goal.offset,
-                        }
+                    // it from the goal's owned `defined_in`/lineno/offset, with
+                    // the name interned so no buffer has to outlive the `Floc`.
+                    let floc = goal.defined_in.as_ref().map(|defined_in| Floc {
+                        filenm: Some(crate::strcache::strcache_intern(ctx, defined_in)),
+                        lineno: goal.lineno,
+                        offset: goal.offset,
                     });
                     let floc_ptr = floc.as_ref().map_or(::core::ptr::null_mut::<Floc>(), |f| {
                         f as *const Floc as *mut Floc

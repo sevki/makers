@@ -201,7 +201,13 @@ pub unsafe fn readline(
     }
     if let Some(e) = reader.error() {
         *__errno_location() = e;
-        pfatal_with_name(ctx, (*ebuf).floc.filenm);
+        pfatal_with_name(
+            ctx,
+            (*ebuf)
+                .floc
+                .filenm
+                .map_or(::core::ptr::null(), |f| f.as_ptr()),
+        );
     }
     if nlines != 0 {
         nlines
