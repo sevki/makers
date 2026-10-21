@@ -203,6 +203,46 @@ interface graph {
         /// hostnames. `none` when ungranted, indistinguishable from "no
         /// recipe" by design: a denied plugin should degrade, not probe.
         recipe: func() -> option<recipe>;
+        /// Expand makefile text as make would while preparing *this
+        /// target's* recipe: in the target's own variable scope, with the
+        /// automatic variables (`$@`, `$<`, `$^`, `$+`, `$?`, `$*`, `$|`)
+        /// set to what they would be for this target. Recipe lines are
+        /// unexpanded text (see `recipe-line`), and for a makefile whose
+        /// commands are built by functions of those automatics — Kbuild's
+        /// `$(call if_changed_rule,cc_o_c)` expands to a compile line only
+        /// once `$@` and `$<` are known — this is the way to get the command
+        /// make would run.
+        ///
+        /// This is the `expand-for` that `vars.expand` explains it does not
+        /// have. The reason given there was that analysis builds nothing, so
+        /// the automatics would have to be fabricated; the host does not
+        /// fabricate them, it derives them from the resolved graph exactly
+        /// as it does when it starts the recipe, and what it cannot derive
+        /// (`$?` against files that do not exist yet) reads as make reads
+        /// it: every prerequisite is newer than a missing target.
+        ///
+        /// Requires `expand-variables`, with everything `vars.expand` says
+        /// about that grant: expansion can run `$(shell ...)`, so it is not
+        /// granted by default and is incompatible with `deterministic`.
+        expand: func(text: string) -> result<string, error>;
+        /// The environment make would give a process running this target's
+        /// recipe, reduced to what *make* put there: the variables it adds
+        /// or changes relative to the environment it was started with, as
+        /// `name`/`value` pairs sorted by name. A plugin that turns a recipe
+        /// into something run elsewhere needs it, because makefiles pass
+        /// information to recipes by `export` rather than on the command
+        /// line — Kbuild hands `KBUILD_LDS`, `LDFLAGS_vmlinux`, `srctree` and
+        /// a hundred more to `scripts/link-vmlinux.sh` this way.
+        ///
+        /// What the process already had is left out on purpose. Handing a
+        /// plugin the whole environment would hand it credentials, and what
+        /// make inherited unchanged was never make's to report. The MAKE
+        /// bookkeeping (`MAKEFLAGS`, `MFLAGS`, `MAKELEVEL`, `MAKE_TERM*`) is
+        /// left out too: it describes this make run, not the build.
+        ///
+        /// Requires `expand-variables`: building the environment expands
+        /// every exported recursive variable, which can run `$(shell ...)`.
+        recipe-environment: func() -> result<list<tuple<string, string>>, error>;
         /// The pattern rule this target's deps and recipe came from, as
         /// written (`%.o: %.c`). Provenance, not structure: it answers "why
         /// does this edge exist", which is the question `make -d` output
