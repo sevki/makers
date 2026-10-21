@@ -305,11 +305,11 @@ impl SessionFacts {
 
 // ─── One instance ────────────────────────────────────────────────────────
 
-fn run_instance<'a>(
+fn run_instance(
     spec: &InstanceSpec,
     graph: &DepGraph,
     session: &SessionFacts,
-    ctx: &'a ExecContext,
+    ctx: &ExecContext,
     providers: &mut FxHashMap<NodeId, Vec<host::Provider>>,
 ) -> anyhow::Result<bool> {
     let mut config = wasmtime::Config::new();
