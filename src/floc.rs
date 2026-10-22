@@ -1,7 +1,11 @@
+use ::core::ffi::CStr;
+
+/// A source location. `filenm` is an interned name (see
+/// `crate::strcache::strcache_intern`), whose storage is never freed, so the
+/// location is `Copy` and `Send`; `None` means "no source file".
 #[derive(Copy, Clone)]
-#[repr(C)]
 pub struct Floc {
-    pub filenm: *const ::core::ffi::c_char,
-    pub lineno: ::core::ffi::c_ulong,
-    pub offset: ::core::ffi::c_ulong,
+    pub filenm: Option<&'static CStr>,
+    pub lineno: u64,
+    pub offset: u64,
 }

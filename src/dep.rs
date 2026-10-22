@@ -321,7 +321,7 @@ impl Default for GoalDep {
             wait_here: false,
             error: 0,
             floc: Floc {
-                filenm: ::core::ptr::null(),
+                filenm: None,
                 lineno: 0,
                 offset: 0,
             },
