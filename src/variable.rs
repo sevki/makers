@@ -86,7 +86,6 @@ use crate::{
     misc::{concat, cstr_bytes_or_empty},
     output::{fatal_err, msg},
     posixos::jobserver_get_invalid_auth,
-    strcache::strcache_add,
 };
 
 pub const o_invalid: variable_origin = 7;
@@ -309,18 +308,16 @@ unsafe fn c_str_to_vec(p: *const ::core::ffi::c_char) -> Vec<u8> {
 /// representation held in a `PatternVar`). This is the bridge used when the
 /// per-target/pattern variable store moves onto [`FileNode`]'s `Vec`s.
 ///
+/// Takes `&variable` rather than `*const variable` (AGENTS.md §246): the body
+/// only ever wanted a reference — it opened by binding one and asserting the
+/// pointer was non-null — so the null case belongs to the caller, which
+/// already knows whether it holds a live record.
+///
 /// # Safety
-/// `v` must point to a valid, fully initialized `variable`.
-unsafe fn target_variable_from_c(v: *const variable) -> TargetVariable {
-    // SAFETY: the caller guarantees `v` points to a valid, fully initialized
-    // `variable`. Bind a checked reference so every field read below goes
-    // through a provably-valid reference rather than raw pointer derefs.
-    let vr = v.as_ref().expect("variable pointer is non-null");
-    let defined_in = if vr.fileinfo.filenm.is_null() {
-        None
-    } else {
-        Some(c_str_to_vec(vr.fileinfo.filenm))
-    };
+/// `vr`'s `name`/`value` must be valid NUL-terminated C strings (or null,
+/// which reads as absent) for the length of the call.
+unsafe fn target_variable_from_c(vr: &variable) -> TargetVariable {
+    let defined_in = vr.fileinfo.filenm.map(|name| name.to_bytes().to_vec());
     TargetVariable {
         name: c_str_to_vec(vr.name),
         value: c_str_to_vec(vr.value),
@@ -342,27 +339,27 @@ unsafe fn target_variable_from_c(v: *const variable) -> TargetVariable {
 /// Materialize a transient c2rust `variable` from a [`TargetVariable`] so the
 /// existing pointer-based printers (`print_variable`) can render it. The
 /// returned `variable` borrows the NUL-terminated buffers handed back in the
-/// tuple's second/third/fourth slots; keep those alive for the call.
+/// tuple's second/third slots; keep those alive for the call. Its source file
+/// name is the interned copy of `defined_in`, so it needs no buffer of its own.
 ///
-/// Returns `(variable, name_buf, value_buf, file_buf)`. The bitfields are set
+/// Returns `(variable, name_buf, value_buf)`. The bitfields are set
 /// through the c2rust setters so the rendered output matches the legacy path.
-fn c_variable_from_target(tv: &TargetVariable) -> (variable, Vec<u8>, Vec<u8>, Option<Vec<u8>>) {
+fn c_variable_from_target(
+    ctx: &ExecContext,
+    tv: &TargetVariable,
+) -> (variable, Vec<u8>, Vec<u8>) {
     let mut name_buf = tv.name.clone();
     name_buf.push(0);
     let mut value_buf = tv.value.clone();
     value_buf.push(0);
-    let file_buf = tv.defined_in.as_ref().map(|f| {
-        let mut b = f.clone();
-        b.push(0);
-        b
-    });
     let mut v: variable = variable {
         name: name_buf.as_ptr() as *mut ::core::ffi::c_char,
         value: value_buf.as_ptr() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: file_buf
+            filenm: tv
+                .defined_in
                 .as_ref()
-                .map_or(::core::ptr::null(), |b| b.as_ptr() as *const ::core::ffi::c_char),
+                .map(|f| crate::strcache::strcache_intern(ctx, f)),
             lineno: tv.defined_lineno,
             offset: 0,
         },
@@ -390,7 +387,7 @@ fn c_variable_from_target(tv: &TargetVariable) -> (variable, Vec<u8>, Vec<u8>, O
     v.set_special(tv.special as ::core::ffi::c_uint);
     v.set_exportable(tv.exportable as ::core::ffi::c_uint);
     v.set_private_var(tv.private_var as ::core::ffi::c_uint);
-    (v, name_buf, value_buf, file_buf)
+    (v, name_buf, value_buf)
 }
 
 /// Define (or replace) a per-target variable directly on a [`FileNode`]'s
@@ -530,22 +527,20 @@ unsafe fn lookup_pattern_var(
 ///
 /// C-style API operating on raw pointers inherited from the c2rust
 /// translation; all pointer arguments must be valid for the call.
-pub unsafe fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub unsafe fn variable_hash_1(keyv: *const ::core::ffi::c_void) -> u64 {
     let key: *const variable = keyv as *const variable;
-    let mut _result_: ::core::ffi::c_ulong = 0;
+    let mut _result_: u64 = 0;
     let _key_: *const ::core::ffi::c_uchar = (*key).name as *const ::core::ffi::c_uchar;
-    _result_ = _result_.wrapping_add(jhash(::core::slice::from_raw_parts(
-        _key_,
-        (*key).length as usize,
-    )) as ::core::ffi::c_ulong);
+    _result_ = _result_
+        .wrapping_add(jhash(::core::slice::from_raw_parts(_key_, (*key).length as usize)) as u64);
     _result_
 }
 /// Secondary hash for [`variable`] keys; always zero, kept for the callback
 /// ABI. The raw key pointer is accepted to match the signature but never
 /// inspected.
-pub fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> ::core::ffi::c_ulong {
+pub fn variable_hash_2(keyv: *const ::core::ffi::c_void) -> u64 {
     let mut _key: *const variable = keyv as *const variable;
-    let mut _result_: ::core::ffi::c_ulong = 0;
+    let mut _result_: u64 = 0;
     _result_
 }
 /// Order two variable names the way the variable hash table expects: shorter
@@ -646,7 +641,7 @@ unsafe fn check_valid_name(
 pub unsafe fn init_hash_global_variable_set(ctx: &crate::execctx::ExecContext) {
     hash_init(
         &raw mut (*ctx.variable_globals.global_variable_set.as_ptr()).table,
-        VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -676,7 +671,7 @@ unsafe fn redefine_existing(
         if let Some(floc) = flocp.as_ref() {
             vr.fileinfo = *floc;
         } else {
-            vr.fileinfo.filenm = ::core::ptr::null::<::core::ffi::c_char>();
+            vr.fileinfo.filenm = None;
         }
         vr.set_origin(origin as variable_origin);
         vr.set_recursive(recursive as ::core::ffi::c_uint as ::core::ffi::c_uint);
@@ -730,7 +725,7 @@ pub unsafe fn define_variable_in_set(
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -880,7 +875,7 @@ pub unsafe fn undefine_variable_in_set(
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -1062,7 +1057,7 @@ unsafe fn search_variable_set_list(
         name: name as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -1115,7 +1110,7 @@ pub unsafe fn lookup_variable_in_set(
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -1253,7 +1248,7 @@ pub fn initialize_file_variables(
                 v.set_per_target((*p).variable.per_target() as ::core::ffi::c_uint);
                 v.set_export((*p).variable.export() as variable_export);
                 v.set_private_var((*p).variable.private_var() as ::core::ffi::c_uint);
-                collected.push(target_variable_from_c(v as *const variable));
+                collected.push(target_variable_from_c(v));
                 p = lookup_pattern_var(ctx, p, name_ptr, targlen);
                 if p.is_null() {
                     break;
@@ -1288,7 +1283,7 @@ pub unsafe fn create_new_variable_set(ctx: &crate::execctx::ExecContext) -> *mut
     set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
     hash_init(
         &raw mut (*set).table,
-        SMALL_SCOPE_VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        SMALL_SCOPE_VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -1378,7 +1373,7 @@ pub unsafe fn install_file_context(
 /// # Safety
 /// `file` must be a valid pointer for the call.
 unsafe fn file_recipe_floc(file: *mut file) -> *const Floc {
-    if !(*file).cmds.is_null() && !(*(*file).cmds).fileinfo.filenm.is_null() {
+    if !(*file).cmds.is_null() && (*(*file).cmds).fileinfo.filenm.is_some() {
         &raw mut (*(*file).cmds).fileinfo
     } else {
         ::core::ptr::null::<Floc>()
@@ -1417,17 +1412,13 @@ unsafe fn populate_set_from_targets(
         // zeroed, matching the previous null-pointer path where the callee left
         // `fileinfo` untouched apart from clearing `filenm`.
         let mut floc_storage = Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         };
-        let mut file_buf: Option<Vec<u8>> = None;
         if let Some(ref f) = tv.defined_in {
-            let mut b = f.clone();
-            b.push(0);
-            floc_storage.filenm = strcache_add(ctx, b.as_ptr() as *const ::core::ffi::c_char);
+            floc_storage.filenm = Some(crate::strcache::strcache_intern(ctx, f));
             floc_storage.lineno = tv.defined_lineno;
-            file_buf = Some(b);
         }
         // Always hand `define_variable_in_set` a pointer to the on-stack
         // `floc_storage`, never a null pointer. When the target variable has no
@@ -1445,7 +1436,6 @@ unsafe fn populate_set_from_targets(
             set,
             flocp,
         )?;
-        let _ = file_buf;
         if !v.is_null() {
             (*v).set_flavor(tv.flavor as i32 as variable_flavor);
             (*v).set_export(tv.export as i32 as variable_export);
@@ -1494,7 +1484,7 @@ pub unsafe fn build_file_setlist(
     let set = xmalloc(::core::mem::size_of::<variable_set>() as size_t) as *mut variable_set;
     hash_init(
         &raw mut (*set).table,
-        SMALL_SCOPE_VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        SMALL_SCOPE_VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -1512,25 +1502,122 @@ pub unsafe fn build_file_setlist(
     Ok(setlist)
 }
 
+/// The live `variable` records in one variable set's hash table.
+///
+/// A slot array holds three kinds of entry — a live `variable`, an empty slot
+/// (null), and [`hash_deleted_item`], the tombstone `hash_delete` leaves
+/// behind — and every walk over one has to skip the latter two before it
+/// touches a field. Callers used to each write that walk themselves with an
+/// `.offset()` cursor; this is the one place it lives now, so a caller asking
+/// what a set contains neither repeats the tombstone check nor names a raw
+/// pointer (AGENTS.md §246).
+///
+/// # Safety
+///
+/// `table` must be a variable set's live hash table: `ht_vec` either null or
+/// valid for `ht_size` `*mut variable` slots, each non-sentinel slot pointing
+/// at a `variable` the table owns and which outlives `'a`. Nothing here
+/// copies, so the caller must also hold the table still for `'a` — an
+/// intervening insert can rehash the array and dangle the yielded references.
+unsafe fn live_variables<'a>(table: &'a HashTable) -> impl Iterator<Item = &'a variable> + 'a {
+    // `slice::from_raw_parts` is undefined on a null pointer even for a
+    // zero-length slice, and a set legitimately holds a null `ht_vec` with
+    // `ht_size` 0 until it is first populated — so the emptiness test is on
+    // the pointer, not the size.
+    let slots: &'a [*mut variable] = if table.ht_vec.is_null() {
+        &[]
+    } else {
+        ::core::slice::from_raw_parts(table.ht_vec as *const *mut variable, table.ht_size as usize)
+    };
+    slots.iter().filter_map(|&v| {
+        if v.is_null() || ::core::ptr::eq(v as *const ::core::ffi::c_void, hash_deleted_item) {
+            None
+        } else {
+            Some(&*v)
+        }
+    })
+}
+
 /// Snapshot every live variable in `set` into owned [`TargetVariable`] records
 /// — the inverse of [`populate_set_from_targets`], used to write a file's
 /// per-target variable definitions back onto its [`FileNode`] after the
 /// pointer-based definition machinery has run.
 pub unsafe fn snapshot_set_to_targets(set: *mut variable_set) -> Vec<TargetVariable> {
-    let mut out: Vec<TargetVariable> = Vec::new();
     let Some(setr) = set.as_ref() else {
-        return out;
+        return Vec::new();
     };
-    let mut slot = setr.table.ht_vec as *mut *mut variable;
-    let end = slot.offset(setr.table.ht_size as isize);
-    while slot < end {
-        let v = *slot;
-        if !(v.is_null() || ::core::ptr::eq(v, hash_deleted_item as *mut variable)) {
-            out.push(target_variable_from_c(v));
+    live_variables(&setr.table)
+        .map(|v| target_variable_from_c(v))
+        .collect()
+}
+
+/// One variable by name, as an owned record — the single-name counterpart to
+/// [`global_variables`].
+///
+/// Goes through [`lookup_variable`], so it resolves the way make itself
+/// resolves a `$(NAME)` reference in global scope, special variables
+/// included. `None` means undefined: either no record, or a record whose
+/// value pointer is null, which is the shape make leaves behind for a name
+/// it knows of but has no value for.
+pub fn lookup_global_variable(ctx: &ExecContext, name: &str) -> Option<TargetVariable> {
+    let name_c = ::std::ffi::CString::new(name).ok()?;
+    let len = name_c.as_bytes().len() as size_t;
+    // SAFETY: `name_c` is a live NUL-terminated buffer for the whole call,
+    // meeting `lookup_variable`'s pointer/length contract, and the record it
+    // returns is owned by the variable set and outlives the read below.
+    unsafe {
+        let v = lookup_variable(ctx, name_c.as_ptr(), len).ok()?;
+        let vr = v.as_ref()?;
+        if vr.value.is_null() {
+            return None;
         }
-        slot = slot.offset(1_i32 as isize);
+        Some(target_variable_from_c(vr))
     }
-    out
+}
+
+/// Every variable in make's global set, as owned records.
+///
+/// The global set is the root scope every target- and pattern-specific scope
+/// chains up to, and it is the set `$(origin ...)` and `.VARIABLES` answer
+/// from. A safe accessor exists because the alternative is that every caller
+/// wanting to know what is defined reaches through
+/// `ctx.variable_globals.global_variable_set` into the raw slot array and
+/// repeats the walk above — which is exactly how the build-plugin host came
+/// to carry its own copy of it (#655).
+///
+/// Reads `.VARIABLES`' contents without reading `.VARIABLES`: that special
+/// variable rebuilds its value into an `xrealloc`ed buffer as a side effect
+/// of being looked up (see [`lookup_special_var`]), and a caller that only
+/// wants to observe the set has no business mutating it. One pass also
+/// carries each variable's origin, flavor and export disposition, where a
+/// name-only listing would need a second lookup per name to recover them.
+///
+/// Order is the hash table's own — a function of the table's size and
+/// insertion history rather than of anything about the build — so a caller
+/// that needs a reproducible order must sort.
+pub fn global_variables(ctx: &ExecContext) -> Vec<TargetVariable> {
+    // SAFETY: `global_variable_set` is make's own long-lived root set, owned
+    // by `ctx` and initialized by `init_hash_global_variable_set` before any
+    // caller can reach this; `as_ptr` on the owning `Box<Cell<_>>` is
+    // therefore a valid, aligned, non-null `*mut VariableSet`. The borrow of
+    // `ctx` holds the set still for the walk: every path that inserts into
+    // or rehashes the global table runs from makefile reading or expansion,
+    // neither of which can be in progress while this synchronous read is.
+    unsafe {
+        let set = &*ctx.variable_globals.global_variable_set.as_ptr();
+        live_variables(&set.table)
+            // A record with a null name is skipped rather than reported with
+            // an empty one. Defensive — `define_variable_in_set` always sets
+            // `name`, and an empty left-hand side is rejected outright — but
+            // a nameless variable cannot be looked up, printed or overridden,
+            // so it is not part of the set in any sense a caller can use.
+            // `snapshot_set_to_targets` deliberately does not filter: it
+            // mirrors one set's contents back onto a file node, where
+            // dropping an entry would lose a definition.
+            .filter(|v| !v.name.is_null())
+            .map(|v| target_variable_from_c(v))
+            .collect()
+    }
 }
 
 /// Release a chain built by [`build_file_setlist`], stopping at the shared
@@ -1577,11 +1664,9 @@ pub unsafe fn install_file_context_id(
                 .as_ref()
                 .and_then(|r| r.defined_in.as_ref().map(|f| (f.clone(), r.defined_lineno)))
         });
-        if let Some((mut fname, lineno)) = recipe_floc {
-            fname.push(0);
-            let filenm = strcache_add(ctx, fname.as_ptr() as *const ::core::ffi::c_char);
+        if let Some((fname, lineno)) = recipe_floc {
             ctx.recipe_reading_floc.0.set(Floc {
-                filenm,
+                filenm: Some(crate::strcache::strcache_intern(ctx, &fname)),
                 lineno,
                 offset: 0,
             });
@@ -1866,7 +1951,7 @@ fn should_export_decision(
 /// Safe wrapper over [`should_export_decision`]: it borrows the variable and
 /// returns a plain `bool`. The `export_all_variables` flag is read from the
 /// owned `Options` through the `with_options` borrow channel
-/// ([`crate::make_main::opt_export_all_variables`]), so this is fully safe —
+/// ([`crate::entry::opt_export_all_variables`]), so this is fully safe —
 /// no `unsafe` and no global remain.
 pub fn should_export(ctx: &crate::execctx::ExecContext, v: &variable) -> bool {
     let export_all = crate::entry::opt_export_all_variables(ctx);
@@ -1934,7 +2019,7 @@ pub unsafe fn target_environment(
     }
     hash_init(
         &raw mut table,
-        VARIABLE_BUCKETS as ::core::ffi::c_ulong,
+        VARIABLE_BUCKETS as u64,
         Some(variable_hash_1),
         Some(variable_hash_2),
         Some(variable_hash_cmp),
@@ -2627,7 +2712,7 @@ pub unsafe fn try_variable_definition(
         name: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         value: ::core::ptr::null::<::core::ffi::c_char>() as *mut ::core::ffi::c_char,
         fileinfo: Floc {
-            filenm: ::core::ptr::null::<::core::ffi::c_char>(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         },
@@ -2949,10 +3034,10 @@ unsafe fn print_variable(item: *const ::core::ffi::c_void, arg: *mut ::core::ffi
     if (*v).private_var() != 0 {
         crate::output::trace_out(b" private");
     }
-    if !(*v).fileinfo.filenm.is_null() {
+    if let Some(filenm) = (*v).fileinfo.filenm {
         crate::output::trace_parts(&[
             b" (from '",
-            ::core::ffi::CStr::from_ptr((*v).fileinfo.filenm).to_bytes(),
+            filenm.to_bytes(),
             b"', line ",
             (*v).fileinfo
                 .lineno
@@ -3092,7 +3177,7 @@ pub fn print_file_variables(ctx: &ExecContext, file: FileId) {
         .for_each(|tv| {
             // SAFETY: `cv` borrows the NUL-terminated buffers held in the tuple,
             // which outlive the `print_variable` call below.
-            let (cv, _n, _v, _f) = c_variable_from_target(tv);
+            let (cv, _n, _v) = c_variable_from_target(ctx, tv);
             unsafe {
                 print_variable(
                     &raw const cv as *const ::core::ffi::c_void,
@@ -3123,7 +3208,7 @@ pub fn print_target_variables(ctx: &ExecContext, file: FileId) {
         .for_each(|tv| {
             // SAFETY: `cv` borrows the NUL-terminated buffers held in the tuple,
             // which outlive the `print_variable` call below.
-            let (cv, _n, _v, _f) = c_variable_from_target(tv);
+            let (cv, _n, _v) = c_variable_from_target(ctx, tv);
             unsafe {
                 print_variable(
                     &raw const cv as *const ::core::ffi::c_void,
@@ -3979,5 +4064,189 @@ mod special_var_rejection_tests {
             let v = assign_makeflags(&ctx, "-k").expect("well-formed switch");
             assert!(!v.is_null());
         }
+    }
+}
+
+#[cfg(test)]
+mod global_variables_tests {
+    use super::{
+        global_variables,
+        o_command,
+        o_env,
+        o_file,
+        snapshot_set_to_targets,
+        target_variable_from_c,
+        variable,
+        variable_set,
+        TargetVariable,
+        VarOrigin,
+    };
+
+    /// The pointer-cursor walk [`snapshot_set_to_targets`] used before the
+    /// slice-based [`super::live_variables`] replaced it, preserved verbatim
+    /// as the oracle AGENTS.md requires for an unsafe-to-safe conversion.
+    ///
+    /// Kept byte-for-byte as it was — `.offset()` cursor, `end` sentinel and
+    /// all — so the differential test below compares against what actually
+    /// shipped rather than against a re-derivation of it.
+    ///
+    /// # Safety
+    /// As the original: `set` must be null or a live `variable_set`.
+    unsafe fn snapshot_set_to_targets_unsafe_oracle(set: *mut variable_set) -> Vec<TargetVariable> {
+        let mut out: Vec<TargetVariable> = Vec::new();
+        let Some(setr) = set.as_ref() else {
+            return out;
+        };
+        let mut slot = setr.table.ht_vec as *mut *mut variable;
+        let end = slot.offset(setr.table.ht_size as isize);
+        while slot < end {
+            let v = *slot;
+            if !(v.is_null() || ::core::ptr::eq(v, super::hash_deleted_item as *mut variable)) {
+                out.push(target_variable_from_c(&*v));
+            }
+            slot = slot.offset(1_i32 as isize);
+        }
+        out
+    }
+
+    /// A context whose global set holds one variable of each origin the digest
+    /// exclusion rule cares about. Returns the context; the caller reads the
+    /// set back through whichever accessor it is exercising.
+    fn ctx_with_globals() -> crate::execctx::ExecContext {
+        crate::entry::initialize_stopchar_map();
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: the standard test prelude used throughout this module —
+        // initialize the function table and the global variable set, then
+        // define through make's own entry point, which is what every real
+        // definition goes through.
+        unsafe {
+            crate::function::hash_init_function_table(&ctx);
+            super::init_hash_global_variable_set(&ctx);
+            super::define_named(&ctx, b"FROM_FILE\0", c"file-value".as_ptr(), o_file, 0)
+                .expect("define FROM_FILE");
+            super::define_named(&ctx, b"FROM_ENV\0", c"env-value".as_ptr(), o_env, 0)
+                .expect("define FROM_ENV");
+            super::define_named(&ctx, b"FROM_CMD\0", c"cmd-value".as_ptr(), o_command, 0)
+                .expect("define FROM_CMD");
+        }
+        ctx
+    }
+
+    fn named<'a>(vars: &'a [TargetVariable], name: &str) -> Option<&'a TargetVariable> {
+        vars.iter().find(|v| v.name == name.as_bytes())
+    }
+
+    /// The safe slice walk and the preserved pointer-cursor oracle report the
+    /// same records, in the same order, over a real populated set — which is
+    /// the whole claim the conversion makes.
+    #[test]
+    fn slice_walk_matches_the_pointer_cursor_oracle() {
+        let ctx = ctx_with_globals();
+        // SAFETY: `global_variable_set` is live for the whole test; both
+        // walks are synchronous reads with nothing mutating the table in
+        // between.
+        let (safe, oracle) = unsafe {
+            let set = ctx.variable_globals.global_variable_set.as_ptr();
+            (
+                snapshot_set_to_targets(set),
+                snapshot_set_to_targets_unsafe_oracle(set),
+            )
+        };
+        assert_eq!(
+            safe, oracle,
+            "the slice walk must report exactly what the pointer cursor did"
+        );
+        assert!(
+            named(&safe, "FROM_FILE").is_some(),
+            "the fixture set should be non-empty, or the comparison proves nothing"
+        );
+    }
+
+    /// A set whose table was never populated has a null `ht_vec`, and
+    /// `slice::from_raw_parts` is undefined on a null pointer even at length
+    /// zero — so the walk must test the pointer, not the size.
+    #[test]
+    fn an_unpopulated_set_walks_as_empty() {
+        let ctx = crate::execctx::ExecContext::default();
+        // SAFETY: a default `ExecContext` has a zeroed global set — null
+        // `ht_vec`, zero `ht_size` — which is exactly the shape under test.
+        let vars =
+            unsafe { snapshot_set_to_targets(ctx.variable_globals.global_variable_set.as_ptr()) };
+        assert!(vars.is_empty());
+        assert!(global_variables(&ctx).is_empty());
+    }
+
+    /// The accessor reports every defined global with make's own origin —
+    /// the field the plugin host's digest exclusion rule turns on.
+    #[test]
+    fn reports_every_global_with_its_origin() {
+        let ctx = ctx_with_globals();
+        let vars = global_variables(&ctx);
+        assert_eq!(
+            named(&vars, "FROM_FILE").map(|v| v.origin),
+            Some(VarOrigin::File)
+        );
+        assert_eq!(
+            named(&vars, "FROM_ENV").map(|v| v.origin),
+            Some(VarOrigin::Environment)
+        );
+        assert_eq!(
+            named(&vars, "FROM_CMD").map(|v| v.origin),
+            Some(VarOrigin::Command)
+        );
+        assert_eq!(
+            named(&vars, "FROM_FILE").map(|v| v.value.as_slice()),
+            Some(b"file-value".as_slice())
+        );
+    }
+
+    /// Reading the set must not change it. `.VARIABLES` rebuilds its value
+    /// into a fresh buffer as a side effect of being looked up, which is the
+    /// reason this walks the table instead of expanding that variable — so
+    /// assert the thing being measured does not move when measured.
+    #[test]
+    fn reading_the_set_does_not_disturb_it() {
+        let ctx = ctx_with_globals();
+        let before = global_variables(&ctx);
+        let again = global_variables(&ctx);
+        assert_eq!(before, again, "a read must be idempotent");
+        assert_eq!(
+            before.len(),
+            again.len(),
+            "reading must not add or drop entries"
+        );
+    }
+}
+
+/// `c_variable_from_target` carries a per-target variable's source location as
+/// an interned name, so the transient `variable` needs no file buffer beside it.
+#[cfg(test)]
+mod c_variable_from_target_tests {
+    use super::c_variable_from_target;
+    use crate::{execctx::ExecContext, strcache::strcache_iscached, target_var::TargetVariable};
+
+    #[test]
+    fn the_source_file_is_interned_and_a_synthetic_variable_has_none() {
+        let ctx = ExecContext::default();
+
+        let defined = TargetVariable {
+            name: b"V".to_vec(),
+            value: b"1".to_vec(),
+            defined_in: Some(b"c-variable-test/Makefile".to_vec()),
+            defined_lineno: 12,
+            ..TargetVariable::default()
+        };
+        let (cv, _name, _value) = c_variable_from_target(&ctx, &defined);
+        let filenm = cv.fileinfo.filenm.expect("the variable carries its file name");
+        assert_ne!(strcache_iscached(filenm.as_ptr()), 0, "the name is interned");
+        assert_eq!(filenm.to_bytes(), b"c-variable-test/Makefile");
+        assert_eq!(cv.fileinfo.lineno, 12);
+
+        let synthetic = TargetVariable {
+            name: b"S".to_vec(),
+            ..TargetVariable::default()
+        };
+        let (cv, _name, _value) = c_variable_from_target(&ctx, &synthetic);
+        assert!(cv.fileinfo.filenm.is_none(), "no source file, no name");
     }
 }

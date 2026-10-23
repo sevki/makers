@@ -208,20 +208,13 @@ pub fn set_variable_buffer_byte(
 /// The `-d` verbose line for a self-referencing variable being exported to
 /// a `$(shell …)` function. A NULL file name renders as `(null)`, exactly
 /// as glibc printf did for built-in and environment variables.
-/// # Safety
-/// `filenm` must be NULL or a valid NUL-terminated string; `name` likewise
-/// valid for the call.
-unsafe fn no_recursive_expand_msg(
-    filenm: *const ::core::ffi::c_char,
-    lineno: ::core::ffi::c_ulong,
+fn no_recursive_expand_msg(
+    filenm: Option<&::core::ffi::CStr>,
+    lineno: u64,
     name: &[u8],
 ) -> Vec<u8> {
     let mut msg = Vec::with_capacity(64);
-    msg.extend_from_slice(if filenm.is_null() {
-        b"(null)"
-    } else {
-        ::core::ffi::CStr::from_ptr(filenm).to_bytes()
-    });
+    msg.extend_from_slice(filenm.map_or(&b"(null)"[..], |f| f.to_bytes()));
     msg.extend_from_slice(b":");
     msg.extend_from_slice(lineno.to_string().as_bytes());
     msg.extend_from_slice(b": not recursively expanding ");
@@ -264,7 +257,7 @@ pub unsafe fn recursively_expand_for_file(
         return Ok(xstrdup(c"".as_ptr()));
     }
     let saved_varp = ctx.expanding_var.get();
-    if !(*v).fileinfo.filenm.is_null() {
+    if (*v).fileinfo.filenm.is_some() {
         ctx.expanding_var
             .set(Some(&raw mut (*v).fileinfo as *const Floc));
     }
@@ -977,18 +970,14 @@ mod no_recursive_expand_msg_tests {
     /// printf did, including the glibc "(null)" for a NULL file name.
     #[test]
     fn formats_with_and_without_file_name() {
-        // SAFETY: valid NUL-terminated pointer / NULL, as the contract asks.
-        unsafe {
-            assert_eq!(
-                no_recursive_expand_msg(c"Makefile".as_ptr(), 12, b"FOO"),
-                b"Makefile:12: not recursively expanding FOO to export to shell function\n"
-                    .to_vec()
-            );
-            assert_eq!(
-                no_recursive_expand_msg(::core::ptr::null(), 0, b"PATH"),
-                b"(null):0: not recursively expanding PATH to export to shell function\n".to_vec()
-            );
-        }
+        assert_eq!(
+            no_recursive_expand_msg(Some(c"Makefile"), 12, b"FOO"),
+            b"Makefile:12: not recursively expanding FOO to export to shell function\n".to_vec()
+        );
+        assert_eq!(
+            no_recursive_expand_msg(None, 0, b"PATH"),
+            b"(null):0: not recursively expanding PATH to export to shell function\n".to_vec()
+        );
     }
 }
 
