@@ -35,7 +35,7 @@ rustc-hash = "2"
 # and drop it under wasm to avoid depending on threading that never works.
 salsa = { version = "0.28", default-features = false, features = ["salsa_unstable", "macros", "inventory", "accumulator"] }
 wasmtime = { version = "48.0.1", optional = true }
-wasmtime-wasi = { version = "48.0.1", optional = true }
+wasmtime-wasi = { version = "49.0.4", optional = true }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 salsa = { version = "0.28", features = ["rayon"] }
