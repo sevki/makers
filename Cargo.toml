@@ -41,7 +41,7 @@ wasmtime-wasi = { version = "48.0.1", optional = true }
 salsa = { version = "0.28", features = ["rayon"] }
 
 [dev-dependencies]
-insta = { version = "=1.48.0", default-features = false }
+insta = { version = "=1.49.0", default-features = false }
 
 [features]
 wasmtime = ["dep:wasmtime", "dep:wasmtime-wasi", "dep:anyhow"]
