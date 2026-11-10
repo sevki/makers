@@ -1,58 +1,24 @@
+#[cfg(target_family = "wasm")]
+use crate::compat::{getloadavg, stpcpy, strsignal};
 pub use crate::ffi_types::{
-    __blkcnt_t,
-    __blksize_t,
-    __dev_t,
-    __gid_t,
-    __ino_t,
-    __mode_t,
-    __nlink_t,
-    __off64_t,
-    __off_t,
-    __pid_t,
-    __sig_atomic_t,
-    __syscall_slong_t,
-    __time_t,
-    __uid_t,
-    pid_t,
-    sig_atomic_t,
-    size_t,
-    ssize_t,
-    time_t,
-    uintmax_t,
+    __blkcnt_t, __blksize_t, __dev_t, __gid_t, __ino_t, __mode_t, __nlink_t, __off64_t, __off_t,
+    __pid_t, __sig_atomic_t, __syscall_slong_t, __time_t, __uid_t, pid_t, sig_atomic_t, size_t,
+    ssize_t, time_t, uintmax_t,
 };
+#[cfg(unix)]
+use libc::{getloadavg, stpcpy, strsignal};
 use {
     crate::{
         file::{
-            cs_finished,
-            cs_running,
-            us_failed,
-            us_question,
-            us_success,
-            CommandState,
-            FileId,
-            FileNode,
-            UpdateStatus,
-            VariableSet,
-            VariableSetList,
+            cs_finished, cs_running, us_failed, us_question, us_success, CommandState, FileId,
+            FileNode, UpdateStatus, VariableSet, VariableSetList,
         },
         misc::{xmalloc, xstrdup},
         recipe::RecipeLineFlags,
         stdio::FILE,
     },
     libc::{
-        __errno_location,
-        close,
-        free,
-        getenv,
-        getloadavg,
-        open,
-        remove,
-        sprintf,
-        stpcpy,
-        strchr,
-        strcmp,
-        strerror,
-        strsignal,
+        __errno_location, close, free, getenv, open, remove, sprintf, strchr, strcmp, strerror,
     },
     std::{
         sync::atomic::Ordering,
@@ -61,12 +27,8 @@ use {
 };
 extern "C" {
     fn stat(__file: *const ::core::ffi::c_char, __buf: *mut stat) -> i32;
-    fn sigemptyset(__set: *mut sigset_t) -> i32;
-    fn sigprocmask(__how: i32, __set: *const sigset_t, __oset: *mut sigset_t) -> i32;
-    fn lseek(__fd: i32, __offset: __off_t, __whence: i32) -> __off_t;
     fn read(__fd: i32, __buf: *mut ::core::ffi::c_void, __nbytes: size_t) -> ssize_t;
     static mut environ: *mut *mut ::core::ffi::c_char;
-    fn execvp(__file: *const ::core::ffi::c_char, __argv: *const *mut ::core::ffi::c_char) -> i32;
     fn confstr(__name: i32, __buf: *mut ::core::ffi::c_char, __len: size_t) -> size_t;
     static mut stdin: *mut FILE;
     static mut stdout: *mut FILE;
@@ -89,8 +51,49 @@ extern "C" {
         __n: size_t,
     ) -> *mut ::core::ffi::c_void;
     fn strlen(__s: *const ::core::ffi::c_char) -> size_t;
+}
+// `sigemptyset`/`sigprocmask`/`execvp`/`wait`/`waitpid`/`lseek` are declared
+// by hand here (not through `libc`, which does gate them per-target) so they
+// link fine on unix but are genuinely absent from wasm32-wasip1's libc: WASI
+// has no signals and no fork/exec, and there is no real job-control path on
+// wasm to begin with (see `spawn_via_std` below). The wasm stand-ins report
+// failure so the crate links and behaves sanely if ever reached.
+#[cfg(unix)]
+extern "C" {
+    fn sigemptyset(__set: *mut sigset_t) -> i32;
+    fn sigprocmask(__how: i32, __set: *const sigset_t, __oset: *mut sigset_t) -> i32;
+    fn lseek(__fd: i32, __offset: __off_t, __whence: i32) -> __off_t;
+    fn execvp(__file: *const ::core::ffi::c_char, __argv: *const *mut ::core::ffi::c_char) -> i32;
     fn wait(__stat_loc: *mut i32) -> __pid_t;
     fn waitpid(__pid: __pid_t, __stat_loc: *mut i32, __options: i32) -> __pid_t;
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigemptyset(_set: *mut sigset_t) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn sigprocmask(_how: i32, _set: *const sigset_t, _oset: *mut sigset_t) -> i32 {
+    0
+}
+#[cfg(target_family = "wasm")]
+unsafe fn lseek(_fd: i32, _offset: __off_t, _whence: i32) -> __off_t {
+    -1
+}
+#[cfg(target_family = "wasm")]
+unsafe fn execvp(
+    _file: *const ::core::ffi::c_char,
+    _argv: *const *mut ::core::ffi::c_char,
+) -> i32 {
+    *__errno_location() = libc::ENOSYS;
+    -1
+}
+#[cfg(target_family = "wasm")]
+unsafe fn wait(_stat_loc: *mut i32) -> __pid_t {
+    -1
+}
+#[cfg(target_family = "wasm")]
+unsafe fn waitpid(_pid: __pid_t, _stat_loc: *mut i32, _options: i32) -> __pid_t {
+    -1
 }
 pub type sigset_t = crate::entry::SigsetT;
 pub use crate::sys_stat::{stat, timespec};
@@ -298,24 +301,12 @@ use crate::{
     findprog::find_in_given_path,
     function::{shell_completed, shell_function_pid},
     output::{
-        error,
-        fatal_err,
-        message,
-        perror_with_name,
-        pfatal_with_name_err,
-        set_output_context,
+        error, fatal_err, message, perror_with_name, pfatal_with_name_err, set_output_context,
         FmtArg,
     },
     posixos::{
-        fd_noinherit,
-        get_bad_stdin,
-        jobserver_acquire,
-        jobserver_enabled,
-        jobserver_post_child,
-        jobserver_pre_acquire,
-        jobserver_pre_child,
-        jobserver_release,
-        jobserver_signal,
+        fd_noinherit, get_bad_stdin, jobserver_acquire, jobserver_enabled, jobserver_post_child,
+        jobserver_pre_acquire, jobserver_pre_child, jobserver_release, jobserver_signal,
     },
     remake::{notice_finished_file, show_goal_error},
     variable::target_environment,
@@ -415,7 +406,10 @@ pub fn is_bourne_compatible_shell(path: &::std::path::Path) -> bool {
 /// `ptr` must point to a valid NUL-terminated C string that stays alive for
 /// the lifetime `'a`.
 unsafe fn path_from_cstr<'a>(ptr: *const ::core::ffi::c_char) -> &'a ::std::path::Path {
-    use ::std::os::unix::ffi::OsStrExt;
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStrExt;
+    #[cfg(target_os = "wasi")]
+    use std::os::wasi::ffi::OsStrExt;
     ::std::path::Path::new(::std::ffi::OsStr::from_bytes(
         ::core::ffi::CStr::from_ptr(ptr).to_bytes(),
     ))
@@ -460,19 +454,33 @@ pub unsafe fn unblock_all_sigs() {
 /// Build the `<file>:<line>` location label for a failed child's error message,
 /// or the static `<builtin>` when the recipe has no source location. Any heap
 /// buffer is pushed onto `allocations` so it outlives the `error()` call that
-/// reads it. Split out of `child_error`; the only unsafety (formatting through
-/// the recipe's `filenm` C string) is confined to the block below.
+/// reads it. Split out of `child_error`.
 fn child_error_label(floc: &Floc, allocations: &mut Vec<Vec<u8>>) -> *const ::core::ffi::c_char {
-    if floc.filenm.is_null() {
+    let Some(filenm) = floc.filenm else {
         return b"<builtin>\0" as *const u8 as *const ::core::ffi::c_char;
-    }
-    // SAFETY: `filenm` is a non-null, NUL-terminated C string taken from the
-    // recipe's `fileinfo`; the buffer is sized to hold "<filenm>:<lineno>" and
-    // is owned by `allocations`, so the returned pointer stays valid.
+    };
+    let mut label = filenm.to_bytes().to_vec();
+    label.push(b':');
+    label.extend_from_slice(floc.lineno.wrapping_add(floc.offset).to_string().as_bytes());
+    label.push(0);
+    allocations.push(label);
+    allocations.last().unwrap().as_ptr() as *const ::core::ffi::c_char
+}
+
+/// The original `sprintf`-based body of [`child_error_label`], kept as the
+/// differential-test oracle for the safe version.
+#[cfg(test)]
+fn child_error_label_unsafe_oracle(
+    floc: &Floc,
+    allocations: &mut Vec<Vec<u8>>,
+) -> *const ::core::ffi::c_char {
+    let Some(filenm) = floc.filenm else {
+        return b"<builtin>\0" as *const u8 as *const ::core::ffi::c_char;
+    };
     unsafe {
         allocations.push(::std::vec::from_elem(
             0,
-            strlen(floc.filenm)
+            strlen(filenm.as_ptr())
                 .wrapping_add(6)
                 .wrapping_add(INTSTR_LENGTH)
                 .wrapping_add(1) as usize,
@@ -482,7 +490,7 @@ fn child_error_label(floc: &Floc, allocations: &mut Vec<Vec<u8>>) -> *const ::co
         sprintf(
             a,
             b"%s:%lu\0" as *const u8 as *const ::core::ffi::c_char,
-            floc.filenm,
+            filenm.as_ptr(),
             floc.lineno.wrapping_add(floc.offset),
         );
         a
@@ -511,16 +519,11 @@ fn file_name_cstr(ctx: &crate::execctx::ExecContext, file: FileId) -> Vec<u8> {
 }
 
 /// Snapshot a target's recipe definition location (`defined_in`/
-/// `defined_lineno`) into an owned [`Floc`] plus the backing filename buffer.
-/// The returned `Floc.filenm` points into `buf` (which the caller must keep
-/// alive); a recipe with no source file yields a null `filenm`. The arena lock
-/// is dropped before returning.
-fn recipe_floc(
-    ctx: &crate::execctx::ExecContext,
-    file: FileId,
-    offset: u64,
-    buf: &mut Vec<u8>,
-) -> Floc {
+/// `defined_lineno`) into an owned [`Floc`]. The returned `Floc.filenm` is the
+/// interned copy of the recipe's file name, so nothing has to be kept alive
+/// beside it; a recipe with no source file yields a null `filenm`. The arena
+/// lock is dropped before returning.
+fn recipe_floc(ctx: &crate::execctx::ExecContext, file: FileId, offset: u64) -> Floc {
     let (defined_in, lineno) = match ctx.filenodes.get(file) {
         Some(node) => {
             let g = node.lock().expect("file node poisoned");
@@ -532,25 +535,21 @@ fn recipe_floc(
         None => (None, 0),
     };
     match defined_in {
-        Some(mut name) => {
-            name.push(0);
-            *buf = name;
+        Some(name) => {
             Floc {
-                filenm: buf.as_ptr() as *const ::core::ffi::c_char,
-                lineno: lineno as ::core::ffi::c_ulong,
+                filenm: Some(crate::strcache::strcache_intern(ctx, &name)),
+                lineno,
                 // The error reports `lineno + offset`; the offset is the failing
                 // command's 0-based index in the recipe (C: `fileinfo.offset =
                 // child->command_line - 1`).
-                offset: offset as ::core::ffi::c_ulong,
+                offset,
             }
         }
-        None => {
-            Floc {
-                filenm: ::core::ptr::null(),
-                lineno: 0,
-                offset: 0,
-            }
-        }
+        None => Floc {
+            filenm: None,
+            lineno: 0,
+            offset: 0,
+        },
     }
 }
 
@@ -659,9 +658,8 @@ unsafe fn child_error(
     let mut pre: *const ::core::ffi::c_char = b"*** \0" as *const u8 as *const ::core::ffi::c_char;
     let mut post: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
     let mut dump: *const ::core::ffi::c_char = b"\0" as *const u8 as *const ::core::ffi::c_char;
-    let mut floc_buf: Vec<u8> = Vec::new();
     let cmd_offset = ((*child).command_line as u64).saturating_sub(1);
-    let floc = recipe_floc(ctx, (*child).file, cmd_offset, &mut floc_buf);
+    let floc = recipe_floc(ctx, (*child).file, cmd_offset);
     let name_buf = file_name_cstr(ctx, (*child).file);
     let f_name: *const ::core::ffi::c_char = name_buf.as_ptr() as *const ::core::ffi::c_char;
     let mut smode: Option<&::core::ffi::CStr> = None;
@@ -983,7 +981,7 @@ pub unsafe fn reap_children(
                 || st.st_mode & S_IXUSR as __mode_t == 0
             {
                 e = strerror(EACCES);
-            } else if st.st_size == 0 as __off_t {
+            } else if st.st_size == 0 {
                 e = strerror(ENOEXEC);
             }
             if !e.is_null() {
@@ -1053,12 +1051,10 @@ pub unsafe fn reap_children(
             );
             if ctx.delete_on_error.0.load(Ordering::Relaxed) == -1_i32 {
                 let is_target = match lookup_file(ctx, b".DELETE_ON_ERROR") {
-                    Some(fid) => {
-                        match ctx.filenodes.get(fid) {
-                            Some(node) => node.lock().expect("file node poisoned").is_target,
-                            None => false,
-                        }
-                    }
+                    Some(fid) => match ctx.filenodes.get(fid) {
+                        Some(node) => node.lock().expect("file node poisoned").is_target,
+                        None => false,
+                    },
                     None => false,
                 };
                 ctx.delete_on_error
@@ -1426,14 +1422,13 @@ pub unsafe fn start_job_command(
                 (*child).set_deleted(0 as ::core::ffi::c_uint as ::core::ffi::c_uint);
                 if (*child).environment.is_null() {
                     let any_recurse = match ctx.filenodes.get((*child).file) {
-                        Some(node) => {
-                            node.lock()
-                                .expect("file node poisoned")
-                                .recipe
-                                .as_ref()
-                                .map(|r| r.any_recurse)
-                                .unwrap_or(false)
-                        }
+                        Some(node) => node
+                            .lock()
+                            .expect("file node poisoned")
+                            .recipe
+                            .as_ref()
+                            .map(|r| r.any_recurse)
+                            .unwrap_or(false),
                         None => false,
                     };
                     (*child).environment =
@@ -2487,6 +2482,7 @@ unsafe fn spawn_child(
 /// The returned [`std::process::Child`] handle is dropped without waiting:
 /// reaping stays centralized in `reap_children`'s `wait`/`waitpid(-1)`,
 /// which is shared with `$(shell)` and remote children.
+#[cfg(unix)]
 unsafe fn spawn_via_std(
     file: *const ::core::ffi::c_char,
     argv: *mut *mut ::core::ffi::c_char,
@@ -2560,6 +2556,24 @@ unsafe fn spawn_via_std(
             }
         }
     }
+}
+
+/// wasm has no `fork`/`exec`: recipe execution is an accepted, tracked
+/// architectural gap on this target (the crate only needs to *compile* for
+/// `wasm32-wasip1`, not run recipes there). Report the spawn as failed with
+/// `ENOSYS` rather than panicking, so callers built for wasm still behave
+/// sanely if this path is ever reached.
+#[cfg(target_family = "wasm")]
+unsafe fn spawn_via_std(
+    _file: *const ::core::ffi::c_char,
+    _argv: *mut *mut ::core::ffi::c_char,
+    _envp: *mut *mut ::core::ffi::c_char,
+    _fdin: i32,
+    _fdout: i32,
+    _fderr: i32,
+    _pid: *mut pid_t,
+) -> i32 {
+    libc::ENOSYS
 }
 /// # Safety
 ///
@@ -3734,7 +3748,7 @@ mod collapse_dollar_refs_tests {
 #[cfg(test)]
 mod child_error_helper_tests {
     use {
-        super::{child_error_label, smode_or_empty, Floc},
+        super::{child_error_label, child_error_label_unsafe_oracle, smode_or_empty, Floc},
         std::ffi::{CStr, CString},
     };
 
@@ -3784,7 +3798,7 @@ mod child_error_helper_tests {
     #[test]
     fn label_is_builtin_without_source() {
         let fl = Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         };
@@ -3799,9 +3813,9 @@ mod child_error_helper_tests {
     /// owned buffer tracked by `allocations`.
     #[test]
     fn label_formats_file_and_line() {
-        let name = CString::new("Makefile").unwrap();
         let fl = Floc {
-            filenm: name.as_ptr(),
+            // A `Floc` name is always interned or static, never a local buffer.
+            filenm: Some(c"Makefile"),
             lineno: 10,
             offset: 2,
         };
@@ -3810,6 +3824,30 @@ mod child_error_helper_tests {
         let label = unsafe { CStr::from_ptr(label) };
         assert_eq!(label.to_bytes(), b"Makefile:12");
         assert_eq!(allocations.len(), 1, "formatted label owns one buffer");
+    }
+
+    /// The safe label matches the preserved `sprintf` oracle byte for byte,
+    /// including the wrapping `lineno + offset` sum.
+    #[cfg_attr(miri, ignore = "the oracle calls libc sprintf/strlen")]
+    #[test]
+    fn label_matches_the_sprintf_oracle() {
+        for (filenm, lineno, offset) in [
+            (None, 0, 0),
+            (Some(c"Makefile"), 1, 0),
+            (Some(c"sub/dir/inc.mk"), 4_000_000_000, 7),
+            (Some(c""), 3, 1),
+            (Some(c"wrap.mk"), u64::MAX, 2),
+        ] {
+            let fl = Floc {
+                filenm,
+                lineno,
+                offset,
+            };
+            let (mut a, mut b): (Vec<Vec<u8>>, Vec<Vec<u8>>) = (Vec::new(), Vec::new());
+            let safe = unsafe { CStr::from_ptr(child_error_label(&fl, &mut a)) };
+            let oracle = unsafe { CStr::from_ptr(child_error_label_unsafe_oracle(&fl, &mut b)) };
+            assert_eq!(safe.to_bytes(), oracle.to_bytes(), "{filenm:?} {lineno} {offset}");
+        }
     }
 }
 

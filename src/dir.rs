@@ -9,20 +9,19 @@ pub use crate::ffi_types::{__ino_t, __off_t, __size_t, dev_t, ino_t, size_t, tim
 use crate::{
     entry::db_level,
     floc::Floc,
-    misc::xrealloc,
     output::{fatal_err, FmtArg},
     strcache::strcache_add_len,
 };
 
 use {
     ::core::{
-        ffi::{c_char, c_long, c_uchar, c_uint, c_ulong, c_ushort, c_void},
+        ffi::{c_char, c_long, c_uchar, c_uint, c_ushort, c_void},
         ptr::{null, null_mut},
     },
     rustc_hash::FxHashMap,
 };
 
-use libc::{__errno_location, closedir, memcpy, opendir, readdir, strerror, strlen, DIR, EINTR};
+use libc::strlen;
 
 pub use crate::sys_stat::{stat, timespec};
 
@@ -50,7 +49,7 @@ pub struct glob_t {
 /// `struct dirent` layout handed back to glob by [`read_dirstream`]; the
 /// name is truncated/extended to the actual length, so this header is
 /// what counts.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct dirent {
     pub d_ino: __ino_t,
@@ -60,6 +59,16 @@ pub struct dirent {
     pub d_name: [c_char; 256],
 }
 
+/// An all-zero [`dirent`], the filler [`read_dirstream`]'s scratch buffer grows
+/// with.
+pub(crate) const EMPTY_DIRENT: dirent = dirent {
+    d_ino: 0,
+    d_off: 0,
+    d_reclen: 0,
+    d_type: 0,
+    d_name: [0; 256],
+};
+
 /// A directory name; `contents` points to the dev/ino-keyed cache entry
 /// shared by every name for the same directory.
 #[derive(Copy, Clone)]
@@ -68,17 +77,33 @@ pub struct directory {
     pub name: *const c_char,
     /// `Options::command_count` when this name was last stat'd (used only when the
     /// directory could not be stat'd, so there is no `contents`).
-    pub counter: c_ulong,
+    pub counter: u64,
     pub contents: *mut DirectoryContents,
 }
 
-/// One cached directory entry: the file's `d_type` plus whether it is an
+/// One cached directory entry: the file's type plus whether it is an
 /// "impossible" target (make tried and failed to build it). The name is the
 /// [`DirectoryContents::dirfiles`] map key, so it is not stored here.
+///
+/// `kind` is only ever a hint handed on to glob (see [`read_dirstream`]),
+/// which stats for itself when it is absent; `None` is therefore always safe.
 #[derive(Copy, Clone, Debug)]
 pub struct DirFileEntry {
-    pub type_0: c_uchar,
+    pub kind: Option<crate::fs::FileKind>,
     pub impossible: bool,
+}
+
+/// How a directory's cached contents are keyed.
+///
+/// Two names for one directory should share a single cache entry, which the
+/// device/inode pair gives us wherever the platform reports one. Where it
+/// does not (wasm — see [`crate::fs::file_id`]) the directory's own name
+/// stands in: still correct, just unable to notice that `a/../b` and `b` are
+/// the same directory and so caching each separately.
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+pub enum DirKey {
+    Id(crate::fs::FileId),
+    Path(Box<[u8]>),
 }
 
 /// The actual cached contents of a directory, keyed by device and inode.
@@ -88,13 +113,20 @@ pub struct DirFileEntry {
 /// its `dirfile_hash_*` callbacks. `None` means the directory could not be
 /// opened (the former null `ht_vec`); `Some` (even empty) means it was.
 pub struct DirectoryContents {
-    pub dev: dev_t,
-    pub ino: ino_t,
+    /// What this entry is keyed by in the contents table, kept for `-p`
+    /// output. `None` for the standalone entry `file_impossible` builds for
+    /// a directory that could not be stat'd, which is in no table.
+    pub key: Option<DirKey>,
     pub dirfiles: Option<FxHashMap<Box<[u8]>, DirFileEntry>>,
     /// `Options::command_count` when the contents were last read.
-    pub counter: c_ulong,
+    pub counter: u64,
     /// Open stream while the directory is still being read lazily.
-    pub dirstream: *mut DIR,
+    ///
+    /// [`crate::fs::ReadDir`] is the same lazy, handle-holding cursor `DIR*`
+    /// was — it yields one entry per `next()` and closes on drop — so the
+    /// incremental read and the [`MAX_OPEN_DIRECTORIES`] throttle survive the
+    /// move off libc unchanged. On wasm it is backed by `fd_readdir`.
+    pub dirstream: Option<crate::fs::ReadDir>,
 }
 
 /// Glob cursor handed out by `open_dirstream`: an owned snapshot of the
@@ -105,8 +137,28 @@ pub struct DirectoryContents {
 /// `Box`-allocated and freed by [`close_dirstream`] (not libc `free`), so it
 /// can own heap data.
 pub struct DirStream {
-    pub entries: Vec<(Box<[u8]>, c_uchar)>,
+    pub entries: Vec<(Box<[u8]>, Option<crate::fs::FileKind>)>,
     pub index: usize,
+}
+
+/// `d_type` value for a cached entry's kind.
+///
+/// These are the `DT_*` constants from `<dirent.h>`, which exist here only
+/// because the C glob reads them out of the `dirent` we synthesize; they are
+/// an ABI detail of that one call, not something the cache reasons about.
+/// `DT_UNKNOWN` is always a safe answer — it just makes glob stat the name
+/// itself — so an unknown kind maps to it.
+fn d_type_of(kind: Option<crate::fs::FileKind>) -> c_uchar {
+    const DT_UNKNOWN: c_uchar = 0;
+    const DT_DIR: c_uchar = 4;
+    const DT_REG: c_uchar = 8;
+    const DT_LNK: c_uchar = 10;
+    match kind {
+        Some(crate::fs::FileKind::Dir) => DT_DIR,
+        Some(crate::fs::FileKind::File) => DT_REG,
+        Some(crate::fs::FileKind::Symlink) => DT_LNK,
+        Some(crate::fs::FileKind::Other) | None => DT_UNKNOWN,
+    }
 }
 
 /// `DB_VERBOSE`: `-d`-style debug output enabled in `db_level`.
@@ -117,11 +169,9 @@ pub const MAX_OPEN_DIRECTORIES: i32 = 10;
 /// Forget everything cached about `dc`, closing its stream if open.
 fn clear_directory_contents(ctx: &crate::execctx::ExecContext, dc: &mut DirectoryContents) {
     dc.counter = 0;
-    if !dc.dirstream.is_null() {
+    if dc.dirstream.take().is_some() {
+        // Dropping the `ReadDir` closes the underlying handle.
         ctx.open_directories.set(ctx.open_directories.get() - 1);
-        // SAFETY: `dirstream` is non-null here and was returned by `opendir`.
-        unsafe { closedir(dc.dirstream) };
-        dc.dirstream = null_mut();
     }
     // Drop any cached entries; the next `find_directory` reopens the stream
     // and installs a fresh map.
@@ -185,34 +235,28 @@ pub unsafe fn find_directory(
     dir_ref.contents = null_mut();
     dir_ref.counter = crate::entry::opt_command_count(ctx);
 
-    let mut st: stat = ::core::mem::zeroed();
-    let mut r;
-    loop {
-        r = stat(name, &raw mut st);
-        if !(r == -1 && *__errno_location() == EINTR) {
-            break;
-        }
-    }
-    if r < 0 {
+    let dirpath = crate::fs::path_from_c(name);
+    let Ok(meta) = crate::fs::metadata(dirpath) else {
         // Couldn't stat the directory; leave a contents-less entry.
         return Ok(dir);
-    }
+    };
 
-    // Directory contents are shared across names via the dev/ino key, held in
-    // the idiomatic `FxHashMap` cache on the context.
-    let dev = st.st_dev as dev_t;
-    let ino = st.st_ino as ino_t;
+    // Directory contents are shared across names via the file-identity key,
+    // held in the idiomatic `FxHashMap` cache on the context.
+    let key = match meta.id() {
+        Some(id) => DirKey::Id(id),
+        None => DirKey::Path(Box::from(::core::ffi::CStr::from_ptr(name).to_bytes())),
+    };
     let dc: *mut DirectoryContents = {
         let mut table = ctx.directory_contents.0.borrow_mut();
-        let entry = table.entry((dev, ino)).or_insert_with(|| {
+        let entry = table.entry(key.clone()).or_insert_with(|| {
             // Freshly created, matching the former `xcalloc`: no file map yet
             // (`None`), no open stream, zero `counter`.
             Box::new(DirectoryContents {
-                dev,
-                ino,
+                key: Some(key),
                 dirfiles: None,
                 counter: 0,
-                dirstream: null_mut(),
+                dirstream: None,
             })
         });
         // The `Box` keeps the contents at a stable heap address across later
@@ -228,14 +272,8 @@ pub unsafe fn find_directory(
             clear_directory_contents(ctx, dc);
         }
         dc.counter = crate::entry::opt_command_count(ctx);
-        loop {
-            *__errno_location() = 0;
-            dc.dirstream = opendir(name);
-            if !(dc.dirstream.is_null() && *__errno_location() == EINTR) {
-                break;
-            }
-        }
-        if dc.dirstream.is_null() {
+        dc.dirstream = crate::fs::open_dir(dirpath).ok();
+        if dc.dirstream.is_none() {
             // Unreadable: cache that fact with no file map.
             dc.dirfiles = None;
         } else {
@@ -278,49 +316,54 @@ unsafe fn dir_contents_file_exists_p(
         if let Some(entry) = dc.dirfiles.as_ref().and_then(|m| m.get(key)) {
             return Ok((!entry.impossible) as i32);
         }
+        // `.` and `..` are present in every directory that opened, but a Rust
+        // directory iterator — like the `fd_readdir` beneath it on wasm —
+        // does not list them, where C's `readdir` did and so cached them.
+        // Answer for them directly rather than seeding fake cache entries.
+        // Placed after the map lookup so an explicit `impossible` marker on
+        // either name still wins.
+        if dc.dirfiles.is_some() && (key == b"." || key == b"..") {
+            return Ok(1);
+        }
     }
 
-    if dc.dirstream.is_null() {
+    if dc.dirstream.is_none() {
         // The directory has been read in full and the name wasn't there.
         return Ok(0);
     }
 
     // Keep reading entries (caching each one) until we hit the name or
-    // exhaust the directory.
-    let mut d: *mut libc::dirent;
+    // exhaust the directory. The stream is re-borrowed each turn so the
+    // cache map can be updated inside the loop.
     loop {
-        loop {
-            *__errno_location() = 0;
-            d = readdir(dc.dirstream);
-            if !(d.is_null() && *__errno_location() == EINTR) {
-                break;
-            }
-        }
-        let Some(entry) = d.as_mut() else {
-            if *__errno_location() != 0 {
+        let Some(next) = dc
+            .dirstream
+            .as_mut()
+            .expect("dirstream is Some while reading")
+            .next()
+        else {
+            break;
+        };
+        let entry = match next {
+            Ok(e) => e,
+            Err(e) => {
                 // The scan is abandoned mid-directory: the stream stays open
                 // and cached entries stay cached, exactly as they were before
                 // this failure, so a later scan of the same directory resumes
                 // where this one stopped.
+                let msg = ::std::ffi::CString::new(e.to_string())
+                    .unwrap_or_else(|_| c"read error".to_owned());
                 return Err(fatal_err(
                     ctx,
                     null::<Floc>(),
                     0,
                     c"readdir %s: %s".as_ptr(),
-                    &[
-                        FmtArg::Str(dir.name),
-                        FmtArg::Str(strerror(*__errno_location())),
-                    ],
+                    &[FmtArg::Str(dir.name), FmtArg::Str(msg.as_ptr())],
                 ));
             }
-            break;
         };
-        if entry.d_ino == 0 {
-            continue;
-        }
 
-        let d_name = entry.d_name.as_mut_ptr();
-        let name = ::core::ffi::CStr::from_ptr(d_name).to_bytes();
+        let name = entry.name;
         // Insert (overwriting), matching the C `hash_insert_at`: actually seeing
         // the file during a scan clears any stale `impossible` marker a prior
         // `file_impossible` recorded for the same name.
@@ -328,9 +371,9 @@ unsafe fn dir_contents_file_exists_p(
             .as_mut()
             .expect("dirfiles is Some when reading")
             .insert(
-                Box::from(name),
+                Box::from(name.as_slice()),
                 DirFileEntry {
-                    type_0: entry.d_type,
+                    kind: entry.kind,
                     impossible: false,
                 },
             );
@@ -340,11 +383,10 @@ unsafe fn dir_contents_file_exists_p(
         }
     }
 
-    // Reached the end of the directory: the stream is exhausted.
-    if d.is_null() {
+    // Reached the end of the directory: the stream is exhausted, and dropping
+    // it closes the handle.
+    if dc.dirstream.take().is_some() {
         ctx.open_directories.set(ctx.open_directories.get() - 1);
-        closedir(dc.dirstream);
-        dc.dirstream = null_mut();
     }
     Ok(0)
 }
@@ -489,11 +531,10 @@ pub unsafe fn file_impossible(
         // table (there is no stat to key it by), so leak it like the former
         // `xcalloc` did — the cache lives for the whole run.
         dir.contents = Box::into_raw(Box::new(DirectoryContents {
-            dev: 0,
-            ino: 0,
+            key: None,
             dirfiles: None,
             counter: 0,
-            dirstream: null_mut(),
+            dirstream: None,
         }));
     }
     let dc = dir.contents.as_mut().expect("just ensured non-null");
@@ -504,7 +545,7 @@ pub unsafe fn file_impossible(
         .get_or_insert_with(FxHashMap::default)
         .entry(Box::from(key))
         .or_insert(DirFileEntry {
-            type_0: 0,
+            kind: None,
             impossible: true,
         });
     Ok(())
@@ -597,6 +638,24 @@ fn print_count(n: c_uint, zero_word: &[u8]) {
     }
 }
 
+/// Render a directory's cache key for `make -p`, as GNU make's
+/// " (device N, inode M)".
+///
+/// Empty where the platform reports no file identity (wasm): the key is then
+/// the directory name the caller has already printed, so there is nothing
+/// further to say about it.
+fn describe_key(key: Option<&DirKey>) -> Vec<u8> {
+    let Some(DirKey::Id(id)) = key else {
+        return Vec::new();
+    };
+    let mut out = b" (device ".to_vec();
+    out.extend_from_slice((id.dev as c_long).to_string().as_bytes());
+    out.extend_from_slice(b", inode ");
+    out.extend_from_slice((id.ino as c_long).to_string().as_bytes());
+    out.push(b')');
+    out
+}
+
 /// Print the directory cache for `make -p`.
 ///
 /// # Safety
@@ -624,11 +683,8 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
             crate::output::trace_parts(&[
                 b"# ",
                 ::core::ffi::CStr::from_ptr(dir.name).to_bytes(),
-                b" (device ",
-                (dc.dev as c_long).to_string().as_bytes(),
-                b", inode ",
-                (dc.ino as c_long).to_string().as_bytes(),
-                b"): could not be opened.\n",
+                &describe_key(dc.key.as_ref()),
+                b": could not be opened.\n",
             ]);
             continue;
         };
@@ -645,17 +701,14 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
         crate::output::trace_parts(&[
             b"# ",
             ::core::ffi::CStr::from_ptr(dir.name).to_bytes(),
-            b" (device ",
-            (dc.dev as c_long).to_string().as_bytes(),
-            b", inode ",
-            (dc.ino as c_long).to_string().as_bytes(),
-            b"): ",
+            &describe_key(dc.key.as_ref()),
+            b": ",
         ]);
         print_count(f, b"No");
         crate::output::trace_out(b" files, ");
         print_count(im, b"no");
         crate::output::trace_out(b" impossibilities");
-        if dc.dirstream.is_null() {
+        if dc.dirstream.is_none() {
             crate::output::trace_out(b".\n");
         } else {
             crate::output::trace_out(b" so far.\n");
@@ -670,7 +723,7 @@ pub unsafe fn print_dir_data_base(ctx: &crate::execctx::ExecContext) {
     print_count(impossible, b"no");
     crate::output::trace_parts(&[
         b" impossibilities in ",
-        (table.len() as c_ulong).to_string().as_bytes(),
+        (table.len() as u64).to_string().as_bytes(),
         b" directories.\n",
     ]);
 }
@@ -723,13 +776,13 @@ unsafe fn open_dirstream_cached(
         // is not mutated during the glob, so a flat `Vec` lets `read_dirstream`
         // advance in O(1) per call (O(N) total) and frees it from the cache's
         // lifetime.
-        let entries: Vec<(Box<[u8]>, c_uchar)> = dc
+        let entries: Vec<(Box<[u8]>, Option<crate::fs::FileKind>)> = dc
             .dirfiles
             .as_ref()
             .expect("dirfiles is Some (checked above)")
             .iter()
             .filter(|(_, e)| !e.impossible)
-            .map(|(name, e)| (name.clone(), e.type_0))
+            .map(|(name, e)| (name.clone(), e.kind))
             .collect();
         Ok(Box::into_raw(Box::new(DirStream { entries, index: 0 })).cast())
     }
@@ -754,7 +807,7 @@ pub extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
             .expect("read_dirstream: null stream");
 
         // O(1): index straight into the snapshot taken by `open_dirstream`.
-        let Some((name, type_0)) = ds.entries.get(ds.index) else {
+        let Some((name, kind)) = ds.entries.get(ds.index) else {
             return null_mut();
         };
         ds.index += 1;
@@ -765,25 +818,26 @@ pub extern "C" fn read_dirstream(stream: *mut c_void) -> *mut dirent {
         let sz = ::core::mem::size_of::<dirent>() as size_t
             - ::core::mem::size_of::<[c_char; 256]>() as size_t
             + len;
-        if sz > ctx.read_dirstream_bufsz.get() {
-            let bufsz = (ctx.read_dirstream_bufsz.get() * 2).max(sz);
-            ctx.read_dirstream_bufsz.set(bufsz);
-            ctx.read_dirstream_buf
-                .set(xrealloc(ctx.read_dirstream_buf.get() as *mut c_void, bufsz) as *mut c_char);
+        // The buffer is a `Vec<dirent>`, so grow it in whole `dirent`s (which
+        // also keeps `dirent`'s alignment); like the byte block it replaces it
+        // only ever grows, doubling.
+        let mut buf = ctx.read_dirstream_buf.borrow_mut();
+        let needed = sz.div_ceil(::core::mem::size_of::<dirent>());
+        if buf.len() < needed {
+            let grown = (buf.len() * 2).max(needed);
+            buf.resize(grown, EMPTY_DIRENT);
         }
-        let d = (ctx.read_dirstream_buf.get() as *mut dirent)
-            .as_mut()
-            .expect("xrealloc never returns null");
-        d.d_ino = 1;
-        d.d_type = *type_0;
-        memcpy(
-            d.d_name.as_mut_ptr().cast(),
-            name.as_ptr() as *const c_void,
-            name.len(),
-        );
+        // Derive the pointer from the whole allocation, not from `buf[0]`: a
+        // name longer than `d_name` is written past element 0, into the
+        // elements allocated for it.
+        let d = buf.as_mut_ptr();
+        (*d).d_ino = 1;
+        (*d).d_type = d_type_of(*kind);
+        let d_name = (&raw mut (*d).d_name).cast::<u8>();
+        ::core::ptr::copy_nonoverlapping(name.as_ptr(), d_name, name.len());
         // NUL-terminate (the snapshot name has no terminator).
-        *d.d_name.as_mut_ptr().add(name.len()) = 0;
-        &raw mut *d
+        *d_name.add(name.len()) = 0;
+        d
     })
 }
 
@@ -956,5 +1010,149 @@ mod open_directories_tests {
 
         // A second, independent context keeps its own count.
         assert_eq!(ExecContext::default().open_directories.get(), 0);
+    }
+}
+
+/// `read_dirstream` over its owned `Vec<dirent>` scratch buffer, differentially
+/// tested against the `malloc`/`realloc`'d byte block it replaced.
+#[cfg(test)]
+mod read_dirstream_tests {
+    use super::{d_type_of, dirent, read_dirstream, DirStream};
+    use crate::fs::FileKind;
+    use ::core::ffi::{c_char, c_void, CStr};
+
+    /// The pre-conversion `read_dirstream` body, verbatim, with the
+    /// context's `read_dirstream_buf`/`read_dirstream_bufsz` cells replaced by
+    /// explicit `buf`/`bufsz` so it can run beside the new code.
+    unsafe fn read_dirstream_unsafe_oracle(
+        buf: &mut *mut c_char,
+        bufsz: &mut usize,
+        name: &[u8],
+        kind: Option<FileKind>,
+    ) -> *mut dirent {
+        let len = name.len() + 1;
+        let sz = ::core::mem::size_of::<dirent>() - ::core::mem::size_of::<[c_char; 256]>() + len;
+        if sz > *bufsz {
+            let grown = (*bufsz * 2).max(sz);
+            *bufsz = grown;
+            *buf = crate::misc::xrealloc(*buf as *mut c_void, grown) as *mut c_char;
+        }
+        let d = (*buf as *mut dirent)
+            .as_mut()
+            .expect("xrealloc never returns null");
+        d.d_ino = 1;
+        d.d_type = d_type_of(kind);
+        libc::memcpy(
+            d.d_name.as_mut_ptr().cast(),
+            name.as_ptr() as *const c_void,
+            name.len(),
+        );
+        *d.d_name.as_mut_ptr().add(name.len()) = 0;
+        &raw mut *d
+    }
+
+    /// Not run under Miri: Miri flags the oracle itself. Its
+    /// `(*buf as *mut dirent).as_mut()` forms a `&mut dirent` over a block
+    /// sized to the actual name, which for short names is smaller than a whole
+    /// `dirent` — latent undefined behavior in the original that the
+    /// `Vec<dirent>` buffer removes (see
+    /// `new_buffer_is_sound_and_correct_including_growth` for the Miri-checked
+    /// side).
+    #[test]
+    #[cfg_attr(miri, ignore = "the preserved oracle has the UB this conversion removes")]
+    fn matches_the_realloc_block_oracle_including_growth() {
+        let ctx = crate::entry::install_default_exec_context_for_test();
+        let long = |n: usize| vec![b'x'; n].into_boxed_slice();
+        // Short names, names right at and past `d_name`'s 256 bytes (forcing
+        // the buffer to grow beyond one `dirent`), then a short one again
+        // (the buffer must not shrink or corrupt).
+        let entries: Vec<(Box<[u8]>, Option<FileKind>)> = vec![
+            (b"a".to_vec().into_boxed_slice(), None),
+            (b"Makefile".to_vec().into_boxed_slice(), Some(FileKind::File)),
+            (long(255), Some(FileKind::Dir)),
+            (long(256), Some(FileKind::Symlink)),
+            (long(1000), Some(FileKind::Other)),
+            (b"z".to_vec().into_boxed_slice(), Some(FileKind::File)),
+        ];
+        let want_names: Vec<Box<[u8]>> = entries.iter().map(|(n, _)| n.clone()).collect();
+        let mut ds = DirStream { entries, index: 0 };
+        let stream = &raw mut ds as *mut c_void;
+
+        let mut buf: *mut c_char = ::core::ptr::null_mut();
+        let mut bufsz: usize = 0;
+        let mut prev_len = 0;
+        for (i, want_name) in want_names.iter().enumerate() {
+            let kind = ds.entries[i].1;
+            // SAFETY: `stream` is a live `DirStream`; each returned pointer is
+            // read before the next call can invalidate it.
+            unsafe {
+                let new = read_dirstream(stream);
+                assert!(!new.is_null());
+                let old = read_dirstream_unsafe_oracle(&mut buf, &mut bufsz, want_name, kind);
+
+                assert_eq!((*new).d_ino, (*old).d_ino);
+                assert_eq!((*new).d_type, (*old).d_type);
+                let new_name = CStr::from_ptr((*new).d_name.as_ptr()).to_bytes();
+                let old_name = CStr::from_ptr((*old).d_name.as_ptr()).to_bytes();
+                assert_eq!(new_name, &**want_name);
+                assert_eq!(new_name, old_name);
+            }
+            // Only ever grows.
+            let len = ctx.read_dirstream_buf.borrow().len();
+            assert!(len >= prev_len, "buffer shrank at entry {i}");
+            prev_len = len;
+        }
+        // The 1000-byte name needed more than one `dirent`.
+        assert!(prev_len > 1);
+
+        // Exhausted: null, as before.
+        assert!(read_dirstream(stream).is_null());
+        // SAFETY: `buf` came from `xrealloc` (malloc-family).
+        unsafe { libc::free(buf.cast()) };
+    }
+
+    /// The new buffer on its own, with no oracle, so it can run under Miri:
+    /// every returned `dirent` carries the right fields and name (including
+    /// names written past `d_name` into the elements grown for them), the
+    /// buffer only grows, and each returned pointer is readable until the next
+    /// call.
+    #[test]
+    fn new_buffer_is_sound_and_correct_including_growth() {
+        let ctx = crate::entry::install_default_exec_context_for_test();
+        let long = |n: usize| vec![b'y'; n].into_boxed_slice();
+        let entries: Vec<(Box<[u8]>, Option<FileKind>)> = vec![
+            (b"a".to_vec().into_boxed_slice(), None),
+            (long(255), Some(FileKind::Dir)),
+            (long(256), Some(FileKind::Symlink)),
+            (long(1000), Some(FileKind::Other)),
+            (b"z".to_vec().into_boxed_slice(), Some(FileKind::File)),
+        ];
+        let want: Vec<(Box<[u8]>, u8)> = entries
+            .iter()
+            .map(|(name, kind)| (name.clone(), d_type_of(*kind)))
+            .collect();
+        let mut ds = DirStream { entries, index: 0 };
+        let stream = &raw mut ds as *mut c_void;
+
+        let mut prev_len = 0;
+        for (name, d_type) in &want {
+            // SAFETY: `stream` is a live `DirStream`; the returned pointer is
+            // read before the next call can invalidate it.
+            unsafe {
+                let d = read_dirstream(stream);
+                assert!(!d.is_null());
+                assert_eq!((*d).d_ino, 1);
+                assert_eq!((*d).d_type, *d_type);
+                let d_name = (&raw const (*d).d_name).cast::<u8>();
+                let got = ::core::slice::from_raw_parts(d_name, name.len() + 1);
+                assert_eq!(&got[..name.len()], &**name);
+                assert_eq!(got[name.len()], 0, "name is NUL-terminated");
+            }
+            let len = ctx.read_dirstream_buf.borrow().len();
+            assert!(len >= prev_len, "buffer must not shrink");
+            prev_len = len;
+        }
+        assert!(prev_len > 1, "the 1000-byte name needed several dirents");
+        assert!(read_dirstream(stream).is_null());
     }
 }

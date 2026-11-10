@@ -154,6 +154,18 @@ pub fn strcache_add_bytes(ctx: &crate::execctx::ExecContext, bytes: &[u8]) -> *c
     intern(ctx, bytes)
 }
 
+/// Intern an arbitrary byte slice and return the canonical string as a
+/// `&'static CStr`: `Copy`, `Send`, `Sync`, and with no raw pointer to carry
+/// around. A name with an interior NUL reads as truncated at it, as a C string
+/// always did.
+pub fn strcache_intern(ctx: &crate::execctx::ExecContext, bytes: &[u8]) -> &'static CStr {
+    let ptr = intern(ctx, bytes);
+    // SAFETY: `intern` returns a pointer into storage that was `Vec::leak`ed
+    // (see `intern_bytes`): it is never freed or mutated, so it is valid for
+    // `'static`, and the interner wrote a NUL after the bytes.
+    unsafe { CStr::from_ptr(ptr) }
+}
+
 /// Returns nonzero if `str` is a pointer previously handed out by the cache.
 ///
 /// Does not dereference `str`, so it is sound to call on any pointer value
@@ -230,6 +242,34 @@ mod tests {
             assert_eq!(CStr::from_ptr(r).to_bytes(), b"strcache-test-bar");
         }
         assert!(a.contains(&(p as usize)) && a.contains(&(r as usize)));
+    }
+
+    /// `strcache_intern` hands back the canonical string as a `&'static CStr`:
+    /// the same bytes give the same address (and the one `strcache_add_bytes`
+    /// returns), it is registered with the cache, it is NUL-terminated, and it
+    /// stays readable with no context alive. A name with an interior NUL reads
+    /// as truncated at it.
+    #[test]
+    fn strcache_intern_returns_a_canonical_static_cstr() {
+        let name: &'static CStr = {
+            let ctx = crate::execctx::ExecContext::default();
+            let first = strcache_intern(&ctx, b"strcache-intern-test/Makefile");
+            let again = strcache_intern(&ctx, b"strcache-intern-test/Makefile");
+            assert!(::core::ptr::eq(first, again), "equal bytes share an address");
+            assert_eq!(
+                first.as_ptr(),
+                strcache_add_bytes(&ctx, b"strcache-intern-test/Makefile"),
+                "and it is the pointer the raw API hands out"
+            );
+            assert_ne!(strcache_iscached(first.as_ptr()), 0);
+
+            let truncated = strcache_intern(&ctx, b"strcache-intern-test\0tail");
+            assert_eq!(truncated.to_bytes(), b"strcache-intern-test");
+            first
+        };
+        // The context is gone; the interned name is still valid.
+        assert_eq!(name.to_bytes(), b"strcache-intern-test/Makefile");
+        assert_eq!(name.to_bytes_with_nul().last(), Some(&0));
     }
 
     #[test]

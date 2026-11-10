@@ -8,6 +8,7 @@
 //! side effects it has accumulated — providers published, diagnostics
 //! emitted, artifacts opened.
 
+use crate::execctx::ExecContext;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -187,7 +188,34 @@ pub const MAX_DIRECTORY_ENTRIES: usize = 50_000;
 // ─── Store state ─────────────────────────────────────────────────────────
 
 /// Everything one plugin instance can see and everything it has done.
+/// The make context a plugin run is serving, handed to the store by
+/// `run_instance`.
+///
+/// wasmtime wants the store to be `'static + Send + Sync`, which a borrow of
+/// the `Cell`-based `ExecContext` cannot be, so the borrow is carried as a
+/// pointer. It is only created in `run_instance`, which keeps the context
+/// borrowed for as long as the store lives and drops the store before
+/// returning, and the store never leaves that thread.
+#[derive(Clone, Copy, Default)]
+pub struct ContextRef(Option<std::ptr::NonNull<ExecContext>>);
+
+unsafe impl Send for ContextRef {}
+unsafe impl Sync for ContextRef {}
+
+impl ContextRef {
+    /// # Safety
+    ///
+    /// `ctx` must stay borrowed, and on this thread, until the store holding
+    /// the result is dropped.
+    pub unsafe fn new(ctx: &ExecContext) -> Self {
+        Self(Some(std::ptr::NonNull::from(ctx)))
+    }
+}
+
 pub struct PluginStore {
+    /// The make context the plugin pass is reading. Borrowed for the whole
+    /// pass: the store lives inside `run_instance`, which holds the borrow.
+    pub ctx: ContextRef,
     pub graph: DepGraph,
     pub sets: Sets,
     /// Providers published on nodes, shared across every instance in this
@@ -229,6 +257,48 @@ impl WasiView for PluginStore {
 }
 
 impl PluginStore {
+    /// The context of the run in progress; plugins queried before a run
+    /// (`describe`) have none.
+    fn context(&self) -> Result<&ExecContext, WitError> {
+        match self.ctx.0 {
+            // SAFETY: see `ContextRef`.
+            Some(p) => Ok(unsafe { p.as_ref() }),
+            None => Err(WitError {
+                message: "no make context outside a run".to_string(),
+                location: None,
+            }),
+        }
+    }
+
+    /// Withhold a variable whose value came from the process environment
+    /// unless `read-environment` was granted.
+    ///
+    /// `read-variables` is not enough for an environment-origin value, and
+    /// the reason is `session.input-digest`. The digest covers the global
+    /// variable set *except* its environment-origin members — hashing
+    /// `TERM` and `SSH_AUTH_SOCK` would turn the digest over between two
+    /// runs of an identical build, so `deterministic` could never be
+    /// cacheable. That exclusion is only sound if a plugin cannot read what
+    /// the digest does not cover; otherwise a cache keyed on the digest
+    /// serves output built from a different `$(HOME)`.
+    ///
+    /// So the capability that gates `session.env` gates the same values
+    /// reached the other way. A plugin that genuinely wants them asks for
+    /// `read-environment` and says so in its manifest, which is exactly the
+    /// disclosure the capability exists to force.
+    ///
+    /// Withheld reads answer `none`, the same as an undefined variable.
+    /// There is deliberately no distinct "denied" answer: the alternative is
+    /// a plugin branching on whether a value was hidden, which is a fact
+    /// about the grant rather than about the build.
+    fn environment_permitting(&self, var: Option<Variable>) -> Option<Variable> {
+        let var = var?;
+        if from_environment(&var) && !self.granted.contains(Caps::READ_ENVIRONMENT) {
+            return None;
+        }
+        Some(var)
+    }
+
     fn node_of(&mut self, r: &Resource<NodeHandle>) -> wasmtime::Result<NodeId> {
         Ok(self.table.get(r)?.0)
     }
@@ -467,6 +537,55 @@ impl HostNode for PluginStore {
             }))
     }
 
+    fn expand(
+        &mut self,
+        this: Resource<NodeHandle>,
+        text: String,
+    ) -> wasmtime::Result<Result<String, WitError>> {
+        if !self.granted.contains(Caps::EXPAND_VARIABLES) {
+            return Ok(Err(denied("expand-variables", "node.expand")));
+        }
+        let id = self.node_of(&this)?;
+        let NodeId::File(file) = id else {
+            return Ok(Err(WitError {
+                message: "node.expand needs a file node".to_string(),
+                location: None,
+            }));
+        };
+        let ctx = match self.context() {
+            Ok(c) => c,
+            Err(e) => return Ok(Err(e)),
+        };
+        Ok(crate::plugin::expand_for_file(ctx, file, &text).map_err(|message| WitError {
+            message,
+            location: None,
+        }))
+    }
+
+    fn recipe_environment(
+        &mut self,
+        this: Resource<NodeHandle>,
+    ) -> wasmtime::Result<Result<Vec<(String, String)>, WitError>> {
+        if !self.granted.contains(Caps::EXPAND_VARIABLES) {
+            return Ok(Err(denied("expand-variables", "node.recipe-environment")));
+        }
+        let id = self.node_of(&this)?;
+        let NodeId::File(file) = id else {
+            return Ok(Err(WitError {
+                message: "node.recipe-environment needs a file node".to_string(),
+                location: None,
+            }));
+        };
+        let ctx = match self.context() {
+            Ok(c) => c,
+            Err(e) => return Ok(Err(e)),
+        };
+        Ok(crate::plugin::recipe_environment(ctx, file).map_err(|message| WitError {
+            message,
+            location: None,
+        }))
+    }
+
     fn matched_rule(&mut self, this: Resource<NodeHandle>) -> wasmtime::Result<Option<String>> {
         let id = self.node_of(&this)?;
         let rule = match id {
@@ -544,10 +663,16 @@ impl HostNode for PluginStore {
                 .chain(node.pat_variables.iter())
                 .find(|v| v.name == name.as_bytes());
             if let Some(v) = hit {
-                return Ok(Some(target_variable(v)));
+                let hit = target_variable(v);
+                return Ok(self.environment_permitting(Some(hit)));
             }
         }
-        Ok(crate::plugin::lookup_global(&name))
+        let ctx = match self.context() {
+            Ok(c) => c,
+            Err(_) => return Ok(None),
+        };
+        let found = crate::plugin::lookup_global(ctx, &name);
+        Ok(self.environment_permitting(found))
     }
 
     fn own_variables(&mut self, this: Resource<NodeHandle>) -> wasmtime::Result<Vec<Variable>> {
@@ -557,7 +682,21 @@ impl HostNode for PluginStore {
         let id = self.node_of(&this)?;
         Ok(self
             .file_node(id)
-            .map(|f| f.variables.iter().map(target_variable).collect())
+            .map(|f| {
+                f.variables
+                    .iter()
+                    .map(target_variable)
+                    // Same rule as `variable`, applied to the listing. A
+                    // per-target definition is virtually never
+                    // environment-origin, but the gate is on the value's
+                    // provenance rather than on which call reached it — a
+                    // rule with an exception is a rule a plugin can route
+                    // around.
+                    .filter(|v| {
+                        !from_environment(v) || self.granted.contains(Caps::READ_ENVIRONMENT)
+                    })
+                    .collect()
+            })
             .unwrap_or_default())
     }
 
@@ -629,6 +768,16 @@ fn dep_flags(dep: &crate::dep::DepNode) -> DepFlags {
         f |= DepFlags::SECOND_EXPANSION;
     }
     f
+}
+
+/// Whether a resolved variable's value came from the process environment.
+///
+/// The two environment origins are distinct to `$(origin ...)` — plain
+/// `environment`, and `env-override` for the same thing under `-e` — but they
+/// answer the same question here: the value was decided outside every file
+/// `session.input-digest` covers.
+fn from_environment(var: &Variable) -> bool {
+    matches!(var.origin, VarOrigin::Environment | VarOrigin::EnvOverride)
 }
 
 fn target_variable(v: &crate::target_var::TargetVariable) -> Variable {
@@ -717,15 +866,24 @@ impl self::makers::plugin::vars::Host for PluginStore {
         if !self.granted.contains(Caps::READ_VARIABLES) {
             return Ok(None);
         }
-        Ok(crate::plugin::lookup_global(&name))
+        let ctx = match self.context() {
+            Ok(c) => c,
+            Err(_) => return Ok(None),
+        };
+        let found = crate::plugin::lookup_global(ctx, &name);
+        Ok(self.environment_permitting(found))
     }
 
     fn expand(&mut self, text: String) -> wasmtime::Result<Result<String, WitError>> {
         if !self.granted.contains(Caps::EXPAND_VARIABLES) {
             return Ok(Err(denied("expand-variables", "vars.expand")));
         }
+        let ctx = match self.context() {
+            Ok(c) => c,
+            Err(e) => return Ok(Err(e)),
+        };
         Ok(
-            crate::plugin::expand_global(&text).map_err(|message| WitError {
+            crate::plugin::expand_global(ctx, &text).map_err(|message| WitError {
                 message,
                 location: None,
             }),
@@ -1032,5 +1190,90 @@ mod tests {
             entry_path(root, "BUILD.bazel").expect("accepted"),
             PathBuf::from("/work/generated/BUILD.bazel")
         );
+    }
+}
+
+#[cfg(test)]
+mod environment_gate_tests {
+    use super::{Caps, VarFlavor, VarOrigin, Variable};
+
+    fn var(origin: VarOrigin) -> Variable {
+        Variable {
+            name: "HOME".to_string(),
+            value: "/home/someone".to_string(),
+            flavor: VarFlavor::Recursive,
+            origin,
+            defined_at: None,
+            exported: true,
+            private: false,
+        }
+    }
+
+    /// The gate's rule, extracted so it can be exercised without standing up
+    /// a wasmtime store: `PluginStore::environment_permitting` is this
+    /// predicate plus an `Option` unwrap, and building a real store needs a
+    /// component, an engine and a resolved graph.
+    fn permitted(origin: VarOrigin, granted: Caps) -> bool {
+        !matches!(origin, VarOrigin::Environment | VarOrigin::EnvOverride)
+            || granted.contains(Caps::READ_ENVIRONMENT)
+    }
+
+    /// Both environment origins are withheld under the default grant, which
+    /// includes `read-variables` and not `read-environment`. This is the
+    /// property that makes the digest's environment exclusion sound.
+    #[test]
+    fn environment_origins_are_withheld_under_the_default_grant() {
+        assert!(Caps::DEFAULT_GRANT.contains(Caps::READ_VARIABLES));
+        assert!(!Caps::DEFAULT_GRANT.contains(Caps::READ_ENVIRONMENT));
+        for origin in [VarOrigin::Environment, VarOrigin::EnvOverride] {
+            assert!(
+                !permitted(origin, Caps::DEFAULT_GRANT),
+                "{origin:?} must not be readable under `read-variables` alone"
+            );
+        }
+    }
+
+    /// `-e` changes which of the two origins make records, not whether the
+    /// value came from outside the makefiles, so both answer the same way.
+    #[test]
+    fn granting_read_environment_permits_both_origins() {
+        let granted = Caps::DEFAULT_GRANT | Caps::READ_ENVIRONMENT;
+        for origin in [VarOrigin::Environment, VarOrigin::EnvOverride] {
+            assert!(
+                permitted(origin, granted),
+                "{origin:?} must be readable once `read-environment` is granted"
+            );
+        }
+    }
+
+    /// Every other origin is unaffected. A command-line assignment
+    /// especially: `make CC=gcc` is origin `command-line`, the digest covers
+    /// it, and withholding it would break the common way of varying a build
+    /// from outside the makefile while protecting nothing.
+    #[test]
+    fn other_origins_are_never_withheld() {
+        for origin in [
+            VarOrigin::Default,
+            VarOrigin::File,
+            VarOrigin::CommandLine,
+            VarOrigin::Override,
+            VarOrigin::Automatic,
+        ] {
+            assert!(
+                permitted(origin, Caps::DEFAULT_GRANT),
+                "{origin:?} is covered by the digest and must stay readable"
+            );
+        }
+    }
+
+    /// The record the gate inspects is the one the guest would have seen, so
+    /// a withheld read is indistinguishable from an undefined variable —
+    /// `none` either way, with no separate "denied" answer for a plugin to
+    /// branch on.
+    #[test]
+    fn a_withheld_read_is_shaped_like_an_undefined_one() {
+        let v = var(VarOrigin::Environment);
+        assert_eq!(v.origin, VarOrigin::Environment);
+        assert!(!permitted(v.origin, Caps::DEFAULT_GRANT));
     }
 }

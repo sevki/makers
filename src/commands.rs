@@ -47,21 +47,12 @@ use rustc_hash::FxHashMap;
 
 use std::sync::atomic::Ordering;
 
-use libc::{
-    __errno_location,
-    exit,
-    kill,
-    signal,
-    EINTR,
-    ENOENT,
-    SIGHUP,
-    SIGINT,
-    SIGQUIT,
-    SIGTERM,
-    SIG_DFL,
-    S_IFMT,
-    S_IFREG,
-};
+use libc::{__errno_location, exit, ENOENT};
+
+#[cfg(target_family = "wasm")]
+use crate::compat::{kill, signal, SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIG_DFL};
+#[cfg(unix)]
+use libc::{kill, signal, SIGHUP, SIGINT, SIGQUIT, SIGTERM, SIG_DFL};
 
 pub const MAKE_TROUBLE: i32 = 1;
 
@@ -737,22 +728,18 @@ fn delete_target(
             return Ok(());
         }
 
-        let mut st: libc::stat = ::core::mem::zeroed();
-        let mut e: i32;
-        loop {
-            e = libc::stat(name_ptr, &mut st);
-            if !(e == -1 && *__errno_location() == EINTR) {
-                break;
-            }
-        }
-        if e == 0
-            && st.st_mode & S_IFMT == S_IFREG
-            && file_timestamp_cons(
-                ctx,
-                name_ptr,
-                system_time_from_unix(st.st_mtime as i64, st.st_mtime_nsec as u32),
-            ) != last_mtime
-        {
+        // A regular file whose mtime no longer matches what we recorded was
+        // written by the recipe we are cleaning up after, so it is a
+        // half-built target worth deleting. A file we cannot stat, or one
+        // whose filesystem reports no mtime, is left alone.
+        let half_built = match crate::fs::metadata(crate::fs::path_from_c(name_ptr)) {
+            Ok(m) if m.is_file() => m.modified().is_some_and(|t| {
+                file_timestamp_cons(ctx, name_ptr, system_time_from_unix(t.secs, t.nanos))
+                    != last_mtime
+            }),
+            _ => false,
+        };
+        if half_built {
             if !behalf_ptr.is_null() {
                 error(
                     ctx,
@@ -818,17 +805,13 @@ pub fn print_commands(ctx: &ExecContext, recipe: &Recipe) {
     // SAFETY: stdout/printf/fputs are the C stdio handles; the format buffers
     match &recipe.defined_in {
         None => crate::output::trace_out(b"#  recipe to execute (built-in):\n"),
-        Some(filenm) => {
-            crate::output::trace_parts(&[
-                b"#  recipe to execute (from '",
-                filenm,
-                b"', line ",
-                (recipe.defined_lineno as ::core::ffi::c_ulong)
-                    .to_string()
-                    .as_bytes(),
-                b"):\n",
-            ])
-        }
+        Some(filenm) => crate::output::trace_parts(&[
+            b"#  recipe to execute (from '",
+            filenm,
+            b"', line ",
+            recipe.defined_lineno.to_string().as_bytes(),
+            b"):\n",
+        ]),
     }
 
     let prefix = crate::entry::opt_cmd_prefix(ctx) as u8;

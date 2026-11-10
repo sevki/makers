@@ -143,7 +143,7 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// thread-local borrow channel's referent, now owned here directly so
     /// every `&ExecContext` site (which is nearly everywhere) reaches it for
     /// free instead of through a global. `main_0` builds this once; the
-    /// build-phase context rebuild ([`crate::make_main::main_0`]) carries it
+    /// build-phase context rebuild ([`crate::entry::main_0`]) carries it
     /// forward explicitly rather than letting it reset to defaults, since it
     /// holds real accumulated run state (`goals`, `switches`, decoded
     /// command-line flags) that must survive the rebuild.
@@ -279,31 +279,37 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// and read by `temp_stdin_unlink` on the cleanup/fatal-signal paths, which
     /// carry only `&ExecContext`. Carried across the `main_0` build-phase
     /// context rebuild: the name is recorded before the rebuild and must
-    /// survive until cleanup. Interned or 'static storage backs the pointer.
-    pub temp_stdin_name: PtrCell,
+    /// survive until cleanup. `None` until a temp-stdin file is registered.
+    /// An owned copy, so it adds no raw pointer to `ExecContext` (#607); the
+    /// signal-path reader only takes a shared borrow (no allocation), and the
+    /// writers run during argument decoding.
+    pub temp_stdin_name: ::core::cell::RefCell<Option<::std::ffi::CString>>,
 
     /// The working directory before any `-C` chdir, the former main.rs
     /// `pub static mut directory_before_chdir` — restored on re-exec and in
     /// `die_cleanup`, both of which carry only `&ExecContext`. Set once during
     /// startup (before the build-phase context rebuild), so it is carried
-    /// across it. Heap storage from `xstrdup` backs the pointer.
-    pub directory_before_chdir: MutPtrCell,
+    /// across it. `None` when `getcwd` failed at startup. Owned, so it adds
+    /// no raw pointer to `ExecContext` (#607).
+    pub directory_before_chdir: ::core::cell::RefCell<Option<::std::path::PathBuf>>,
 
     /// The program name — `basename(argv[0])`, or `"make"` when argv[0] is
     /// empty — the former main.rs `pub static mut program`. Prefixes every
     /// message/error line and the usage text. Set once at startup (before the
-    /// build-phase context rebuild, so it is carried across it); argv or
-    /// 'static storage backs the pointer.
-    pub program: PtrCell,
+    /// build-phase context rebuild, so it is carried across it). `None` only
+    /// before startup or on a bare test context. Owned, so it adds no raw
+    /// pointer to `ExecContext` (#607).
+    pub program: ::core::cell::RefCell<Option<::std::ffi::CString>>,
 
     /// The temporary-file directory (`$MAKE_TMPDIR`, `$TMPDIR`, or the
     /// default), the former `misc.rs` function-local `static mut tmpdir` in
     /// `get_tmpdir`. Computed once at startup (before the build-phase context
     /// rebuild) and cached; carried across the rebuild so later temp-file
     /// users don't re-probe the environment and re-warn about an invalid
-    /// value. Interned, `'static`, or `xstrdup`'d storage backs the pointer
-    /// (never freed, matching the former static's lifetime).
-    pub tmpdir: PtrCell,
+    /// value. `None` until first computed. An owned copy, so it neither
+    /// aliases the process environment nor adds a raw pointer to
+    /// `ExecContext` (#607).
+    pub tmpdir: ::core::cell::RefCell<Option<::std::ffi::CString>>,
 
     /// `--shuffle` mode/seed and the PRNG state it drives (see
     /// [`crate::shuffle::ShuffleState`]) — the former shuffle.rs `static
@@ -323,10 +329,12 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
 
     /// Make's recorded starting working directory (after any `-C` chdirs), the
     /// former main.rs `pub static mut starting_directory` — read by the
-    /// `Entering/Leaving directory` lines and `$(abspath)`. Null when `getcwd`
-    /// failed. Set after the build-phase context rebuild, into `main_0`'s
-    /// `current_directory` buffer, which outlives the run.
-    pub starting_directory: MutPtrCell,
+    /// `Entering/Leaving directory` lines and `$(abspath)`. `None` when
+    /// `getcwd` failed after a `-C`; `Some` of an empty path when the very
+    /// first `getcwd` failed and there was no `-C` (the former pointer then
+    /// referred to the zeroed buffer). Set after the build-phase context
+    /// rebuild. Owned, so it adds no raw pointer to `ExecContext` (#607).
+    pub starting_directory: ::core::cell::RefCell<Option<::std::path::PathBuf>>,
 
     /// `load_too_high`'s last-reported `getloadavg` failure errno (the former
     /// function-local `static mut lossage`), used to suppress repeating the
@@ -445,18 +453,21 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     /// rebuild rather than letting it reset.
     pub filenodes: FileArena,
 
-    /// `read_dirstream`'s reused dirent scratch buffer — the heap block (and its
-    /// size) that the glob `gl_readdir` callback rewrites for each enumerated
-    /// file and returns a pointer into. These were the function-local process
-    /// globals `static mut buf`/`bufsz`; like the directory cache they now live
-    /// on the owned per-run context. The C-ABI callback can't carry an
-    /// `&ExecContext`, so it reaches these through the same `CTX_PTR` borrow
-    /// channel as `open_dirstream`. The buffer only grows (never shrinks); its
-    /// contents are scratch (overwritten every call), but `main_0` hands it
-    /// across the build-phase context rebuild alongside the directory cache so a
-    /// single block serves the whole run, exactly as the former static did.
-    pub read_dirstream_buf: ::core::cell::Cell<*mut ::core::ffi::c_char>,
-    pub read_dirstream_bufsz: ::core::cell::Cell<crate::ffi_types::size_t>,
+    /// `read_dirstream`'s reused dirent scratch buffer — the storage that the
+    /// glob `gl_readdir` callback rewrites for each enumerated file and returns
+    /// a pointer into. These were the function-local process globals `static
+    /// mut buf`/`bufsz`; like the directory cache they now live on the owned
+    /// per-run context. The C-ABI callback can't carry an `&ExecContext`, so
+    /// it reaches this through the same `CTX_PTR` borrow channel as
+    /// `open_dirstream`. A `Vec<dirent>` rather than a `malloc`'d byte block
+    /// and a size cell: the element type gives the allocation `dirent`'s
+    /// alignment, and the length is the size (in whole `dirent`s). It only
+    /// grows (never shrinks); its contents are scratch (overwritten every
+    /// call), but `main_0` hands it across the build-phase context rebuild
+    /// alongside the directory cache so a single block serves the whole run,
+    /// exactly as the former static did. Owned, so it adds no raw pointer to
+    /// `ExecContext` (#607).
+    pub read_dirstream_buf: ::core::cell::RefCell<Vec<crate::dir::dirent>>,
 
     /// `parse_file_seq`'s reused unquoting scratch buffer (the former
     /// function-local `static mut tmpbuf`/`tmpbuf_len`) — grown to fit the
@@ -503,18 +514,19 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
     pub job_fds: JobFds,
 
     /// The fifo jobserver's path, the former posixos.rs `static mut
-    /// fifo_name`. `xmalloc`/`xstrdup`'d and `free`'d exactly as the
-    /// original static was — signal-reachable (`jobserver_clear` runs from
-    /// `fatal_error_signal`), so like [`Self::temp_stdin_name`] it stays a
-    /// raw-pointer `Cell` rather than an owned `RefCell<Vec<u8>>`, for the
-    /// same panic-in-signal-handler reason as [`Self::job_fds`].
-    pub fifo_name: MutPtrCell,
+    /// fifo_name`. Signal-reachable (`jobserver_clear` runs from
+    /// `fatal_error_signal`, where it only *reads* the name to unlink it), so
+    /// it is a [`SignalPathCell`]: an owned name behind a lock that ordinary
+    /// code holds only for a store/clone, and that the signal path takes with
+    /// `try_lock` (never blocking, allocating or panicking). Owned, so it adds
+    /// no raw pointer to `ExecContext` (#607).
+    pub fifo_name: SignalPathCell,
 
     /// The output-sync lock file's path, the former posixos.rs `static mut
-    /// osync_tmpfile`. Same signal-reachability rationale as
-    /// [`Self::fifo_name`] (`osync_clear` also runs from
-    /// `fatal_error_signal`).
-    pub osync_tmpfile: MutPtrCell,
+    /// osync_tmpfile`. Signal-reachable like [`Self::fifo_name`]
+    /// (`osync_clear` also runs from `fatal_error_signal`), so the same
+    /// [`SignalPathCell`].
+    pub osync_tmpfile: SignalPathCell,
 
     /// `library_search`'s `-l` directory-search cache — the former
     /// `remake.rs` function-local `static mut buf`/`buflen`/
@@ -803,15 +815,17 @@ pub struct ExecContext<Out: ::std::io::Write = StdoutSink, Err: ::std::io::Write
 
     /// The sink every recipe/trace/diagnostic stdout write goes through —
     /// `output::trace_out`/`_outputs`'s non-synced path, `hash_print_stats`,
-    /// the usage/version printers. `Rc<RefCell<_>>` rather than a bare `Out`
+    /// the usage/version printers. `Arc<Mutex<_>>` rather than a bare `Out`
     /// so [`ExecContext::clone`] stays a cheap handle-copy (matching
     /// [`Self::remote_backend`]'s rationale) while every clone still writes
-    /// to the *same* sink — the point of a per-session buffer.
-    pub stdout: ::std::rc::Rc<::core::cell::RefCell<Out>>,
+    /// to the *same* sink — the point of a per-session buffer. `Arc<Mutex<_>>`
+    /// rather than `Rc<RefCell<_>>` so the handle is `Send` (#607); reach it
+    /// through [`Self::stdout_lock`].
+    pub stdout: ::std::sync::Arc<::std::sync::Mutex<Out>>,
     /// Same as [`Self::stdout`] for stderr — `error`/`fatal`'s output and the
     /// `-h`/bad-flag usage banner. An independent type parameter from
     /// `stdout`'s: nothing requires the two channels to share a sink type.
-    pub stderr: ::std::rc::Rc<::core::cell::RefCell<Err>>,
+    pub stderr: ::std::sync::Arc<::std::sync::Mutex<Err>>,
 }
 
 /// [`ExecContext::library_search_cache`]'s fields, split out only because
@@ -1052,8 +1066,10 @@ impl ::core::fmt::Debug for DirNameTable {
     }
 }
 
-/// The directory cache's dev/inode-keyed contents table: an idiomatic Rust
-/// [`rustc_hash::FxHashMap`] from `(dev, ino)` to an owned, heap-stable
+/// The directory cache's identity-keyed contents table: an idiomatic Rust
+/// [`rustc_hash::FxHashMap`] from a [`DirKey`](crate::dir::DirKey) — the
+/// directory's device/inode pair, or its name where the platform reports no
+/// file identity — to an owned, heap-stable
 /// [`DirectoryContents`](crate::dir::DirectoryContents), replacing the
 /// c2rust FFI `HashTable` (and its `directory_contents_hash_*` callbacks).
 ///
@@ -1064,10 +1080,7 @@ impl ::core::fmt::Debug for DirNameTable {
 /// the former `Cell<HashTable>` provided on the shared `&ExecContext`.
 pub struct DirContentsTable(
     pub  ::core::cell::RefCell<
-        rustc_hash::FxHashMap<
-            (crate::ffi_types::dev_t, crate::ffi_types::ino_t),
-            Box<crate::dir::DirectoryContents>,
-        >,
+        rustc_hash::FxHashMap<crate::dir::DirKey, Box<crate::dir::DirectoryContents>>,
     >,
 );
 
@@ -1220,6 +1233,67 @@ impl Default for MutPtrCell {
     }
 }
 
+/// A temp file's path (the jobserver fifo, the output-sync lock file): an
+/// owned name that both ordinary code and the fatal-signal handler reach.
+///
+/// Ordinary code uses [`Self::set`]/[`Self::get`]/[`Self::take`], which hold the
+/// lock only for a store or a clone, so the lock is almost never held. The
+/// handler uses [`Self::try_with`], which cannot block (a handler that
+/// interrupted the lock's holder on the same thread would deadlock on
+/// `lock`), allocate, or panic. If the lock happens to be held at that
+/// instant, `try_with` does nothing — the one case where the handler leaves
+/// the file behind. The raw pointers this replaces were freed and nulled as
+/// two steps, so a signal between them made the handler read a freed pointer;
+/// this trades that for a missed unlink in a window of a few instructions.
+///
+/// Poisoning is ignored throughout: the value is a plain `Option<CString>`
+/// that no panic can leave half-written. `ExecContext` clones snapshot the
+/// current value, as the atomic cells above do.
+#[derive(Debug, Default)]
+pub struct SignalPathCell(::std::sync::Mutex<Option<::std::ffi::CString>>);
+
+impl Clone for SignalPathCell {
+    fn clone(&self) -> Self {
+        Self(::std::sync::Mutex::new(self.get()))
+    }
+}
+
+impl SignalPathCell {
+    /// Record `name` (or clear it with `None`).
+    pub fn set(&self, name: Option<::std::ffi::CString>) {
+        *self.0.lock().unwrap_or_else(::std::sync::PoisonError::into_inner) = name;
+    }
+
+    /// A copy of the recorded name, if any.
+    pub fn get(&self) -> Option<::std::ffi::CString> {
+        self.0
+            .lock()
+            .unwrap_or_else(::std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Remove and return the recorded name.
+    pub fn take(&self) -> Option<::std::ffi::CString> {
+        self.0
+            .lock()
+            .unwrap_or_else(::std::sync::PoisonError::into_inner)
+            .take()
+    }
+
+    /// Run `f` on the recorded name without blocking, allocating or
+    /// panicking, for the fatal-signal path. Returns `None` if there is no
+    /// name, or if the lock is held right now.
+    pub fn try_with<R>(&self, f: impl FnOnce(&::std::ffi::CStr) -> R) -> Option<R> {
+        use ::std::sync::TryLockError;
+        let guard = match self.0.try_lock() {
+            Ok(guard) => guard,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => return None,
+        };
+        guard.as_deref().map(f)
+    }
+}
+
 /// An `Arc<dyn RemoteBackend>` that defaults to the stub backend — trait
 /// objects have no `Default`, so `ExecContext`'s derive needs the wrapper.
 /// `Arc` (rather than `Box`) so cloning `ExecContext` is a cheap refcount
@@ -1272,7 +1346,7 @@ impl Default for ShellVar {
             name: ::core::ptr::null_mut(),
             value: ::core::ptr::null_mut(),
             fileinfo: crate::floc::Floc {
-                filenm: ::core::ptr::null(),
+                filenm: None,
                 lineno: 0,
                 offset: 0,
             },
@@ -1427,7 +1501,7 @@ impl RecipeReadingFloc {
 impl Default for RecipeReadingFloc {
     fn default() -> Self {
         Self(Box::new(::core::cell::Cell::new(crate::floc::Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 0,
             offset: 0,
         })))
@@ -1970,6 +2044,42 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
     pub fn default_include_directories(&self) -> [&'static [u8]; 3] {
         self.config.default_include_directories
     }
+
+    /// [`Self::program`], cloned out of its cell (a few bytes) so callers
+    /// need not hold the borrow while formatting.
+    pub fn program_cstring(&self) -> Option<::std::ffi::CString> {
+        self.program.borrow().clone()
+    }
+
+    /// [`Self::starting_directory`] as the raw bytes the message and
+    /// `$(abspath)` formatters work in.
+    pub fn starting_directory_bytes(&self) -> Option<Vec<u8>> {
+        #[cfg(unix)]
+        use ::std::os::unix::ffi::OsStrExt;
+        #[cfg(target_os = "wasi")]
+        use ::std::os::wasi::ffi::OsStrExt;
+        self.starting_directory
+            .borrow()
+            .as_deref()
+            .map(|dir| dir.as_os_str().as_bytes().to_vec())
+    }
+
+    /// Exclusive access to the stdout sink. A sink left mid-write by a
+    /// panicking holder is still a valid `Write`, so poisoning is ignored.
+    /// Hold the guard for one write only: re-locking the same sink while it
+    /// is held deadlocks (the `RefCell` this replaced panicked instead).
+    pub fn stdout_lock(&self) -> ::std::sync::MutexGuard<'_, Out> {
+        self.stdout
+            .lock()
+            .unwrap_or_else(::std::sync::PoisonError::into_inner)
+    }
+
+    /// Exclusive access to the stderr sink; see [`Self::stdout_lock`].
+    pub fn stderr_lock(&self) -> ::std::sync::MutexGuard<'_, Err> {
+        self.stderr
+            .lock()
+            .unwrap_or_else(::std::sync::PoisonError::into_inner)
+    }
 }
 
 impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
@@ -2029,7 +2139,6 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
             directory_contents: self.directory_contents,
             filenodes: self.filenodes,
             read_dirstream_buf: self.read_dirstream_buf,
-            read_dirstream_bufsz: self.read_dirstream_bufsz,
             file_seq_tmpbuf: self.file_seq_tmpbuf,
             read_files: self.read_files,
             conditionals: self.conditionals,
@@ -2081,15 +2190,17 @@ impl<Out: ::std::io::Write, Err: ::std::io::Write> ExecContext<Out, Err> {
             expanding_var: self.expanding_var,
             recipe_reading_floc: self.recipe_reading_floc,
             variable_buffer: self.variable_buffer,
-            stdout: ::std::rc::Rc::new(::core::cell::RefCell::new(stdout)),
-            stderr: ::std::rc::Rc::new(::core::cell::RefCell::new(stderr)),
+            stdout: ::std::sync::Arc::new(::std::sync::Mutex::new(stdout)),
+            stderr: ::std::sync::Arc::new(::std::sync::Mutex::new(stderr)),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ConditionalsFrame, Config, ExecContext, FileArena, StderrSink, StdoutSink};
+    use super::{
+        ConditionalsFrame, Config, ExecContext, FileArena, SignalPathCell, StderrSink, StdoutSink,
+    };
 
     #[test]
     fn context_exposes_makelevel() {
@@ -2120,10 +2231,10 @@ mod tests {
         // Non-io state survived the conversion untouched.
         assert_eq!(buffered.makelevel(), 5);
         use ::std::io::Write;
-        buffered.stdout.borrow_mut().write_all(b"hello").unwrap();
-        buffered.stderr.borrow_mut().write_all(b"oops").unwrap();
-        assert_eq!(&**buffered.stdout.borrow(), b"hello");
-        assert_eq!(&**buffered.stderr.borrow(), b"oops");
+        buffered.stdout_lock().write_all(b"hello").unwrap();
+        buffered.stderr_lock().write_all(b"oops").unwrap();
+        assert_eq!(&**buffered.stdout_lock(), b"hello");
+        assert_eq!(&**buffered.stderr_lock(), b"oops");
     }
 
     /// `Out` and `Err` are independent type parameters, not one shared `W`:
@@ -2139,16 +2250,16 @@ mod tests {
         let ctx = ExecContext::new(Config::default())
             .with_sinks(Cursor::new(Vec::<u8>::new()), Vec::<u8>::new());
 
-        ctx.stdout.borrow_mut().write_all(b"cursor stdout").unwrap();
-        ctx.stderr.borrow_mut().write_all(b"vec stderr").unwrap();
+        ctx.stdout_lock().write_all(b"cursor stdout").unwrap();
+        ctx.stderr_lock().write_all(b"vec stderr").unwrap();
 
-        let mut cursor = ctx.stdout.borrow_mut();
+        let mut cursor = ctx.stdout_lock();
         cursor.seek(SeekFrom::Start(0)).unwrap();
         let mut read_back = String::new();
         cursor.read_to_string(&mut read_back).unwrap();
         assert_eq!(read_back, "cursor stdout");
 
-        assert_eq!(&**ctx.stderr.borrow(), b"vec stderr");
+        assert_eq!(&**ctx.stderr_lock(), b"vec stderr");
     }
 
     /// A `Cursor`-backed context's `trace_out_ctx` writes land in the
@@ -2162,10 +2273,10 @@ mod tests {
             .with_sinks(Cursor::new(Vec::<u8>::new()), Cursor::new(Vec::<u8>::new()));
         crate::output::trace_out_ctx(&ctx, b"buffered trace line\n");
         assert_eq!(
-            ctx.stdout.borrow().get_ref().as_slice(),
+            ctx.stdout_lock().get_ref().as_slice(),
             b"buffered trace line\n"
         );
-        assert!(ctx.stderr.borrow().get_ref().is_empty());
+        assert!(ctx.stderr_lock().get_ref().is_empty());
     }
 
     /// The default sinks (`StdoutSink`/`StderrSink`) still exist and stay
@@ -2173,8 +2284,54 @@ mod tests {
     #[test]
     fn default_context_uses_distinct_stdio_sinks() {
         let ctx = ExecContext::default();
-        assert_eq!(*ctx.stdout.borrow(), StdoutSink);
-        assert_eq!(*ctx.stderr.borrow(), StderrSink);
+        assert_eq!(*ctx.stdout_lock(), StdoutSink);
+        assert_eq!(*ctx.stderr_lock(), StderrSink);
+    }
+
+    /// The sink handles are `Send + Sync` (#607's `Rc` -> `Arc` swap) and
+    /// every clone writes into the one shared sink, also from another
+    /// thread — which the `Rc<RefCell<_>>` could not do.
+    #[test]
+    fn sink_handles_are_send_and_shared_across_clones() {
+        use ::std::io::Write;
+        fn assert_send_sync<T: Send + Sync>(_: &T) {}
+
+        let ctx = ExecContext::new(Config::default())
+            .with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        assert_send_sync(&ctx.stdout);
+        assert_send_sync(&ctx.stderr);
+
+        let out = ::std::sync::Arc::clone(&ctx.stdout);
+        ::std::thread::spawn(move || {
+            out.lock().unwrap().write_all(b"from thread").unwrap();
+        })
+        .join()
+        .unwrap();
+        ctx.clone().stdout_lock().write_all(b" + clone").unwrap();
+        assert_eq!(&**ctx.stdout_lock(), b"from thread + clone");
+    }
+
+    /// A holder that panics mid-write poisons the mutex; the accessor must
+    /// still hand the sink back rather than turn that into a second panic.
+    #[test]
+    fn sink_lock_survives_a_poisoned_mutex() {
+        use ::std::io::Write;
+        let ctx = ExecContext::new(Config::default())
+            .with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        let (out, err) = (
+            ::std::sync::Arc::clone(&ctx.stdout),
+            ::std::sync::Arc::clone(&ctx.stderr),
+        );
+        let _ = ::std::thread::spawn(move || {
+            let _o = out.lock().unwrap();
+            let _e = err.lock().unwrap();
+            panic!("poison both sinks");
+        })
+        .join();
+        ctx.stdout_lock().write_all(b"o").unwrap();
+        ctx.stderr_lock().write_all(b"e").unwrap();
+        assert_eq!(&**ctx.stdout_lock(), b"o");
+        assert_eq!(&**ctx.stderr_lock(), b"e");
     }
 
     /// `make_sync`'s address is captured by `output_context` before the
@@ -2334,7 +2491,7 @@ mod tests {
         );
 
         let floc_a = crate::floc::Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 1,
             offset: 0,
         };
@@ -2346,7 +2503,7 @@ mod tests {
         );
 
         let floc_b = crate::floc::Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 2,
             offset: 0,
         };
@@ -2358,7 +2515,7 @@ mod tests {
         );
 
         let floc_override = crate::floc::Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 99,
             offset: 0,
         };
@@ -2391,7 +2548,7 @@ mod tests {
     fn recipe_reading_floc_clone_preserves_the_current_value() {
         let ctx = ExecContext::default();
         ctx.recipe_reading_floc.0.set(crate::floc::Floc {
-            filenm: ::core::ptr::null(),
+            filenm: None,
             lineno: 42,
             offset: 7,
         });
@@ -2546,45 +2703,197 @@ mod tests {
     /// `read_dirstream`'s reused dirent scratch buffer (the former process-global
     /// `static mut buf`/`bufsz`) starts empty, is per-run, and is handed across
     /// the `main_0` build-phase context rebuild the same way the directory cache
-    /// is — a single heap block must serve the whole run, as the former static
-    /// did.
+    /// is — a single block must serve the whole run, as the former static did.
     #[test]
     fn read_dirstream_buffer_starts_empty_and_survives_carry_over() {
         let ctx = ExecContext::default();
-        assert!(ctx.read_dirstream_buf.get().is_null());
-        assert_eq!(ctx.read_dirstream_bufsz.get(), 0);
+        assert!(ctx.read_dirstream_buf.borrow().is_empty());
 
-        // Simulate a buffer allocated during makefile parsing (non-null pointer
-        // + size marks it live), then the `main_0` rebuild that hands it across.
+        // Simulate a buffer grown during makefile parsing (its length marks it
+        // live), then the `main_0` rebuild that hands it across.
         let mut populated = ExecContext::default();
         populated
             .read_dirstream_buf
-            .set(0x1 as *mut ::core::ffi::c_char);
-        populated.read_dirstream_bufsz.set(128);
+            .borrow_mut()
+            .resize(3, crate::dir::EMPTY_DIRENT);
+        let block = populated.read_dirstream_buf.borrow().as_ptr();
 
         let carried_buf = ::core::mem::take(&mut populated.read_dirstream_buf);
-        let carried_bufsz = ::core::mem::take(&mut populated.read_dirstream_bufsz);
         let rebuilt = ExecContext {
             read_dirstream_buf: carried_buf,
-            read_dirstream_bufsz: carried_bufsz,
             ..ExecContext::new(Config {
                 makelevel: 1,
                 ..Default::default()
             })
         };
-        // The carried buffer survived; the source fields reset to empty.
-        assert_eq!(
-            rebuilt.read_dirstream_buf.get(),
-            0x1 as *mut ::core::ffi::c_char
-        );
-        assert_eq!(rebuilt.read_dirstream_bufsz.get(), 128);
-        assert!(populated.read_dirstream_buf.get().is_null());
-        assert_eq!(populated.read_dirstream_bufsz.get(), 0);
+        // The carried buffer survived, still the same heap block (a returned
+        // `dirent` pointer must not move on carry); the source reset to empty.
+        assert_eq!(rebuilt.read_dirstream_buf.borrow().len(), 3);
+        assert_eq!(rebuilt.read_dirstream_buf.borrow().as_ptr(), block);
+        assert!(populated.read_dirstream_buf.borrow().is_empty());
         assert_eq!(rebuilt.makelevel(), 1);
 
         // Per-run: a fresh context does not inherit the buffer.
-        assert!(ExecContext::default().read_dirstream_buf.get().is_null());
-        assert_eq!(ExecContext::default().read_dirstream_bufsz.get(), 0);
+        assert!(ExecContext::default().read_dirstream_buf.borrow().is_empty());
+    }
+
+    /// `temp_stdin_name` starts unset and the registered name survives the
+    /// `main_0` carry-over (it is read by cleanup after the rebuild) and the
+    /// sink swap, independent of the context it was carried from.
+    #[test]
+    fn temp_stdin_name_starts_unset_and_survives_carry_over() {
+        let mut ctx = ExecContext::default();
+        assert!(ctx.temp_stdin_name.borrow().is_none());
+
+        *ctx.temp_stdin_name.borrow_mut() = Some(c"/tmp/GmStdin1".to_owned());
+        let carried = ::core::mem::take(&mut ctx.temp_stdin_name);
+        assert!(ctx.temp_stdin_name.borrow().is_none());
+        let rebuilt = ExecContext {
+            temp_stdin_name: carried,
+            ..ExecContext::default()
+        };
+        assert_eq!(
+            rebuilt.temp_stdin_name.borrow().as_deref(),
+            Some(c"/tmp/GmStdin1")
+        );
+
+        let swapped = rebuilt.with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        assert_eq!(
+            swapped.temp_stdin_name.borrow().as_deref(),
+            Some(c"/tmp/GmStdin1")
+        );
+    }
+
+    /// `SignalPathCell`'s ordinary operations: unset by default, `set`/`get`/
+    /// `take` round-trip an owned name, and a clone is an independent
+    /// snapshot (as `ExecContext::clone` needs).
+    #[test]
+    fn signal_path_cell_round_trips_and_clones_as_a_snapshot() {
+        let cell = SignalPathCell::default();
+        assert!(cell.get().is_none() && cell.take().is_none());
+
+        cell.set(Some(c"/tmp/GmFIFO123".to_owned()));
+        assert_eq!(cell.get().as_deref(), Some(c"/tmp/GmFIFO123"));
+
+        let snapshot = cell.clone();
+        cell.set(None);
+        assert!(cell.get().is_none());
+        assert_eq!(snapshot.get().as_deref(), Some(c"/tmp/GmFIFO123"));
+
+        assert_eq!(snapshot.take().as_deref(), Some(c"/tmp/GmFIFO123"));
+        assert!(snapshot.get().is_none());
+    }
+
+    /// The signal-path reader: `try_with` runs on the name when there is one,
+    /// does nothing when there isn't, and — the property that makes it safe in
+    /// a handler — returns without blocking when the lock is already held
+    /// (by the very thread it interrupted, say) instead of deadlocking.
+    #[test]
+    fn signal_path_cell_try_with_never_blocks() {
+        let cell = SignalPathCell::default();
+        assert_eq!(cell.try_with(|n| n.to_bytes().len()), None);
+
+        cell.set(Some(c"/tmp/GmFIFO1".to_owned()));
+        assert_eq!(cell.try_with(|n| n.to_bytes().len()), Some(12));
+
+        let held = cell.0.lock().unwrap();
+        assert_eq!(cell.try_with(|n| n.to_bytes().len()), None, "lock is held");
+        drop(held);
+        assert_eq!(cell.try_with(|n| n.to_bytes().len()), Some(12));
+    }
+
+    /// A holder that panics leaves the lock poisoned, but the value is a plain
+    /// `Option<CString>` no panic can half-write, so every operation —
+    /// including the signal-path `try_with` — keeps working.
+    #[test]
+    fn signal_path_cell_ignores_poisoning() {
+        let cell = ::std::sync::Arc::new(SignalPathCell::default());
+        cell.set(Some(c"/p".to_owned()));
+        let poisoner = ::std::sync::Arc::clone(&cell);
+        let _ = ::std::thread::spawn(move || {
+            let _guard = poisoner.0.lock().unwrap();
+            panic!("poison the fifo name lock");
+        })
+        .join();
+        assert!(cell.0.is_poisoned());
+
+        assert_eq!(cell.try_with(|n| n.to_bytes().len()), Some(2));
+        assert_eq!(cell.get().as_deref(), Some(c"/p"));
+        cell.set(Some(c"/q".to_owned()));
+        assert_eq!(cell.take().as_deref(), Some(c"/q"));
+    }
+
+    /// `program` starts unset and survives the `main_0` carry-over and the
+    /// sink swap as an owned name (the empty name stays `Some`).
+    #[test]
+    fn program_starts_unset_and_survives_carry_over() {
+        let mut ctx = ExecContext::default();
+        assert!(ctx.program_cstring().is_none());
+
+        *ctx.program.borrow_mut() = Some(c"gmake".to_owned());
+        let carried = ::core::mem::take(&mut ctx.program);
+        assert!(ctx.program_cstring().is_none());
+        let rebuilt = ExecContext {
+            program: carried,
+            ..ExecContext::default()
+        };
+        assert_eq!(rebuilt.program_cstring().as_deref(), Some(c"gmake"));
+
+        let swapped = rebuilt.with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        assert_eq!(swapped.program_cstring().as_deref(), Some(c"gmake"));
+
+        *swapped.program.borrow_mut() = Some(c"".to_owned());
+        assert_eq!(swapped.program_cstring().as_deref(), Some(c""));
+    }
+
+    /// `starting_directory` starts unset, reads back as bytes (the empty path
+    /// stays `Some`, distinct from unset), survives the sink swap, and agrees
+    /// with the pointer decode it replaced (`CStr::from_ptr` of the same
+    /// NUL-terminated buffer) for the same contents.
+    #[test]
+    fn starting_directory_round_trips_and_matches_the_pointer_decode() {
+        let ctx = ExecContext::default();
+        assert!(ctx.starting_directory.borrow().is_none());
+        assert_eq!(ctx.starting_directory_bytes(), None);
+
+        for dir in ["", "/", "/tmp/build dir"] {
+            let buffer = ::std::ffi::CString::new(dir).unwrap();
+            // The old accessor: a non-null pointer decoded in place.
+            // SAFETY: `buffer` is a valid NUL-terminated string.
+            let old = unsafe { ::core::ffi::CStr::from_ptr(buffer.as_ptr()) }
+                .to_bytes()
+                .to_vec();
+
+            *ctx.starting_directory.borrow_mut() = Some(dir.into());
+            assert_eq!(ctx.starting_directory_bytes(), Some(old));
+        }
+
+        let swapped = ctx.with_sinks(Vec::<u8>::new(), Vec::<u8>::new());
+        assert_eq!(
+            swapped.starting_directory_bytes(),
+            Some(b"/tmp/build dir".to_vec())
+        );
+    }
+
+    /// `directory_before_chdir` starts unset and survives the `main_0`
+    /// carry-over as an owned path (it is read after the rebuild by the
+    /// re-exec and `die_cleanup` paths).
+    #[test]
+    fn directory_before_chdir_starts_unset_and_survives_carry_over() {
+        let mut ctx = ExecContext::default();
+        assert!(ctx.directory_before_chdir.borrow().is_none());
+
+        *ctx.directory_before_chdir.borrow_mut() = Some("/some/where".into());
+        let carried = ::core::mem::take(&mut ctx.directory_before_chdir);
+        let rebuilt = ExecContext {
+            directory_before_chdir: carried,
+            ..ExecContext::default()
+        };
+        assert_eq!(
+            rebuilt.directory_before_chdir.borrow().as_deref(),
+            Some(::std::path::Path::new("/some/where"))
+        );
+        assert!(ctx.directory_before_chdir.borrow().is_none());
     }
 
     /// The `$(...)`/recipe expansion output buffer (the former `expand.rs`

@@ -133,7 +133,7 @@ pub fn trace_out_ctx<Out: std::io::Write, Err: std::io::Write>(
     ctx: &ExecContext<Out, Err>,
     bytes: &[u8],
 ) {
-    let mut o = ctx.stdout.borrow_mut();
+    let mut o = ctx.stdout_lock();
     // `StdoutSink::write`/`flush` already feed `record_stdout_error` for the
     // default sink; a non-default `Out` reports its own failures how it
     // sees fit; there is no process-wide stdout to be sticky about there.
@@ -202,37 +202,47 @@ fn _outputs(ctx: &ExecContext, out: Option<&mut output>, is_err: bool, msg: &::c
     // own sink instead of the process's real stdout.
     use std::io::Write;
     if is_err {
-        let mut f = ctx.stderr.borrow_mut();
+        let mut f = ctx.stderr_lock();
         let _ = f.write_all(bytes);
         let _ = f.flush();
     } else {
-        let mut f = ctx.stdout.borrow_mut();
+        let mut f = ctx.stdout_lock();
         if let Err(e) = f.write_all(bytes).and_then(|()| f.flush()) {
             record_stdout_error(&e);
         }
     }
 }
 /// Print an entering/leaving-directory line (returns 1).
-///
-/// # Safety
-/// `ctx.program`/`ctx.starting_directory` must be null or valid
-/// NUL-terminated strings (the c2rust pointer contract they always carry).
-pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
+pub fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
+    let line = working_directory_line(ctx, entering);
+    // `line` was built with exactly one trailing NUL and no interior one (the
+    // format strings never embed one), so this always succeeds.
+    let line = ::core::ffi::CStr::from_bytes_with_nul(&line).expect("no interior NUL");
+    _outputs(ctx, None, false, line);
+    1
+}
+
+/// The text [`log_working_directory`] prints, NUL-terminated, split out so
+/// the format ladder can be checked without capturing process stdout.
+fn working_directory_line(ctx: &ExecContext, entering: i32) -> Vec<u8> {
     let makelevel = ctx.makelevel();
-    // `program` is null only on context-less paths handed a throwaway
+    // `program` is unset only on context-less paths handed a throwaway
     // `ExecContext` (plugin ABI); the C original could not get here with a
     // null `program` global. Fall back to the plain name like
     // `msg::program_name` rather than passing null to the formatter.
-    let program = ctx.program.0.get();
-    let program = if program.is_null() {
-        c"make".as_ptr()
-    } else {
-        program
-    };
-    let starting_directory = ctx.starting_directory.0.get();
+    let program_name = ctx.program_cstring();
+    let program = program_name.as_deref().unwrap_or(c"make").as_ptr();
+    // An owned NUL-terminated copy for the formatter's `%s`; a path recorded
+    // from a `getcwd` buffer holds no interior NUL.
+    let starting_directory = ctx.starting_directory_bytes().map(|bytes| {
+        ::std::ffi::CString::new(bytes).expect("recorded directory has no interior NUL")
+    });
+    let starting_directory_ptr = starting_directory
+        .as_deref()
+        .map_or(::core::ptr::null(), ::core::ffi::CStr::as_ptr);
     let fmt: *const ::core::ffi::c_char;
     if makelevel == 0 {
-        if starting_directory.is_null() {
+        if starting_directory.is_none() {
             if entering != 0 {
                 fmt = c"%s: Entering an unknown directory\n".as_ptr();
             } else {
@@ -243,7 +253,7 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
         } else {
             fmt = c"%s: Leaving directory '%s'\n".as_ptr();
         }
-    } else if starting_directory.is_null() {
+    } else if starting_directory.is_none() {
         if entering != 0 {
             fmt = c"%s[%u]: Entering an unknown directory\n".as_ptr();
         } else {
@@ -265,22 +275,20 @@ pub unsafe fn log_working_directory(ctx: &ExecContext, entering: i32) -> i32 {
     // directory slot only when `starting_directory` is non-null; extra args
     // are ignored by the formatter, matching the sprintf call ladder.
     let args: &[FmtArg] = if makelevel == 0 {
-        &[FmtArg::Str(program), FmtArg::Str(starting_directory)]
+        &[FmtArg::Str(program), FmtArg::Str(starting_directory_ptr)]
     } else {
         &[
             FmtArg::Str(program),
             FmtArg::Uint(makelevel as u64),
-            FmtArg::Str(starting_directory),
+            FmtArg::Str(starting_directory_ptr),
         ]
     };
-    vformat_into(&mut line, fmt, args);
+    // SAFETY: `fmt` is one of the NUL-terminated literals above, and every
+    // `Str` arg is a pointer into `program_name`/`starting_directory` (or the
+    // `c"make"` literal), all of which outlive this call.
+    unsafe { vformat_into(&mut line, fmt, args) };
     line.push(0);
-    // `line` was just built with exactly one trailing NUL and no interior
-    // one (the format strings above never embed one), so this always
-    // succeeds.
-    let line = ::core::ffi::CStr::from_bytes_with_nul(&line).expect("no interior NUL");
-    _outputs(ctx, None, false, line);
-    1
+    line
 }
 /// `perror`'s exact output — `<what>: <strerror(errno)>\n` — for the pump's
 /// error paths, sourcing errno from the `io::Error`. Generic over the
@@ -358,17 +366,18 @@ pub unsafe fn pump_from_tmp(ctx: &ExecContext, from: i32, to_stderr: bool) {
     // Borrow the fd as a File without taking ownership.
     let mut src = ::core::mem::ManuallyDrop::new(std::fs::File::from_raw_fd(from));
     if to_stderr {
-        // `dst` already *is* the borrowed stderr sink; report through it
-        // directly rather than taking a second borrow of `ctx.stderr`.
-        pump_copy(&mut *src, &mut *ctx.stderr.borrow_mut(), false, pump_perror);
+        // `dst` already *is* the locked stderr sink; report through it
+        // directly rather than locking `ctx.stderr` a second time (which
+        // would deadlock).
+        pump_copy(&mut *src, &mut *ctx.stderr_lock(), false, pump_perror);
     } else {
-        // `dst` is the stdout sink here, so the stderr diagnostic borrows
-        // the separate `ctx.stderr` `RefCell` freely.
+        // `dst` is the stdout sink here, so the stderr diagnostic locks
+        // the separate `ctx.stderr` mutex freely.
         pump_copy(
             &mut *src,
-            &mut *ctx.stdout.borrow_mut(),
+            &mut *ctx.stdout_lock(),
             true,
-            |_dst, what, e| pump_perror(&mut *ctx.stderr.borrow_mut(), what, e),
+            |_dst, what, e| pump_perror(&mut *ctx.stderr_lock(), what, e),
         );
     }
 }
@@ -748,17 +757,8 @@ fn push_cstr(out: &mut Vec<u8>, s: Option<&::core::ffi::CStr>) {
     }
 }
 
-unsafe fn push_program_prefix(
-    ctx: &ExecContext,
-    out: &mut Vec<u8>,
-    makelevel: u32,
-    fatal_marker: bool,
-) {
-    let program = ctx.program.0.get();
-    push_cstr(
-        out,
-        (!program.is_null()).then(|| ::core::ffi::CStr::from_ptr(program)),
-    );
+fn push_program_prefix(ctx: &ExecContext, out: &mut Vec<u8>, makelevel: u32, fatal_marker: bool) {
+    push_cstr(out, ctx.program_cstring().as_deref());
     if makelevel == 0 {
         out.extend_from_slice(b": ");
     } else {
@@ -778,9 +778,8 @@ unsafe fn push_error_prefix(
     makelevel: u32,
     fatal_marker: bool,
 ) {
-    if let Some(fl) = flocp.as_ref().filter(|fl| !fl.filenm.is_null()) {
-        // `filenm` is non-null in this arm, so it is always `Some`.
-        push_cstr(out, Some(::core::ffi::CStr::from_ptr(fl.filenm)));
+    if let Some((fl, filenm)) = flocp.as_ref().and_then(|fl| fl.filenm.map(|f| (fl, f))) {
+        push_cstr(out, Some(filenm));
         out.push(b':');
         out.extend_from_slice(fl.lineno.wrapping_add(fl.offset).to_string().as_bytes());
         out.extend_from_slice(b": ");
@@ -953,7 +952,7 @@ pub fn out_of_memory() -> ! {
     std::process::exit(MAKE_FAILURE)
 }
 fn write_oom_message_from_ctx(ctx: &crate::execctx::ExecContext) {
-    let mut out = ctx.stdout.borrow_mut();
+    let mut out = ctx.stdout_lock();
     write_oom_message(&mut *out, &msg::program_name(ctx));
 }
 fn write_oom_message(out: &mut impl std::io::Write, prog: &str) {
@@ -976,38 +975,29 @@ pub mod msg {
     };
 
     pub(crate) fn program_name(ctx: &ExecContext) -> String {
-        let p = ctx.program.0.get();
-        if p.is_null() {
-            // Startup derives the name from argv[0] before anything can
-            // print; a null only occurs pre-startup or on a bare test
-            // context, where the plain name is the right prefix.
-            "make".to_string()
-        } else {
-            // SAFETY: a non-null `program` is a NUL-terminated C string that
-            // outlives the run (argv or 'static storage backs it).
-            unsafe { ::core::ffi::CStr::from_ptr(p) }
-                .to_string_lossy()
-                .into_owned()
-        }
+        // Startup derives the name from argv[0] before anything can print;
+        // unset only occurs pre-startup or on a bare test context, where the
+        // plain name is the right prefix.
+        ctx.program_cstring().map_or_else(
+            || "make".to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        )
     }
 
     fn build_prefix(ctx: &ExecContext, loc: Option<&Floc>, fatal_marker: bool) -> String {
         let marker = if fatal_marker { "*** " } else { "" };
-        // SAFETY: `(*flocp).filenm` is a NUL-terminated C string when non-null.
-        unsafe {
-            match loc {
-                Some(f) if !f.filenm.is_null() => {
-                    let fnm = ::core::ffi::CStr::from_ptr(f.filenm).to_string_lossy();
-                    format!("{}:{}: {}", fnm, f.lineno.wrapping_add(f.offset), marker)
-                }
-                _ => {
-                    let lvl = ctx.makelevel();
-                    let prog = program_name(ctx);
-                    if lvl == 0 {
-                        format!("{prog}: {marker}")
-                    } else {
-                        format!("{prog}[{lvl}]: {marker}")
-                    }
+        match loc.and_then(|f| f.filenm.map(|name| (f, name))) {
+            Some((f, filenm)) => {
+                let fnm = filenm.to_string_lossy();
+                format!("{}:{}: {}", fnm, f.lineno.wrapping_add(f.offset), marker)
+            }
+            None => {
+                let lvl = ctx.makelevel();
+                let prog = program_name(ctx);
+                if lvl == 0 {
+                    format!("{prog}: {marker}")
+                } else {
+                    format!("{prog}[{lvl}]: {marker}")
                 }
             }
         }
@@ -1131,10 +1121,9 @@ mod log_working_directory_tests {
     #[test]
     fn tolerates_null_program_context() {
         let ctx = crate::execctx::ExecContext::default();
-        assert!(ctx.program.0.get().is_null());
-        // SAFETY: single-threaded test; the options channel is installed above.
-        let traced = unsafe { super::log_working_directory(&ctx, 1) };
-        assert_eq!(traced, 1);
+        assert!(ctx.program.borrow().is_none());
+        assert_eq!(super::log_working_directory(&ctx, 1), 1);
+        assert_eq!(super::msg::program_name(&ctx), "make");
     }
 
     /// The other three `makelevel`/`starting_directory` format-string
@@ -1143,21 +1132,69 @@ mod log_working_directory_tests {
     /// `makelevel == 0` and `makelevel != 0`, on both `entering` values.
     #[test]
     fn covers_every_makelevel_and_directory_combination() {
-        let dir = ::std::ffi::CString::new("/tmp/build").unwrap();
         for makelevel in [0, 2] {
             let ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
                 makelevel,
                 ..Default::default()
             });
-            ctx.starting_directory
-                .0
-                .set(dir.as_ptr() as *mut ::core::ffi::c_char);
+            *ctx.starting_directory.borrow_mut() = Some("/tmp/build".into());
             for entering in [1, 0] {
-                // SAFETY: single-threaded test; a valid NUL-terminated
-                // `starting_directory` is installed above.
-                let traced = unsafe { super::log_working_directory(&ctx, entering) };
-                assert_eq!(traced, 1);
+                assert_eq!(super::log_working_directory(&ctx, entering), 1);
             }
+        }
+    }
+
+    /// The exact line for every `(makelevel, starting_directory, entering)`
+    /// combination, captured through a buffer sink: an unset directory reads
+    /// "unknown directory", and a recorded one — including the empty path a
+    /// failed first `getcwd` leaves — is quoted.
+    #[test]
+    fn writes_the_exact_line_for_every_combination() {
+        let cases: [(u32, Option<&str>, i32, &str); 8] = [
+            (0, None, 1, "make: Entering an unknown directory\n"),
+            (0, None, 0, "make: Leaving an unknown directory\n"),
+            (0, Some("/tmp/build"), 1, "make: Entering directory '/tmp/build'\n"),
+            (0, Some("/tmp/build"), 0, "make: Leaving directory '/tmp/build'\n"),
+            (2, None, 1, "make[2]: Entering an unknown directory\n"),
+            (2, Some("/tmp/build"), 0, "make[2]: Leaving directory '/tmp/build'\n"),
+            (2, Some("/tmp/build"), 1, "make[2]: Entering directory '/tmp/build'\n"),
+            (0, Some(""), 1, "make: Entering directory ''\n"),
+        ];
+        for (makelevel, dir, entering, want) in cases {
+            let ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
+                makelevel,
+                ..Default::default()
+            });
+            *ctx.starting_directory.borrow_mut() = dir.map(Into::into);
+            let line = super::working_directory_line(&ctx, entering);
+            assert_eq!(line.last(), Some(&0));
+            assert_eq!(String::from_utf8_lossy(&line[..line.len() - 1]), want);
+        }
+    }
+
+    /// A set program name prefixes the directory line, the `msg` printers and
+    /// the error prefix; the empty name an `argv[0]` ending in '/' produces
+    /// stays set (and prints as empty) rather than falling back to "make".
+    #[test]
+    fn a_set_program_name_prefixes_every_printer() {
+        for (name, shown) in [("gmake", "gmake"), ("", "")] {
+            let ctx = crate::execctx::ExecContext::new(crate::execctx::Config {
+                makelevel: 1,
+                ..Default::default()
+            });
+            *ctx.program.borrow_mut() = Some(::std::ffi::CString::new(name).unwrap());
+            *ctx.starting_directory.borrow_mut() = Some("/w".into());
+
+            let line = super::working_directory_line(&ctx, 1);
+            assert_eq!(
+                String::from_utf8_lossy(&line[..line.len() - 1]),
+                format!("{shown}[1]: Entering directory '/w'\n")
+            );
+            assert_eq!(super::msg::program_name(&ctx), shown);
+
+            let mut prefix = Vec::new();
+            super::push_program_prefix(&ctx, &mut prefix, 1, true);
+            assert_eq!(String::from_utf8_lossy(&prefix), format!("{shown}[1]: *** "));
         }
     }
 }

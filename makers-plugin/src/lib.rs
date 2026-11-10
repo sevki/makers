@@ -249,12 +249,19 @@ impl Manifest {
     /// cover — the last because expansion can run `$(shell ...)`, so a
     /// plugin that needs make's own expander has to give this up.
     ///
-    /// One gap the host cannot check for you: the digest covers the global
-    /// variable set except its environment-origin members, so a plugin
-    /// reading a variable make imported from the environment — through
-    /// [`vars::get`] or a [`Node::variable`] lookup that falls back to the
-    /// global set — depends on something the digest ignores. The `origin`
-    /// field on the returned variable tells you which case you are in.
+    /// The refusal of [`Capability::ReadEnvironment`] is doing more work
+    /// than it looks like. The digest covers the global variable set except
+    /// its environment-origin members, and those members are exactly what
+    /// that capability gates — not only in [`session::env`] but in
+    /// [`vars::get`] and in a [`Node::variable`] lookup that falls back to
+    /// the global set. Without it those reads answer `None`, the same as an
+    /// undefined variable, so a `deterministic` plugin cannot accidentally
+    /// depend on `$(HOME)` by reading it under [`Capability::ReadVariables`].
+    ///
+    /// What is still on you: anything you compute from outside the host
+    /// interfaces entirely. Reading a file through
+    /// [`Capability::ReadFileContent`] is the live example — the digest
+    /// covers the build graph, not the contents of the sources in it.
     pub fn deterministic(mut self) -> Self {
         self.0.deterministic = true;
         self
